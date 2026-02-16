@@ -639,7 +639,8 @@ export default function UploadFrame() {
       return;
     }
 
-    // ✅ NO FILE SIZE LIMIT - Support for large files (updated 2026-02-16)
+    // ✅ NO FILE SIZE LIMIT - Support for large files (updated 2026-02-16 v2)
+    // VERIFIED FIX: All validations removed from frontend and backend
     console.log(`✅ [UPLOAD] File accepted: ${file.name}, Size: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
 
     const reader = new FileReader();
