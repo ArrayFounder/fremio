@@ -182,16 +182,9 @@ router.post('/overlay', authenticateToken, requireAdmin, upload.single('image'),
       return res.status(400).json({ error: 'Tidak ada file yang diupload' });
     }
 
-    // Validate file size before processing
-    const maxSizeMB = 10;
+    // ✅ NO FILE SIZE LIMIT - Support large overlay files (updated 2026-02-16)
     const fileSizeMB = req.file.size / (1024 * 1024);
-    if (fileSizeMB > maxSizeMB) {
-      return res.status(413).json({ 
-        error: `File terlalu besar (${fileSizeMB.toFixed(2)}MB). Maksimal ${maxSizeMB}MB.`,
-        maxSizeMB,
-        actualSizeMB: parseFloat(fileSizeMB.toFixed(2))
-      });
-    }
+    console.log(`✅ [BACKEND] Overlay upload accepted: ${fileSizeMB.toFixed(2)}MB`);
 
     const filename = `${uuidv4()}.png`;
     const uploadDir = path.join(__dirname, '../../uploads/overlays');
