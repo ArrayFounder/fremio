@@ -239,8 +239,10 @@ router.post('/overlay', authenticateToken, requireAdmin, upload.single('image'),
 
       await Promise.race([processImage, processTimeout]);
 
-      const imagePath = `/uploads/overlays/${finalFilename}`;
-      console.log(`📸 Overlay uploaded: ${finalFilename} (${fileSizeMB.toFixed(2)}MB, alpha: ${hasAlpha})`);
+      // Return full URL so frontend can access it
+      const baseUrl = process.env.API_BASE_URL || 'https://fremio.id';
+      const imagePath = `${baseUrl}/uploads/overlays/${finalFilename}`;
+      console.log(`📸 Overlay uploaded: ${finalFilename} (${fileSizeMB.toFixed(2)}MB, alpha: ${hasAlpha}) -> ${imagePath}`);
 
       res.json({
         message: 'Overlay berhasil diupload',
