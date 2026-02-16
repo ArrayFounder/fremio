@@ -8,7 +8,7 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/deploy-backend.yml'
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -24,12 +24,16 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+      - name: Deploy to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PATH: ${{ secrets.VPS_BACKEND_PATH }}
         run: |
           echo "🚀 Deploying backend to VPS..."
           
-          # Create deployment script
           cat > deploy.sh << 'DEPLOY_SCRIPT'
           #!/bin/bash
           set -e
@@ -50,7 +54,6 @@ jobs:
           
           chmod +x deploy.sh
           
-          # Copy and execute deployment script on VPS
           scp deploy.sh $VPS_USER@$VPS_HOST:/tmp/deploy-backend.sh
           ssh $VPS_USER@$VPS_HOST "export VPS_PATH=$VPS_PATH && bash /tmp/deploy-backend.sh"
           
