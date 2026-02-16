@@ -115,12 +115,12 @@ export default function AdminUploadFrame() {
       return;
     }
 
-    // Validate file size (max 5MB)
-    const maxSize = 5 * 1024 * 1024; // 5MB
+    // Validate file size (max 15MB for admin uploads)
+    const maxSize = 15 * 1024 * 1024; // 15MB
     if (file.size > maxSize) {
       console.log("❌ File too large:", file.size, "bytes");
       alert(
-        `File terlalu besar! Maksimal 5MB.\n\nUkuran file: ${(
+        `File terlalu besar! Maksimal 15MB.\n\nUkuran file: ${(
           file.size /
           1024 /
           1024
@@ -690,7 +690,7 @@ export default function AdminUploadFrame() {
                       >
                         <li>✓ Format: PNG dengan transparency</li>
                         <li>✓ Ukuran: 1080 × 1920 pixels (9:16)</li>
-                        <li>✓ Max size: 5MB</li>
+                        <li>✓ Max size: 15MB</li>
                       </ul>
                     </div>
 
