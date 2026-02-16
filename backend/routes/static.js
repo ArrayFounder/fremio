@@ -11,7 +11,7 @@ const router = express.Router();
 // Static files base directory
 const STATIC_DIR = process.env.STATIC_DIR || path.join(process.cwd(), "public");
 const FRAMES_DIR = path.join(STATIC_DIR, "frames");
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 // Ensure directories exist
 if (!existsSync(STATIC_DIR)) {

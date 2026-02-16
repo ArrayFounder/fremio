@@ -639,17 +639,8 @@ export default function UploadFrame() {
       return;
     }
 
-    // Validate file size (max 15MB for upload elements, 20MB for background)
-    const maxSize = uploadPurposeRef.current === "background" ? 20 * 1024 * 1024 : 15 * 1024 * 1024;
-    if (file.size > maxSize) {
-      const maxSizeMB = uploadPurposeRef.current === "background" ? 20 : 15;
-      showToast(
-        "error",
-        `File terlalu besar! Maksimal ${maxSizeMB}MB. Ukuran file: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
-        3500
-      );
-      return;
-    }
+    // No file size validation - allow any size file
+    // Removed size limit to support large frame elements
 
     const reader = new FileReader();
     reader.onload = () => {
