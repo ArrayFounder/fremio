@@ -639,10 +639,10 @@ export default function UploadFrame() {
       return;
     }
 
-    // Validate file size (max 5MB for upload elements, 10MB for background)
-    const maxSize = uploadPurposeRef.current === "background" ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
+    // Validate file size (max 15MB for upload elements, 20MB for background)
+    const maxSize = uploadPurposeRef.current === "background" ? 20 * 1024 * 1024 : 15 * 1024 * 1024;
     if (file.size > maxSize) {
-      const maxSizeMB = uploadPurposeRef.current === "background" ? 10 : 5;
+      const maxSizeMB = uploadPurposeRef.current === "background" ? 20 : 15;
       showToast(
         "error",
         `File terlalu besar! Maksimal ${maxSizeMB}MB. Ukuran file: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
