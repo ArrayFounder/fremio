@@ -4,8 +4,10 @@
 // This file is kept for backward compatibility
 // All data now stored in VPS PostgreSQL
 
+import { BACKEND_MODE, currentBackendMode } from './backend.js';
+
 // VPS Mode check
-const isVPSMode = import.meta.env.VITE_BACKEND_MODE === 'vps';
+const isVPSMode = currentBackendMode === BACKEND_MODE.VPS;
 
 // Check if Supabase is configured (for backward compatibility)
 export const isSupabaseConfigured = false;

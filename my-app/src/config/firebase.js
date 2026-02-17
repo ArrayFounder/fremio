@@ -10,8 +10,10 @@ const isFirebaseCredentialsAvailable = !!(
   import.meta.env.VITE_FIREBASE_PROJECT_ID
 );
 
+import { BACKEND_MODE, currentBackendMode } from './backend.js';
+
 // VPS Mode check
-const isVPSMode = import.meta.env.VITE_BACKEND_MODE === 'vps';
+const isVPSMode = currentBackendMode === BACKEND_MODE.VPS;
 
 // Firebase is disabled in VPS mode
 export const isFirebaseConfigured = false;

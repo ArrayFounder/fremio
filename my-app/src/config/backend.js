@@ -13,8 +13,19 @@ export const BACKEND_MODE = {
 // Get current backend mode from environment or default
 // Set VITE_BACKEND_MODE=vps in .env to use VPS backend
 const getBackendMode = () => {
-  const mode = import.meta.env.VITE_BACKEND_MODE || 'firebase';
-  return mode.toLowerCase();
+  const mode = String(import.meta.env.VITE_BACKEND_MODE || '').trim();
+  if (mode) return mode.toLowerCase();
+
+  // Runtime fallback when env vars weren't injected into the build
+  if (typeof window !== 'undefined' && window.location) {
+    const hostname = String(window.location.hostname || '').toLowerCase();
+
+    if (hostname.endsWith('fremio.id') || hostname.endsWith('pages.dev')) {
+      return BACKEND_MODE.VPS;
+    }
+  }
+
+  return BACKEND_MODE.FIREBASE;
 };
 
 export const currentBackendMode = getBackendMode();
@@ -38,9 +49,14 @@ const resolveVpsApiUrl = () => {
       return "/api";
     }
 
-    // Fremio production domains - use RELATIVE path because we're on same domain
-    if (hostname.endsWith("fremio.id") || hostname.endsWith("pages.dev")) {
+    // Fremio production domain uses relative /api (reverse proxy on same host)
+    if (hostname.endsWith("fremio.id")) {
       return "/api";
+    }
+
+    // Cloudflare Pages preview does NOT proxy /api
+    if (hostname.endsWith("pages.dev")) {
+      return "https://api.fremio.id/api";
     }
   }
 
@@ -69,8 +85,12 @@ export function getUploadsBaseUrl() {
       return ''; // relative is fine for local dev
     }
 
-    if (hostname.endsWith('fremio.id') || hostname.endsWith('pages.dev')) {
-      return ''; // FIX: Serve from main domain (uploads synced to /var/www/fremio/uploads/)
+    if (hostname.endsWith('fremio.id')) {
+      return ''; // Serve from same domain in production
+    }
+
+    if (hostname.endsWith('pages.dev')) {
+      return 'https://api.fremio.id'; // Preview needs API host for uploads
     }
   } catch (_) {
     // SSR or build-time — fall through
