@@ -29,13 +29,21 @@ jobs:
       - name: Install dependencies
         working-directory: ./my-app
         run: npm ci
+
+      - name: Set build env (defaults)
+        run: |
+          echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" >> $GITHUB_ENV
+          echo "VITE_BACKEND_MODE=${{ secrets.VITE_BACKEND_MODE }}" >> $GITHUB_ENV
+          if [ -z "${{ secrets.VITE_API_URL }}" ]; then
+            echo "VITE_API_URL=https://api.fremio.id/api" >> $GITHUB_ENV
+          fi
+          if [ -z "${{ secrets.VITE_BACKEND_MODE }}" ]; then
+            echo "VITE_BACKEND_MODE=VPS" >> $GITHUB_ENV
+          fi
         
       - name: Build frontend
         working-directory: ./my-app
         run: npm run build
-        env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL }}
-          VITE_BACKEND_MODE: ${{ secrets.VITE_BACKEND_MODE }}
 
       - name: Verify build output
         working-directory: ./my-app
