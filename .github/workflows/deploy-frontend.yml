@@ -36,15 +36,23 @@ jobs:
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
           VITE_BACKEND_MODE: ${{ secrets.VITE_BACKEND_MODE }}
+
+      - name: Verify build output
+        working-directory: ./my-app
+        run: |
+          echo "Built files:"
+          ls -la dist/assets/index-*.js || true
+          echo "Index snippet:"
+          head -n 5 dist/index.html || true
           
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: ${{ secrets.CLOUDFLARE_PROJECT_NAME }}
+          projectName: fremio
           directory: ./my-app/dist
-          branch: ${{ github.ref_name }}
+          branch: production
           
       - name: Notify success
         if: success()
