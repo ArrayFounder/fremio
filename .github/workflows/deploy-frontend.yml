@@ -61,6 +61,24 @@ jobs:
           projectName: fremio
           directory: ./my-app/dist
           branch: production
+
+      - name: Setup SSH (VPS fallback)
+        if: ${{ secrets.VPS_SSH_PRIVATE_KEY != '' && secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_FRONTEND_PATH != '' }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy to VPS (VPS fallback)
+        if: ${{ secrets.VPS_SSH_PRIVATE_KEY != '' && secrets.VPS_HOST != '' && secrets.VPS_USER != '' && secrets.VPS_FRONTEND_PATH != '' }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_FRONTEND_PATH: ${{ secrets.VPS_FRONTEND_PATH }}
+        run: |
+          echo "🚀 Deploying frontend to VPS..."
+          rsync -avz --delete ./my-app/dist/ ${VPS_USER}@${VPS_HOST}:${VPS_FRONTEND_PATH}/
           
       - name: Notify success
         if: success()
