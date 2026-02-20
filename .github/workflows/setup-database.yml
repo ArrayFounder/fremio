@@ -36,12 +36,12 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_BACKEND_PATH }}
         run: |
-          # Note: CSV files should be added to repository or uploaded manually
-          echo "📤 CSV files should be uploaded manually to /tmp/ on server"
-          echo "Files needed:"
-          echo "  - transaction-report-G269262086-20-02-2026-06-31-18.648.csv"
-          echo "  - transaction-report-G269262086-20-02-2026-06-31-42.422.csv"
+          echo "📤 Uploading CSV files from repository..."
+          scp backend/data/transactions-1.csv $VPS_USER@$VPS_HOST:/tmp/transactions-1.csv
+          scp backend/data/transactions-2.csv $VPS_USER@$VPS_HOST:/tmp/transactions-2.csv
+          echo "✅ CSV files uploaded successfully"
           
       - name: Setup database tables
         env:
@@ -75,17 +75,21 @@ jobs:
           cd $VPS_PATH || cd /var/www/fremio-backend || cd /var/www/fremio/backend
           
           # Check if CSV files exist in /tmp
-          if [ -f "/tmp/transaction-report-G269262086-20-02-2026-06-31-18.648.csv" ]; then
+          if [ -f "/tmp/transactions-1.csv" ] && [ -f "/tmp/transactions-2.csv" ]; then
             echo "Running import script..."
             node scripts/import-members-from-csv.mjs \
-              /tmp/transaction-report-G269262086-20-02-2026-06-31-18.648.csv \
-              /tmp/transaction-report-G269262086-20-02-2026-06-31-42.422.csv
+              /tmp/transactions-1.csv \
+              /tmp/transactions-2.csv
             
             echo "Cleaning up temporary files..."
-            rm -f /tmp/transaction-report-*.csv
+            rm -f /tmp/transactions-*.csv
+            
+            echo "✅ Import completed successfully!"
           else
             echo "⚠️ CSV files not found in /tmp/"
-            echo "Please upload CSV files manually first!"
+            echo "Expected files:"
+            echo "  - /tmp/transactions-1.csv"
+            echo "  - /tmp/transactions-2.csv"
             exit 1
           fi
           ENDSSH
