@@ -82,7 +82,35 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Check password
+    // Check if user has dummy password (from CSV import)
+    const DUMMY_PASSWORD_HASH = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.M5nwZvvGNHhHxm";
+    const hasDummyPassword = user.password_hash === DUMMY_PASSWORD_HASH;
+
+    if (hasDummyPassword) {
+      // Generate temporary token for password setup
+      const tempToken = jwt.sign(
+        {
+          userId: user.id,
+          email: user.email,
+          role: user.role,
+          temp: true
+        },
+        JWT_SECRET,
+        { expiresIn: "15m" } // Short expiry for security
+      );
+
+      console.log(`🔑 User needs to set password: ${user.email}`);
+
+      return res.status(202).json({
+        success: true,
+        requirePasswordSetup: true,
+        message: "Silakan buat password baru",
+        email: user.email,
+        tempToken
+      });
+    }
+
+    // Check password for non-dummy users
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
       return res.status(401).json({
@@ -129,6 +157,81 @@ router.post("/login", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Login gagal. Coba lagi.",
+    });
+  }
+});
+
+/**
+ * POST /api/auth/set-first-password
+ * Set password for first time (for CSV imported users)
+ */
+router.post("/set-first-password", verifyToken, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email dan password diperlukan"
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password minimal 6 karakter"
+      });
+    }
+
+    // Verify this is a temp token
+    if (!req.user.temp) {
+      return res.status(403).json({
+        success: false,
+        message: "Token tidak valid untuk operasi ini"
+      });
+    }
+
+    // Verify email matches token
+    if (req.user.email.toLowerCase() !== email.toLowerCase()) {
+      return res.status(403).json({
+        success: false,
+        message: "Email tidak sesuai"
+      });
+    }
+
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(password, 12);
+
+    // Update user password
+    const result = await pool.query(
+      `UPDATE users 
+       SET password_hash = $1, updated_at = NOW() 
+       WHERE email = $2 AND is_active = true
+       RETURNING id, email, display_name, role`,
+      [newPasswordHash, email.toLowerCase()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User tidak ditemukan"
+      });
+    }
+
+    const user = result.rows[0];
+
+    console.log(`✅ Password set for user: ${user.email}`);
+
+    res.json({
+      success: true,
+      message: "Password berhasil diatur"
+    });
+
+  } catch (error) {
+    console.error("Set password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Gagal mengatur password"
     });
   }
 });

@@ -166,6 +166,18 @@ export function AuthProvider({ children }) {
 
       const data = await response.json();
 
+      // Check if user needs to set password (status 202)
+      if (response.status === 202 && data.requirePasswordSetup) {
+        console.log("🔑 User needs to set password:", email);
+        return {
+          success: false,
+          requirePasswordSetup: true,
+          email: data.email,
+          tempToken: data.tempToken,
+          message: data.message || "Silakan buat password baru"
+        };
+      }
+
       if (!response.ok) {
         return {
           success: false,

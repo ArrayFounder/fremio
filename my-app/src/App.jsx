@@ -22,6 +22,7 @@ import NotFound from "./pages/NotFound.jsx";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
+import SetPassword from "./pages/SetPassword.jsx";
 import Profile from "./pages/Profile.jsx";
 import Settings from "./pages/Settings.jsx";
 import ChangePassword from "./pages/ChangePassword.jsx";
@@ -81,6 +82,7 @@ export default function App() {
             <Route path="login" element={<Login />} />
             <Route path="register" element={<Register />} />
             <Route path="reset-password" element={<ResetPassword />} />
+            <Route path="set-password" element={<SetPassword />} />
 
             {/* Footer pages */}
             <Route path="help-center" element={<HelpCenter />} />

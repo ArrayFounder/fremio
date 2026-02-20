@@ -48,6 +48,17 @@ export default function Login() {
     try {
       const result = await authenticateUser(formData.email, formData.password);
 
+      // Check if user needs to set password first
+      if (result.requirePasswordSetup) {
+        navigate("/set-password", {
+          state: {
+            email: result.email,
+            tempToken: result.tempToken
+          }
+        });
+        return;
+      }
+
       if (result.success) {
         // Check if user is admin and redirect accordingly
         const storedUser = localStorage.getItem("fremio_user");
