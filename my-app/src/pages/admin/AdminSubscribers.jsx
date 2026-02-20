@@ -23,6 +23,7 @@ export default function AdminSubscribers() {
   const [error, setError] = useState("");
 
   const [items, setItems] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [email, setEmail] = useState("");
   const [durationDays, setDurationDays] = useState("30");
@@ -52,6 +53,16 @@ export default function AdminSubscribers() {
       return aMs - bMs;
     });
   }, [items]);
+
+  const filteredItems = useMemo(() => {
+    if (!searchQuery.trim()) return sortedItems;
+    
+    const query = searchQuery.toLowerCase().trim();
+    return sortedItems.filter((item) => {
+      const email = String(item.email || "").toLowerCase();
+      return email.includes(query);
+    });
+  }, [sortedItems, searchQuery]);
 
   const onGrant = async (e) => {
     e.preventDefault();
@@ -209,26 +220,61 @@ export default function AdminSubscribers() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            gap: "12px",
           }}
         >
           <div style={{ fontWeight: 800 }}>
-            Active Subscribers ({sortedItems.length})
+            Active Subscribers ({filteredItems.length}
+            {searchQuery && sortedItems.length !== filteredItems.length
+              ? ` dari ${sortedItems.length}`
+              : ""})
           </div>
-          <button
-            onClick={fetchSubscribers}
-            disabled={loading}
-            style={{
-              padding: "8px 10px",
-              borderRadius: "10px",
-              border: "1px solid #e5e7eb",
-              background: "#fff",
-              cursor: loading ? "not-allowed" : "pointer",
-              fontWeight: 700,
-              color: "#374151",
-            }}
-          >
-            {loading ? "Loading..." : "Refresh"}
-          </button>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari berdasarkan email..."
+              style={{
+                padding: "8px 12px",
+                border: "1px solid #e5e7eb",
+                borderRadius: "10px",
+                width: "250px",
+                fontSize: "14px",
+              }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: "10px",
+                  border: "1px solid #e5e7eb",
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  color: "#374151",
+                }}
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={fetchSubscribers}
+              disabled={loading}
+              style={{
+                padding: "8px 10px",
+                borderRadius: "10px",
+                border: "1px solid #e5e7eb",
+                background: "#fff",
+                cursor: loading ? "not-allowed" : "pointer",
+                fontWeight: 700,
+                color: "#374151",
+              }}
+            >
+              {loading ? "Loading..." : "Refresh"}
+            </button>
+          </div>
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -256,7 +302,7 @@ export default function AdminSubscribers() {
               </tr>
             </thead>
             <tbody>
-              {sortedItems.map((row) => (
+              {filteredItems.map((row) => (
                 <tr
                   key={`${row.userId}_${row.accessEnd || ""}`}
                   style={{ borderTop: "1px solid #e5e7eb" }}
@@ -276,13 +322,24 @@ export default function AdminSubscribers() {
                 </tr>
               ))}
 
-              {!loading && sortedItems.length === 0 ? (
+              {!loading && filteredItems.length === 0 && !searchQuery ? (
                 <tr>
                   <td
                     colSpan={4}
                     style={{ padding: "16px", color: "#6b7280" }}
                   >
                     Belum ada subscriber aktif.
+                  </td>
+                </tr>
+              ) : null}
+
+              {!loading && filteredItems.length === 0 && searchQuery ? (
+                <tr>
+                  <td
+                    colSpan={4}
+                    style={{ padding: "16px", color: "#6b7280", textAlign: "center" }}
+                  >
+                    Tidak ada subscriber dengan email yang cocok dengan "{searchQuery}".
                   </td>
                 </tr>
               ) : null}
