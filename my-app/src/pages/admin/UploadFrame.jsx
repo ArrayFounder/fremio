@@ -120,9 +120,9 @@ const uploadOverlayWithRetry = async (dataUrl, elementId, token, maxRetries = 2)
       }
     };
     const blob = await compressBlob(originalBlob);
-    const HARD_MAX = 8 * 1024 * 1024;
+    const HARD_MAX = 50 * 1024 * 1024; // 50MB
     if (blob.size > HARD_MAX) {
-      throw new Error(`Overlay terlalu besar (${Math.round(blob.size / 1024 / 1024)}MB). Kecilkan dulu.`);
+      throw new Error(`Overlay terlalu besar (${Math.round(blob.size / 1024 / 1024)}MB). Maksimal 50MB.`);
     }
     const mimeType = blob.type || 'image/webp';
     const ext = (mimeType.split('/')[1] || 'webp').replace(/[^a-z0-9]/gi, '').toLowerCase();
@@ -915,9 +915,9 @@ export default function UploadFrame() {
         const blob = await compressBlob(originalBlob);
 
         // If compression didn't help, still try uploading; but cap extreme sizes to avoid 413.
-        const HARD_MAX = 8 * 1024 * 1024; // 8MB
+        const HARD_MAX = 50 * 1024 * 1024; // 50MB
         if (blob.size > HARD_MAX) {
-          throw new Error(`Overlay terlalu besar (${Math.round(blob.size / 1024 / 1024)}MB). Kecilkan dulu (resize/kompres) lalu coba lagi.`);
+          throw new Error(`Overlay terlalu besar (${Math.round(blob.size / 1024 / 1024)}MB). Maksimal 50MB.`);
         }
 
         const mimeType = blob.type || 'image/webp';

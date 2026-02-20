@@ -115,21 +115,8 @@ export default function AdminUploadFrame() {
       return;
     }
 
-    // Validate file size (max 15MB for admin uploads)
-    const maxSize = 15 * 1024 * 1024; // 15MB
-    if (file.size > maxSize) {
-      console.log("❌ File too large:", file.size, "bytes");
-      alert(
-        `File terlalu besar! Maksimal 15MB.\n\nUkuran file: ${(
-          file.size /
-          1024 /
-          1024
-        ).toFixed(2)}MB\n\nSilakan compress image terlebih dahulu.`
-      );
-      return;
-    }
-
-    console.log("✅ Valid PNG file:", file.name, "Size:", file.size, "bytes");
+    // ✅ NO FILE SIZE LIMIT - Large files supported (updated 2026-02-17)
+    console.log("✅ Valid PNG file:", file.name, "Size:", (file.size / 1024 / 1024).toFixed(2), "MB");
     setFrameImageFile(file);
 
     // Create preview
