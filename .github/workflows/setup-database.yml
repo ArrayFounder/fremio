@@ -54,11 +54,11 @@ jobs:
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
           cd $VPS_PATH || cd /var/www/fremio-backend || cd /var/www/fremio/backend
           
-          echo "Installing csv-parse..."
+          echo "Installing dependencies..."
           npm install csv-parse 2>/dev/null || true
           
-          echo "Creating database tables..."
-          psql -h localhost -U fremio_user -d fremio -f setup-package-tables.sql
+          echo "Running database setup script..."
+          node scripts/setup-database-production.mjs
           
           echo "✅ Database tables created successfully!"
           ENDSSH
