@@ -1,0 +1,123 @@
+name: Setup Database and Import Members
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "confirm" to run database setup'
+        required: true
+        default: ''
+
+jobs:
+  setup-database:
+    runs-on: ubuntu-latest
+    name: Setup Database Tables and Import Members
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "confirm" ]; then
+            echo "❌ Confirmation not provided. Exiting."
+            exit 1
+          fi
+          echo "✅ Confirmation received. Proceeding..."
+        
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+      - name: Upload CSV files to server
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          # Note: CSV files should be added to repository or uploaded manually
+          echo "📤 CSV files should be uploaded manually to /tmp/ on server"
+          echo "Files needed:"
+          echo "  - transaction-report-G269262086-20-02-2026-06-31-18.648.csv"
+          echo "  - transaction-report-G269262086-20-02-2026-06-31-42.422.csv"
+          
+      - name: Setup database tables
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_BACKEND_PATH }}
+        run: |
+          echo "🔧 Setting up database tables..."
+          
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+          cd $VPS_PATH || cd /var/www/fremio-backend || cd /var/www/fremio/backend
+          
+          echo "Installing csv-parse..."
+          npm install csv-parse 2>/dev/null || true
+          
+          echo "Creating database tables..."
+          psql -h localhost -U fremio_user -d fremio -f setup-package-tables.sql
+          
+          echo "✅ Database tables created successfully!"
+          ENDSSH
+          
+      - name: Import members from CSV
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_BACKEND_PATH }}
+        run: |
+          echo "📥 Importing members..."
+          
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+          cd $VPS_PATH || cd /var/www/fremio-backend || cd /var/www/fremio/backend
+          
+          # Check if CSV files exist in /tmp
+          if [ -f "/tmp/transaction-report-G269262086-20-02-2026-06-31-18.648.csv" ]; then
+            echo "Running import script..."
+            node scripts/import-members-from-csv.mjs \
+              /tmp/transaction-report-G269262086-20-02-2026-06-31-18.648.csv \
+              /tmp/transaction-report-G269262086-20-02-2026-06-31-42.422.csv
+            
+            echo "Cleaning up temporary files..."
+            rm -f /tmp/transaction-report-*.csv
+          else
+            echo "⚠️ CSV files not found in /tmp/"
+            echo "Please upload CSV files manually first!"
+            exit 1
+          fi
+          ENDSSH
+          
+      - name: Restart backend
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          echo "🔄 Restarting backend service..."
+          ssh $VPS_USER@$VPS_HOST "pm2 restart fremio-backend || pm2 restart fremio-api || echo 'Please restart manually'"
+          
+      - name: Verify import
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          echo "🔍 Verifying imported members..."
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+          psql -h localhost -U fremio_user -d fremio -c "
+            SELECT COUNT(*) as total_active_members 
+            FROM user_package_access 
+            WHERE is_active = true AND access_end > NOW();
+          "
+          ENDSSH
+          
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
+        
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ Database setup and member import completed!"
+          echo "Please verify at: https://fremio.id/admin/subscribers"
