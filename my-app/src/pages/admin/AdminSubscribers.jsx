@@ -20,13 +20,20 @@ const formatRemaining = (remaining) => {
 export default function AdminSubscribers() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [syncSuccess, setSyncSuccess] = useState("");
 
   const [items, setItems] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
 
   const [email, setEmail] = useState("");
   const [durationDays, setDurationDays] = useState("30");
+  
+  // Sync Order form
+  const [syncOrderId, setSyncOrderId] = useState("");
+  const [syncEmail, setSyncEmail] = useState("");
 
   const fetchSubscribers = useCallback(async () => {
     try {
@@ -63,6 +70,42 @@ export default function AdminSubscribers() {
       return email.includes(query);
     });
   }, [sortedItems, searchQuery]);
+
+  const onSyncOrder = async (e) => {
+    e.preventDefault();
+
+    const orderIdTrim = String(syncOrderId).trim();
+    const emailTrim = String(syncEmail).trim().toLowerCase();
+
+    if (!orderIdTrim) {
+      setSyncError("Order ID wajib diisi");
+      return;
+    }
+    if (!emailTrim || !emailTrim.includes("@")) {
+      setSyncError("Email tidak valid");
+      return;
+    }
+
+    try {
+      setSyncing(true);
+      setSyncError("");
+      setSyncSuccess("");
+      
+      const res = await api.post("/admin/subscribers/sync-order", {
+        orderId: orderIdTrim,
+        email: emailTrim,
+      });
+      
+      setSyncOrderId("");
+      setSyncEmail("");
+      setSyncSuccess(res?.message || "✅ Order berhasil disinkronkan dan akses diberikan");
+      await fetchSubscribers();
+    } catch (err) {
+      setSyncError(err?.message || "Gagal mensinkronkan order");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const onGrant = async (e) => {
     e.preventDefault();
@@ -107,6 +150,131 @@ export default function AdminSubscribers() {
         <p style={{ margin: "6px 0 0", color: "#6b7280" }}>
           Daftar akun yang sedang aktif berlangganan + sisa durasi.
         </p>
+      </div>
+
+      {/* 🔧 Manual Sync Order (untuk payment yang tidak otomatis) */}
+      <div
+        style={{
+          background: "#fef3c7",
+          border: "2px solid #f59e0b",
+          borderRadius: "12px",
+          padding: "16px",
+          marginBottom: "16px",
+        }}
+      >
+        <h3 style={{ margin: "0 0 8px", fontSize: "16px", fontWeight: 800, color: "#92400e" }}>
+          🔧 Manual Sync Order (Fix Payment Tidak Otomatis)
+        </h3>
+        <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#78350f" }}>
+          Gunakan ini jika user sudah bayar tapi tidak muncul di subscribers. 
+          Masukkan Order ID dan Email user untuk grant access secara manual.
+        </p>
+        
+        {syncSuccess && (
+          <div
+            style={{
+              padding: "10px 12px",
+              background: "#dcfce7",
+              border: "1px solid #22c55e",
+              borderRadius: "8px",
+              color: "#166534",
+              marginBottom: "12px",
+              fontSize: "13px",
+            }}
+          >
+            {syncSuccess}
+          </div>
+        )}
+        
+        {syncError && (
+          <div
+            style={{
+              padding: "10px 12px",
+              background: "#fee2e2",
+              border: "1px solid #ef4444",
+              borderRadius: "8px",
+              color: "#991b1b",
+              marginBottom: "12px",
+              fontSize: "13px",
+            }}
+          >
+            {syncError}
+          </div>
+        )}
+        
+        <form onSubmit={onSyncOrder}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 140px", gap: "12px" }}>
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  color: "#78350f",
+                  marginBottom: "6px",
+                }}
+              >
+                Order ID
+              </label>
+              <input
+                value={syncOrderId}
+                onChange={(e) => setSyncOrderId(e.target.value)}
+                placeholder="FRM-xxxxx-xxxxx-xxxxx"
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "1px solid #d97706",
+                  borderRadius: "10px",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  color: "#78350f",
+                  marginBottom: "6px",
+                }}
+              >
+                Email User
+              </label>
+              <input
+                value={syncEmail}
+                onChange={(e) => setSyncEmail(e.target.value)}
+                placeholder="user@email.com"
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "1px solid #d97706",
+                  borderRadius: "10px",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+            <div style={{ display: "flex", alignItems: "flex-end" }}>
+              <button
+                type="submit"
+                disabled={syncing}
+                style={{
+                  width: "100%",
+                  padding: "10px 16px",
+                  borderRadius: "10px",
+                  border: "none",
+                  background: syncing ? "#9ca3af" : "#f59e0b",
+                  color: "#ffffff",
+                  fontWeight: 800,
+                  fontSize: "14px",
+                  cursor: syncing ? "not-allowed" : "pointer",
+                }}
+              >
+                {syncing ? "Syncing..." : "Sync & Grant"}
+              </button>
+            </div>
+          </div>
+        </form>
       </div>
 
       <form

@@ -54,11 +54,26 @@ export default function SetPassword() {
         throw new Error(data.message || 'Gagal mengatur password');
       }
 
-      // Auto login with new password
-      await login(email, password);
+      // Auto login with returned token and user data
+      if (data.user && data.token) {
+        const userData = {
+          id: data.user.id,
+          uid: data.user.id,
+          email: data.user.email,
+          displayName: data.user.displayName,
+          role: data.user.role,
+          photoUrl: data.user.photoUrl,
+        };
+        
+        // Save auth data
+        localStorage.setItem('fremio_token', data.token);
+        localStorage.setItem('fremio_user', JSON.stringify(userData));
+        
+        console.log('✅ Auto-login successful:', userData.email);
+      }
       
-      // Redirect to home
-      navigate('/');
+      // Redirect to frames page
+      navigate('/frames');
       
     } catch (err) {
       console.error('Set password error:', err);
@@ -79,7 +94,7 @@ export default function SetPassword() {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      background: 'linear-gradient(135deg, #deb7a6 0%, #c19a87 100%)',
       padding: '20px'
     }}>
       <div style={{
@@ -170,7 +185,7 @@ export default function SetPassword() {
                 transition: 'border-color 0.2s',
                 boxSizing: 'border-box'
               }}
-              onFocus={(e) => e.target.style.borderColor = '#667eea'}
+              onFocus={(e) => e.target.style.borderColor = '#deb7a6'}
               onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
             />
             <div style={{
@@ -209,7 +224,7 @@ export default function SetPassword() {
                 transition: 'border-color 0.2s',
                 boxSizing: 'border-box'
               }}
-              onFocus={(e) => e.target.style.borderColor = '#667eea'}
+              onFocus={(e) => e.target.style.borderColor = '#deb7a6'}
               onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
             />
           </div>
@@ -224,22 +239,22 @@ export default function SetPassword() {
               fontSize: '16px',
               fontWeight: '600',
               color: 'white',
-              background: loading ? '#ccc' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              background: loading ? '#ccc' : 'linear-gradient(135deg, #deb7a6 0%, #c19a87 100%)',
               border: 'none',
               borderRadius: '10px',
               cursor: loading ? 'not-allowed' : 'pointer',
               transition: 'transform 0.2s, box-shadow 0.2s',
-              boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)'
+              boxShadow: '0 4px 15px rgba(222, 183, 166, 0.4)'
             }}
             onMouseEnter={(e) => {
               if (!loading) {
                 e.target.style.transform = 'translateY(-2px)';
-                e.target.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
+                e.target.style.boxShadow = '0 6px 20px rgba(222, 183, 166, 0.5)';
               }
             }}
             onMouseLeave={(e) => {
               e.target.style.transform = 'translateY(0)';
-              e.target.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+              e.target.style.boxShadow = '0 4px 15px rgba(222, 183, 166, 0.4)';
             }}
           >
             {loading ? 'Menyimpan...' : '✓ Simpan Password'}

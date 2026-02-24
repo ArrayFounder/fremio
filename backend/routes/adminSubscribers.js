@@ -400,12 +400,9 @@ router.post("/sync-order", async (req, res) => {
     const alreadyGranted = await paymentDB.hasAccessForTransaction(tx.id);
     if (!alreadyGranted) {
       const packages = await paymentDB.getAllPackages();
-      const packageIds = determinePackageIdsToGrant({ packages });
-      if (packageIds.length === 0) {
-        return res
-          .status(500)
-          .json({ success: false, message: "Tidak ada paket untuk diberikan" });
-      }
+      let packageIds = determinePackageIdsToGrant({ packages });
+      // Subscription-based: always grant access even if packages table is empty
+      if (packageIds.length === 0) packageIds = [1];
 
       const baseTime = st?.settlement_time || st?.transaction_time || new Date().toISOString();
       const accessEnd = addDays(new Date(baseTime), durationDays);

@@ -173,7 +173,6 @@ const AVAILABLE_CATEGORIES = [
   "Cute Characters",
   "Romance",
   "Aesthetic Scrapbook & Retro",
-  "Minimalist Doodles & Soft Colors",
   "Wedding",
   "Birthday",
   "Graduation",

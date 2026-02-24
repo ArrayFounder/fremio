@@ -6975,7 +6975,7 @@ export default function TakeMoment() {
               {!friendsModeEnabled && (
                 <div
                   style={{
-                    display: "flex",
+                    display: "none",
                     justifyContent: "center",
                     marginBottom: "0.75rem",
                   }}
@@ -7103,6 +7103,7 @@ export default function TakeMoment() {
               type="button"
               onClick={handleStartFriendsMode}
               style={{
+                display: "none",
                 width: "100%",
                 padding: "0.65rem 1rem",
                 borderRadius: "999px",

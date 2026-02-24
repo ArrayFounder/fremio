@@ -45,6 +45,23 @@ const pool = databaseUrl
       ),
     });
 
+/**
+ * Map raw Midtrans transaction_status to the values allowed by the DB
+ * CHECK constraint: pending | processing | completed | failed | refunded | expired
+ */
+function mapMidtransStatus(rawStatus) {
+  const s = String(rawStatus || "").trim().toLowerCase();
+  if (s === "settlement" || s === "capture") return "completed";
+  if (s === "deny" || s === "cancel" || s === "failure") return "failed";
+  if (s === "expire") return "expired";
+  if (s === "refund" || s === "partial_refund") return "refunded";
+  if (s === "processing") return "processing";
+  if (s === "pending") return "pending";
+  // Unknown statuses: keep as-is if already valid, else default to pending
+  const valid = ["pending", "processing", "completed", "failed", "refunded", "expired"];
+  return valid.includes(s) ? s : "pending";
+}
+
 class PaymentDatabaseService {
   /**
    * Create payment transaction record
@@ -117,7 +134,7 @@ class PaymentDatabaseService {
     `;
 
     const result = await pool.query(query, [
-      transactionStatus,
+      mapMidtransStatus(transactionStatus),
       paymentType,
       transactionTime,
       midtransTransactionId,
@@ -191,7 +208,7 @@ class PaymentDatabaseService {
       userId,
       orderId,
       safeAmount,
-      transactionStatus,
+      mapMidtransStatus(transactionStatus),
       paymentType || null,
       transactionTime || new Date().toISOString(),
       midtransTransactionId || null,
@@ -372,6 +389,7 @@ class PaymentDatabaseService {
         AND status IN ('settlement','capture','completed')
       ORDER BY created_at DESC
       LIMIT 1
+      -- Note: new rows use 'completed'; keep 'settlement'/'capture' for backward compat
     `;
 
     const result = await pool.query(query, [String(userId)]);
@@ -522,7 +540,7 @@ class PaymentDatabaseService {
     const query = `
       INSERT INTO payment_transactions (
         user_id, invoice_number, amount, status, currency, gateway, transaction_type, created_at
-      ) VALUES ($1, $2, $3, 'settlement', 'IDR', 'manual', 'manual', NOW())
+      ) VALUES ($1, $2, $3, 'completed', 'IDR', 'manual', 'manual', NOW())
       RETURNING *
     `;
 
@@ -705,9 +723,9 @@ class PaymentDatabaseService {
     const query = `
       SELECT 
         COUNT(*) as total_transactions,
-        COUNT(CASE WHEN status = 'settlement' THEN 1 END) as successful_payments,
+        COUNT(CASE WHEN status IN ('settlement','completed') THEN 1 END) as successful_payments,
         COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments,
-        SUM(CASE WHEN status = 'settlement' THEN amount ELSE 0 END) as total_revenue
+        SUM(CASE WHEN status IN ('settlement','completed') THEN amount ELSE 0 END) as total_revenue
       FROM payment_transactions
     `;
 

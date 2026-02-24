@@ -86,6 +86,10 @@ router.post("/login", async (req, res) => {
     const DUMMY_PASSWORD_HASH = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.M5nwZvvGNHhHxm";
     const hasDummyPassword = user.password_hash === DUMMY_PASSWORD_HASH;
 
+    console.log(`🔍 Login attempt: ${email}`);
+    console.log(`🔍 Has dummy password: ${hasDummyPassword}`);
+    console.log(`🔍 Password hash preview: ${user.password_hash.substring(0, 20)}...`);
+
     if (hasDummyPassword) {
       // Generate temporary token for password setup
       const tempToken = jwt.sign(
@@ -220,11 +224,29 @@ router.post("/set-first-password", verifyToken, async (req, res) => {
 
     const user = result.rows[0];
 
+    // Generate JWT token for auto-login
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
     console.log(`✅ Password set for user: ${user.email}`);
 
     res.json({
       success: true,
-      message: "Password berhasil diatur"
+      message: "Password berhasil diatur",
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.display_name,
+        role: user.role,
+      },
+      token
     });
 
   } catch (error) {

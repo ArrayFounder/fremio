@@ -26,7 +26,6 @@ const Pricing = () => {
     "Aesthetic Scrapbook & Retro",
     "Cute Characters",
     "Self-love",
-    "Minimalist Doodles & Soft Colors",
     "Romance",
   ];
   const [activeTab, setActiveTab] = useState(tabs[0]);
@@ -490,9 +489,7 @@ const Pricing = () => {
     "Aesthetic Scrapbook & Retro": "“Aesthetic & Retro untuk cerita kamu”",
     "Cute Characters": "“Cute Characters untuk vibes gemas”",
     "Self-love": "“Self-love untuk momen yang lebih bermakna”",
-    "Minimalist Doodles & Soft Colors":
-      "“Minimalist & Soft Colors untuk tampilan clean”",
-    Romance: "“Romance untuk momen spesial”",
+    Romance: "Romance untuk momen spesial",
   };
 
   const previewQuote =

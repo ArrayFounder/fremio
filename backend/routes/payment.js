@@ -456,14 +456,13 @@ router.get("/pending", verifyToken, async (req, res) => {
 
         if (!alreadyGranted) {
           const packages = await paymentDB.getAllPackages();
-          const packageIds = determinePackageIdsToGrant({ packages });
-          if (packageIds.length > 0) {
-            await paymentDB.grantPackageAccess({
-              userId,
-              transactionId: latestPending.id,
-              packageIds,
-            });
-          }
+          let packageIds = determinePackageIdsToGrant({ packages });
+          if (packageIds.length === 0) packageIds = [1];
+          await paymentDB.grantPackageAccess({
+            userId,
+            transactionId: latestPending.id,
+            packageIds,
+          });
         }
       } catch (e) {
         console.warn("⚠️ Failed to self-heal access on /pending:", e?.message || e);
@@ -735,68 +734,68 @@ const handleMidtransNotification = async (req, res) => {
       }
 
       const packages = await paymentDB.getAllPackages();
-      const packageIds = determinePackageIdsToGrant({ packages });
+      let packageIds = determinePackageIdsToGrant({ packages });
+      // Subscription-based: always grant access even if packages table is empty
+      if (packageIds.length === 0) packageIds = [1];
 
-      if (packageIds.length > 0) {
-        let effectiveUserId = transaction.user_id;
-        if (!isUuidLike(effectiveUserId)) {
-          const email = notification.fullResponse?.customer_details?.email || null;
-          if (email) {
-            const local = await paymentDB.findLocalUserIdByEmail(email);
-            if (local) effectiveUserId = local;
-          }
+      let effectiveUserId = transaction.user_id;
+      if (!isUuidLike(effectiveUserId)) {
+        const email = notification.fullResponse?.customer_details?.email || null;
+        if (email) {
+          const local = await paymentDB.findLocalUserIdByEmail(email);
+          if (local) effectiveUserId = local;
         }
+      }
 
-        await paymentDB.grantPackageAccess({
-          userId: effectiveUserId,
-          transactionId: transaction.id,
-          packageIds,
-        });
+      await paymentDB.grantPackageAccess({
+        userId: effectiveUserId,
+        transactionId: transaction.id,
+        packageIds,
+      });
 
-        console.log("✅ Access granted to user:", transaction.user_id);
+      console.log("✅ Access granted to user:", transaction.user_id);
 
-        // Send email notification via n8n (idempotent - only sends once)
-        try {
-          const alreadySent = await paymentDB.isReceiptEmailSent(transaction.invoice_number);
-          if (!alreadySent) {
-            const marked = await paymentDB.markReceiptEmailSent(transaction.invoice_number);
-            if (marked > 0) {
-              const customerEmail =
-                notification.fullResponse?.customer_details?.email ||
-                transaction.customer_email ||
-                null;
-              const customerName =
-                notification.fullResponse?.customer_details?.first_name ||
-                notification.fullResponse?.customer_details?.name ||
-                "Fremio User";
-              const paymentMethod = notification.paymentType || transaction.payment_method || "Unknown";
-              const amount = transaction.amount || notification.fullResponse?.gross_amount || 0;
+      // Send email notification via n8n (idempotent - only sends once)
+      try {
+        const alreadySent = await paymentDB.isReceiptEmailSent(transaction.invoice_number);
+        if (!alreadySent) {
+          const marked = await paymentDB.markReceiptEmailSent(transaction.invoice_number);
+          if (marked > 0) {
+            const customerEmail =
+              notification.fullResponse?.customer_details?.email ||
+              transaction.customer_email ||
+              null;
+            const customerName =
+              notification.fullResponse?.customer_details?.first_name ||
+              notification.fullResponse?.customer_details?.name ||
+              "Fremio User";
+            const paymentMethod = notification.paymentType || transaction.payment_method || "Unknown";
+            const amount = transaction.amount || notification.fullResponse?.gross_amount || 0;
 
-              // Calculate access end date (default 30 days from now)
-              const accessDurationDays = getAccessDurationDays();
-              const accessEndDate = addDays(new Date(), accessDurationDays).toISOString();
+            // Calculate access end date (default 30 days from now)
+            const accessDurationDays = getAccessDurationDays();
+            const accessEndDate = addDays(new Date(), accessDurationDays).toISOString();
 
-              if (customerEmail) {
-                await n8nWebhook.sendPaymentSuccessEvent({
-                  email: customerEmail,
-                  orderId: transaction.invoice_number,
-                  customerName,
-                  paymentMethod,
-                  amount,
-                  accessEndDate,
-                });
-              }
+            if (customerEmail) {
+              await n8nWebhook.sendPaymentSuccessEvent({
+                email: customerEmail,
+                orderId: transaction.invoice_number,
+                customerName,
+                paymentMethod,
+                amount,
+                accessEndDate,
+              });
             }
           }
-        } catch (emailErr) {
-          // Non-blocking: log but don't fail the webhook
-          console.error("⚠️ Failed to send email notification:", emailErr.message);
-          // Optionally clear the flag so it can retry next time
-          try {
-            await paymentDB.clearReceiptEmailSent(transaction.invoice_number);
-          } catch {
-            // ignore
-          }
+        }
+      } catch (emailErr) {
+        // Non-blocking: log but don't fail the webhook
+        console.error("⚠️ Failed to send email notification:", emailErr.message);
+        // Optionally clear the flag so it can retry next time
+        try {
+          await paymentDB.clearReceiptEmailSent(transaction.invoice_number);
+        } catch {
+          // ignore
         }
       }
     }
@@ -885,17 +884,16 @@ router.get("/status/:orderId", verifyToken, async (req, res) => {
       );
       if (!alreadyGranted) {
         const packages = await paymentDB.getAllPackages();
-        const packageIds = determinePackageIdsToGrant({ packages });
-        if (packageIds.length > 0) {
-          const effectiveUserId = isUuidLike(transaction.user_id)
-            ? transaction.user_id
-            : userId;
-          await paymentDB.grantPackageAccess({
-            userId: effectiveUserId,
-            transactionId: transaction.id,
-            packageIds,
-          });
-        }
+        let packageIds = determinePackageIdsToGrant({ packages });
+        if (packageIds.length === 0) packageIds = [1];
+        const effectiveUserId = isUuidLike(transaction.user_id)
+          ? transaction.user_id
+          : userId;
+        await paymentDB.grantPackageAccess({
+          userId: effectiveUserId,
+          transactionId: transaction.id,
+          packageIds,
+        });
       }
     }
 
@@ -978,14 +976,13 @@ router.post("/reconcile-latest", verifyToken, async (req, res) => {
       );
       if (!alreadyGranted) {
         const packages = await paymentDB.getAllPackages();
-        const packageIds = determinePackageIdsToGrant({ packages });
-        if (packageIds.length > 0) {
-          await paymentDB.grantPackageAccess({
-            userId: isUuidLike(latestPending.user_id) ? latestPending.user_id : userId,
-            transactionId: latestPending.id,
-            packageIds,
-          });
-        }
+        let packageIds = determinePackageIdsToGrant({ packages });
+        if (packageIds.length === 0) packageIds = [1];
+        await paymentDB.grantPackageAccess({
+          userId: isUuidLike(latestPending.user_id) ? latestPending.user_id : userId,
+          transactionId: latestPending.id,
+          packageIds,
+        });
       }
     }
 
@@ -1066,19 +1063,18 @@ router.get("/access", verifyToken, async (req, res) => {
 
           if (!alreadyGranted) {
             const packages = await paymentDB.getAllPackages();
-            const packageIds = determinePackageIdsToGrant({ packages });
-            if (packageIds.length > 0) {
-              const durationDays = getAccessDurationDays();
-              const start = latestSuccess.paid_at || latestSuccess.created_at || new Date();
-              const accessEnd = addDays(start, durationDays);
+            let packageIds = determinePackageIdsToGrant({ packages });
+            if (packageIds.length === 0) packageIds = [1];
+            const durationDays = getAccessDurationDays();
+            const start = latestSuccess.paid_at || latestSuccess.created_at || new Date();
+            const accessEnd = addDays(start, durationDays);
 
-              await paymentDB.grantPackageAccess({
-                userId,
-                transactionId: latestSuccess.id,
-                packageIds,
-                accessEnd,
-              });
-            }
+            await paymentDB.grantPackageAccess({
+              userId,
+              transactionId: latestSuccess.id,
+              packageIds,
+              accessEnd,
+            });
           }
 
           access = await paymentDB.getUserActiveAccess(userId);
@@ -1115,24 +1111,23 @@ router.get("/access", verifyToken, async (req, res) => {
 
               if (!alreadyGranted) {
                 const packages = await paymentDB.getAllPackages();
-                const packageIds = determinePackageIdsToGrant({ packages });
-                if (packageIds.length > 0) {
-                  const durationDays = getAccessDurationDays();
-                  const start =
-                    midtransStatus.settlement_time ||
-                    midtransStatus.transaction_time ||
-                    latestPending.paid_at ||
-                    latestPending.created_at ||
-                    new Date();
-                  const accessEnd = addDays(start, durationDays);
+                let packageIds = determinePackageIdsToGrant({ packages });
+                if (packageIds.length === 0) packageIds = [1];
+                const durationDays = getAccessDurationDays();
+                const start =
+                  midtransStatus.settlement_time ||
+                  midtransStatus.transaction_time ||
+                  latestPending.paid_at ||
+                  latestPending.created_at ||
+                  new Date();
+                const accessEnd = addDays(start, durationDays);
 
-                  await paymentDB.grantPackageAccess({
-                    userId,
-                    transactionId: latestPending.id,
-                    packageIds,
-                    accessEnd,
-                  });
-                }
+                await paymentDB.grantPackageAccess({
+                  userId,
+                  transactionId: latestPending.id,
+                  packageIds,
+                  accessEnd,
+                });
               }
 
               access = await paymentDB.getUserActiveAccess(userId);

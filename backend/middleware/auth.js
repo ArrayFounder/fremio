@@ -38,6 +38,7 @@ export const verifyToken = async (req, res, next) => {
         userId: decoded.userId,
         email: decoded.email,
         role: decoded.role,
+        temp: decoded.temp, // Preserve temp flag for password setup
       };
       return next();
     } catch (jwtError) {
