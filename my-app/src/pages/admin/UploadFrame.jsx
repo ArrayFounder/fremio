@@ -281,6 +281,34 @@ export default function UploadFrame() {
   const [frameCategories, setFrameCategories] = useState(["Fremio Series"]);
   const [hideAfterUpload, setHideAfterUpload] = useState(true);
 
+  // Custom categories (persisted to localStorage)
+  const [customCategories, setCustomCategories] = useState(() => {
+    try {
+      const saved = localStorage.getItem("fremio_custom_categories");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [newCategoryInput, setNewCategoryInput] = useState("");
+
+  const addCustomCategory = () => {
+    const trimmed = newCategoryInput.trim();
+    if (!trimmed) return;
+    const allCategories = [...AVAILABLE_CATEGORIES, ...customCategories];
+    if (allCategories.includes(trimmed)) {
+      // just select it if it already exists
+      setFrameCategories((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+      setNewCategoryInput("");
+      return;
+    }
+    const updated = [...customCategories, trimmed];
+    setCustomCategories(updated);
+    localStorage.setItem("fremio_custom_categories", JSON.stringify(updated));
+    setFrameCategories((prev) => [...prev, trimmed]);
+    setNewCategoryInput("");
+  };
+
   // Toast helper
   const showToast = useCallback((type, message, duration = 3200) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -1502,7 +1530,7 @@ export default function UploadFrame() {
               <div style={{ marginBottom: "12px" }}>
                 <label style={{ fontSize: "12px", color: "#6b7280", display: "block", marginBottom: "8px" }}>Kategori</label>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", padding: "8px", border: "1px solid #e5e7eb", borderRadius: "8px", backgroundColor: "#fafafa" }}>
-                  {AVAILABLE_CATEGORIES.map((cat) => (
+                  {[...AVAILABLE_CATEGORIES, ...customCategories].map((cat) => (
                     <label
                       key={cat}
                       style={{
@@ -1522,8 +1550,42 @@ export default function UploadFrame() {
                         style={{ width: "16px", height: "16px", accentColor: "#8b5cf6", cursor: "pointer" }}
                       />
                       <span style={{ fontSize: "13px", color: "#374151" }}>{cat}</span>
+                      {customCategories.includes(cat) && (
+                        <button
+                          type="button"
+                          title="Hapus kategori custom ini"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const updated = customCategories.filter((c) => c !== cat);
+                            setCustomCategories(updated);
+                            localStorage.setItem("fremio_custom_categories", JSON.stringify(updated));
+                            setFrameCategories((prev) => prev.filter((c) => c !== cat));
+                          }}
+                          style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#9ca3af", padding: "0 2px", lineHeight: 1, fontSize: "14px" }}
+                        >
+                          ×
+                        </button>
+                      )}
                     </label>
                   ))}
+                </div>
+                {/* Add custom category */}
+                <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+                  <input
+                    type="text"
+                    value={newCategoryInput}
+                    onChange={(e) => setNewCategoryInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomCategory(); } }}
+                    placeholder="Tambah kategori baru..."
+                    style={{ flex: 1, padding: "7px 10px", fontSize: "12px", border: "1px solid #e5e7eb", borderRadius: "8px", boxSizing: "border-box", outline: "none" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={addCustomCategory}
+                    style={{ padding: "7px 14px", fontSize: "12px", fontWeight: 600, background: "#8b5cf6", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", whiteSpace: "nowrap" }}
+                  >
+                    + Add
+                  </button>
                 </div>
               </div>
 
