@@ -15,7 +15,7 @@ NC='\033[0m'
 
 # Configuration
 VPS_USER="root"
-VPS_HOST="72.61.214.5"
+VPS_HOST="76.13.192.32"
 FRONTEND_PATH="/var/www/fremio"
 
 echo -e "${BLUE}🚀 Fremio Frontend-Only Deployment${NC}"

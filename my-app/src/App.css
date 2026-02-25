@@ -427,11 +427,27 @@ body {
 
 /* ================== HOMEPAGE / HERO ================== */
 .hero-fremio {
-  background: #fff;
+  background: linear-gradient(160deg, #fffcf7 0%, #fff8ef 55%, #fffaf5 100%);
   color: var(--ink);
   min-height: calc(100vh - 76px);
   display: flex;
   align-items: center;
+  position: relative;
+  overflow: hidden;
+}
+/* subtle dot pattern ala arabesque */
+.hero-fremio::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(201, 168, 112, 0.14) 1.5px, transparent 1.5px);
+  background-size: 30px 30px;
+  pointer-events: none;
+  z-index: 0;
+}
+.hero-fremio > .container {
+  position: relative;
+  z-index: 1;
 }
 .hero-grid {
   position: relative;
@@ -486,14 +502,14 @@ body {
   box-shadow: 0 5px 0 #b9978b;
 }
 
-/* Dekorasi – kamera + roll film */
+/* Dekorasi – lantern + film */
 .deco {
   position: absolute;
   width: 60px;
   height: 60px;
-  color: #9f9f9f;
-  opacity: 0.75;
-  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.08));
+  color: #c9a870;
+  opacity: 0.55;
+  filter: drop-shadow(0 6px 14px rgba(201, 168, 112, 0.18));
   pointer-events: none;
   z-index: 0;
 }
@@ -521,8 +537,8 @@ body {
 /* Kanvas kolase kanan (stabil) */
 .hero-right {
   position: relative;
-  width: 600px;
-  height: 600px;
+  width: 480px;
+  height: 520px;
   margin: 0 auto;
 }
 .hero-right::after {
@@ -531,15 +547,59 @@ body {
   left: 50%;
   top: 60%;
   transform: translate(-50%, -50%);
-  width: 600px;
-  height: 600px;
+  width: 480px;
+  height: 520px;
   border-radius: 50%;
   background: radial-gradient(
     closest-side,
-    rgba(0, 0, 0, 0.08),
+    rgba(201, 168, 112, 0.13),
     transparent 70%
   );
   z-index: -1;
+}
+
+/* === Ramadan Decorations === */
+.rmd-crescent {
+  position: absolute;
+  right: calc(50% - 680px);
+  top: 50%;
+  transform: translateY(-55%);
+  width: 180px;
+  height: 180px;
+  color: #c9a870;
+  opacity: 0.45;
+  pointer-events: none;
+  z-index: 0;
+}
+.rmd-star {
+  position: absolute;
+  color: #c9a870;
+  pointer-events: none;
+  z-index: 0;
+}
+.rmd-star-1 {
+  right: calc(50% - 620px);
+  top: 18%;
+  width: 26px;
+  height: 26px;
+  opacity: 0.55;
+}
+.rmd-star-2 {
+  right: calc(50% - 590px);
+  top: 30%;
+  width: 16px;
+  height: 16px;
+  opacity: 0.4;
+}
+.rmd-star-3 {
+  right: calc(50% - 650px);
+  bottom: 22%;
+  width: 20px;
+  height: 20px;
+  opacity: 0.38;
+}
+@media (max-width: 1280px) {
+  .rmd-crescent, .rmd-star { display: none; }
 }
 .shot {
   position: absolute;
@@ -548,21 +608,21 @@ body {
   filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.2));
 }
 .shot.main {
-  width: 270px;
-  left: 120px;
-  top: 80px;
+  width: 160px;
+  left: 130px;
+  top: 50px;
   transform: rotate(2deg) scale(1.03);
 }
 .shot.left {
-  width: 260px;
-  left: 20px;
-  top: 200px;
+  width: 150px;
+  left: 5px;
+  top: 160px;
   transform: rotate(-3deg);
 }
 .shot.right {
-  width: 250px;
-  right: 20px;
-  top: 200px;
+  width: 150px;
+  right: 5px;
+  top: 160px;
   transform: rotate(1deg);
 }
 
@@ -574,27 +634,27 @@ body {
     padding: 100px 0 110px;
   }
   .hero-right {
-    width: 650px;
-    height: 650px;
+    width: 510px;
+    height: 550px;
   }
   .hero-right::after {
-    width: 650px;
-    height: 650px;
+    width: 510px;
+    height: 550px;
   }
   .shot.main {
-    width: 290px;
-    left: 130px;
-    top: 90px;
+    width: 170px;
+    left: 140px;
+    top: 55px;
   }
   .shot.left {
-    width: 280px;
-    left: 10px;
-    top: 215px;
+    width: 160px;
+    left: 5px;
+    top: 170px;
   }
   .shot.right {
-    width: 270px;
-    right: 10px;
-    top: 215px;
+    width: 160px;
+    right: 5px;
+    top: 170px;
   }
   .about-section {
     padding: 100px 0;
@@ -633,27 +693,27 @@ body {
     margin: 16px 0 24px;
   }
   .hero-right {
-    width: 480px;
-    height: 460px;
+    width: 400px;
+    height: 430px;
   }
   .hero-right::after {
-    width: 480px;
-    height: 480px;
+    width: 400px;
+    height: 430px;
   }
   .shot.main {
-    width: 240px;
-    left: 140px;
-    top: 0;
+    width: 140px;
+    left: 128px;
+    top: 20px;
   }
   .shot.left {
-    width: 210px;
-    left: 20px;
-    top: 130px;
+    width: 125px;
+    left: 5px;
+    top: 120px;
   }
   .shot.right {
-    width: 200px;
-    right: 0;
-    top: 160px;
+    width: 125px;
+    right: 5px;
+    top: 120px;
   }
   .cam-tl {
     left: 40px;
@@ -677,26 +737,27 @@ body {
     font-size: clamp(32px, 6vw, 38px);
   }
   .hero-right {
-    width: 420px;
-    height: 420px;
+    width: 360px;
+    height: 390px;
   }
   .hero-right::after {
-    width: 420px;
-    height: 420px;
+    width: 360px;
+    height: 390px;
   }
   .shot.main {
-    width: 210px;
-    left: 120px;
+    width: 128px;
+    left: 112px;
+    top: 20px;
   }
   .shot.left {
-    width: 190px;
-    left: 15px;
-    top: 120px;
+    width: 115px;
+    left: 5px;
+    top: 110px;
   }
   .shot.right {
-    width: 180px;
+    width: 115px;
     right: 5px;
-    top: 150px;
+    top: 110px;
   }
   .about-content {
     padding: 0 1.5rem;
@@ -733,26 +794,27 @@ body {
 
 @media (max-width: 560px) {
   .hero-right {
-    width: 360px;
-    height: 360px;
+    width: 310px;
+    height: 340px;
   }
   .hero-right::after {
-    width: 360px;
-    height: 360px;
+    width: 310px;
+    height: 340px;
   }
   .shot.main {
-    width: 190px;
-    left: 106px;
+    width: 112px;
+    left: 98px;
+    top: 20px;
   }
   .shot.left {
-    width: 170px;
-    left: 0;
-    top: 110px;
+    width: 100px;
+    left: 3px;
+    top: 105px;
   }
   .shot.right {
-    width: 160px;
-    right: 0;
-    top: 140px;
+    width: 100px;
+    right: 3px;
+    top: 105px;
   }
   .cta-pink {
     width: 100%;
@@ -773,27 +835,27 @@ body {
     margin: 12px 0 20px;
   }
   .hero-right {
-    width: 300px;
-    height: 300px;
+    width: 255px;
+    height: 285px;
   }
   .hero-right::after {
-    width: 300px;
-    height: 300px;
+    width: 255px;
+    height: 285px;
   }
   .shot.main {
-    width: 160px;
-    left: 85px;
+    width: 95px;
+    left: 78px;
     top: 5px;
   }
   .shot.left {
-    width: 150px;
-    left: 5px;
-    top: 100px;
+    width: 88px;
+    left: 3px;
+    top: 90px;
   }
   .shot.right {
-    width: 140px;
-    right: 10px;
-    top: 115px;
+    width: 88px;
+    right: 3px;
+    top: 90px;
   }
   .cta-pink {
     font-size: 17px;
@@ -810,27 +872,27 @@ body {
     line-height: 1.45;
   }
   .hero-right {
-    width: 280px;
-    height: 280px;
+    width: 235px;
+    height: 265px;
   }
   .hero-right::after {
-    width: 280px;
-    height: 280px;
+    width: 235px;
+    height: 265px;
   }
   .shot.main {
-    width: 150px;
-    left: 80px;
-    top: 10px;
+    width: 88px;
+    left: 72px;
+    top: 5px;
   }
   .shot.left {
-    width: 140px;
-    left: 12px;
-    top: 96px;
+    width: 83px;
+    left: 3px;
+    top: 85px;
   }
   .shot.right {
-    width: 130px;
-    right: 18px;
-    top: 108px;
+    width: 83px;
+    right: 3px;
+    top: 85px;
   }
 }
 
@@ -847,27 +909,27 @@ body {
     margin: 12px 0 20px;
   }
   .hero-right {
-    width: 240px;
-    height: 240px;
+    width: 200px;
+    height: 220px;
   }
   .hero-right::after {
-    width: 240px;
-    height: 240px;
+    width: 200px;
+    height: 220px;
   }
   .shot.main {
-    width: 130px;
-    left: 68px;
-    top: 8px;
+    width: 78px;
+    left: 60px;
+    top: 5px;
   }
   .shot.left {
-    width: 120px;
-    left: 8px;
-    top: 82px;
+    width: 72px;
+    left: 2px;
+    top: 75px;
   }
   .shot.right {
-    width: 115px;
-    right: 12px;
-    top: 92px;
+    width: 72px;
+    right: 2px;
+    top: 75px;
   }
   .cta-pink {
     font-size: 16px;

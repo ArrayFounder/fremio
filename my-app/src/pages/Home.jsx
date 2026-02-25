@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { trackUserSession, trackFunnelEvent } from "../services/analyticsService";
-import frame1 from "../assets/frame1.png";
-import frame2 from "../assets/frame2.png";
-import frame3 from "../assets/frame3.png";
+import frame1 from "../assets/frame1_ramadan.png";
+import frame2 from "../assets/frame2_ramadan.png";
+import frame3 from "../assets/frame3_ramadan.png";
 
 export default function Home() {
   const { isAuthenticated } = useAuth();
@@ -39,30 +39,16 @@ export default function Home() {
     trackVisit();
   }, []);
 
-  const heroContent = {
-    A: {
-      headline: (
-        <>
-          <span className="accent">Momen</span> tidak perlu dijelaskan.
-          <br />
-          Cukup <span className="accent">dirasakan</span>.
-        </>
-      ),
-      subCopy: "Fremio membantu kamu mengemas momen menjadi sesuatu yang layak diingat. Dengan cara yang sederhana, indah, dan terasa milikmu.",
-      cta: "Ciptakan Momen"
-    },
-    B: {
-      headline: (
-        <>
-          Setiap orang punya <span className="accent">cara sendiri</span> merayakan <span className="accent">momen</span>
-        </>
-      ),
-      subCopy: "Fremio bukan tentang bagaimana seharusnya momen terlihat. Ini tentang bagaimana momen itu terasa — bagi kamu.",
-      cta: "Rayakan Momenmu"
-    }
+  const currentHero = {
+    headline: (
+      <>
+        Rayakan indahnya momen di{" "}
+        <span className="accent">Bulan Ramadan</span>.
+      </>
+    ),
+    subCopy: "Bersama Fremio, simpan hangatnya Ramadan untuk dikenang selamanya.",
+    cta: "Abadikan Ramadanmu"
   };
-
-  const currentHero = heroContent[heroVariant];
 
   return (
     <>
@@ -72,6 +58,11 @@ export default function Home() {
         className="hero-fremio"
         style={{ scrollMarginTop: "64px" }}
       >
+        {/* Ramadan deco */}
+        <CrescentIcon className="rmd-crescent" />
+        <StarIcon className="rmd-star rmd-star-1" />
+        <StarIcon className="rmd-star rmd-star-2" />
+        <StarIcon className="rmd-star rmd-star-3" />
         <div className="container">
           <div className="hero-grid">
             {/* LEFT */}
@@ -91,23 +82,23 @@ export default function Home() {
                 {currentHero.cta}
               </NavLink>
 
-              {/* dekorasi: kamera + roll film */}
-              <CameraIcon className="deco cam-tl" />
+              {/* dekorasi */}
+              <LanternIcon className="deco cam-tl" />
               <FilmIcon className="deco film-tc" />
-              <CameraIcon className="deco cam-bl" />
+              <LanternIcon className="deco cam-bl" />
               <FilmIcon className="deco film-bc" />
             </div>
 
             {/* RIGHT – kolase */}
             <div className="hero-right">
               <img
-                src={frame1}
+                src={frame3}
                 alt="Contoh frame utama"
                 className="shot main"
               />
               <img src={frame2} alt="Contoh frame kiri" className="shot left" />
               <img
-                src={frame3}
+                src={frame1}
                 alt="Contoh frame kanan"
                 className="shot right"
               />
@@ -176,16 +167,18 @@ export default function Home() {
   );
 }
 
-/* ====== Ikon dekor (asli kamu, tidak diubah) ====== */
-function CameraIcon({ className = "" }) {
+/* ====== Ikon dekor ====== */
+function LanternIcon({ className = "" }) {
   return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M7 6h3l1-2h2l1 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"
-        fill="currentColor"
-      />
-      <circle cx="12" cy="12" r="4" fill="#fff" />
-      <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+    <svg className={className} viewBox="0 0 64 80" fill="none" aria-hidden="true">
+      <line x1="32" y1="0" x2="32" y2="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+      <rect x="18" y="10" width="28" height="5" rx="2" fill="currentColor"/>
+      <rect x="14" y="15" width="36" height="44" rx="8" fill="currentColor" opacity="0.18" stroke="currentColor" strokeWidth="2"/>
+      <line x1="14" y1="37" x2="50" y2="37" stroke="currentColor" strokeWidth="1.5" opacity="0.4"/>
+      <line x1="32" y1="15" x2="32" y2="59" stroke="currentColor" strokeWidth="1.5" opacity="0.4"/>
+      <rect x="18" y="59" width="28" height="5" rx="2" fill="currentColor"/>
+      <line x1="26" y1="64" x2="38" y2="64" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+      <circle cx="32" cy="37" r="5" fill="currentColor" opacity="0.5"/>
     </svg>
   );
 }
@@ -199,6 +192,30 @@ function FilmIcon({ className = "" }) {
       <rect x="48" y="20" width="6" height="24" rx="2" fill="currentColor" />
       <circle cx="51" cy="24" r="1.6" fill="#fff" />
       <circle cx="51" cy="40" r="1.6" fill="#fff" />
+    </svg>
+  );
+}
+function CrescentIcon({ className = "" }) {
+  return (
+    <svg className={className} viewBox="0 0 120 120" fill="none" aria-hidden="true">
+      <path
+        d="M75,18 A46,46 0 1,0 75,102 A30,30 0 1,1 75,18 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinejoin="round"
+      />
+      <polygon points="92,14 94.5,21 102,21 96,25.5 98.5,32.5 92,28 85.5,32.5 88,25.5 82,21 89.5,21" fill="currentColor" />
+    </svg>
+  );
+}
+function StarIcon({ className = "" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <polygon
+        points="12,2 13.8,8.2 20,8.2 15,12 17,18 12,14.5 7,18 9,12 4,8.2 10.2,8.2"
+        fill="currentColor"
+      />
     </svg>
   );
 }

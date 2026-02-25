@@ -1,7 +1,7 @@
 import { NavLink, useEffect } from "react-router-dom";
-import frame1 from "../assets/frame1.png";
-import frame2 from "../assets/frame2.png";
-import frame3 from "../assets/frame3.png";
+import frame1 from "../assets/frame1_ramadan.png";
+import frame2 from "../assets/frame2_ramadan.png";
+import frame3 from "../assets/frame3_ramadan.png";
 import ProfileIcon from "../assets/profile-icon.png";
 
 export default function HomeLoggedIn() {

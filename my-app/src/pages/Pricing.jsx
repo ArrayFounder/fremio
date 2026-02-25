@@ -22,6 +22,7 @@ const Pricing = () => {
   // Premium frames categories shown on Pricing page
   // Must match the exact category strings used when uploading frames in Admin.
   const tabs = [
+    "Ramadan Series",
     "Holiday Fremio Series",
     "Aesthetic Scrapbook & Retro",
     "Cute Characters",
@@ -490,6 +491,7 @@ const Pricing = () => {
     "Cute Characters": "“Cute Characters untuk vibes gemas”",
     "Self-love": "“Self-love untuk momen yang lebih bermakna”",
     Romance: "Romance untuk momen spesial",
+    "Ramadan Series": "“Ramadan Series untuk momen penuh berkah”",
   };
 
   const previewQuote =
@@ -1235,3 +1237,4 @@ const Pricing = () => {
 };
 
 export default Pricing;
+
