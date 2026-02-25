@@ -40,6 +40,21 @@ const getAccessDurationDays = () => {
   return Number.isFinite(raw) && raw > 0 ? raw : 30;
 };
 
+// Map pricing plans to (amount, durationDays)
+const PRICING_PLANS = {
+  '3days':  { grossAmount: 5000,  durationDays: 3 },
+  '7days':  { grossAmount: 7000,  durationDays: 7 },
+  '30days': { grossAmount: 10000, durationDays: 30 },
+};
+
+// Derive access duration from transaction amount so webhook & self-heal use correct plan durations.
+const getDurationDaysByAmount = (amount) => {
+  const a = Number(amount);
+  if (a === 5000) return 3;
+  if (a === 7000) return 7;
+  return getAccessDurationDays(); // fallback to env/default (30)
+};
+
 const addDays = (date, days) => {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
@@ -294,9 +309,14 @@ router.post("/create", verifyToken, async (req, res) => {
       // Continue without database validation in fallback mode
     }
 
+    // Resolve pricing plan
+    const planKey = Object.prototype.hasOwnProperty.call(PRICING_PLANS, req.body?.plan)
+      ? req.body.plan
+      : '30days';
+    const { grossAmount } = PRICING_PLANS[planKey];
+
     // Generate order ID
     const orderId = midtransService.generateOrderId(userId);
-    const grossAmount = 10000; // Rp 10.000
 
     console.log("📝 Order ID generated:", orderId);
 
@@ -490,6 +510,7 @@ router.get("/pending", verifyToken, async (req, res) => {
         snapToken,
         redirectUrl,
         createdAt: latestPending.created_at,
+        grossAmount: latestPending.amount,
       },
     });
   } catch (error) {
@@ -747,13 +768,15 @@ const handleMidtransNotification = async (req, res) => {
         }
       }
 
+      const txDurationDays = getDurationDaysByAmount(transaction.amount);
       await paymentDB.grantPackageAccess({
         userId: effectiveUserId,
         transactionId: transaction.id,
         packageIds,
+        durationDays: txDurationDays,
       });
 
-      console.log("✅ Access granted to user:", transaction.user_id);
+      console.log("✅ Access granted to user:", transaction.user_id, "duration:", txDurationDays, "days");
 
       // Send email notification via n8n (idempotent - only sends once)
       try {
@@ -1065,7 +1088,7 @@ router.get("/access", verifyToken, async (req, res) => {
             const packages = await paymentDB.getAllPackages();
             let packageIds = determinePackageIdsToGrant({ packages });
             if (packageIds.length === 0) packageIds = [1];
-            const durationDays = getAccessDurationDays();
+            const durationDays = getDurationDaysByAmount(latestSuccess.amount);
             const start = latestSuccess.paid_at || latestSuccess.created_at || new Date();
             const accessEnd = addDays(start, durationDays);
 
@@ -1113,7 +1136,7 @@ router.get("/access", verifyToken, async (req, res) => {
                 const packages = await paymentDB.getAllPackages();
                 let packageIds = determinePackageIdsToGrant({ packages });
                 if (packageIds.length === 0) packageIds = [1];
-                const durationDays = getAccessDurationDays();
+                const durationDays = getDurationDaysByAmount(latestPending.amount);
                 const start =
                   midtransStatus.settlement_time ||
                   midtransStatus.transaction_time ||

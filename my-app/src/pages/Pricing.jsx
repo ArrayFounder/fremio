@@ -13,8 +13,22 @@ const Pricing = () => {
   const [access, setAccess] = useState(null);
   const [canPurchase, setCanPurchase] = useState(false);
   const [checkingAccess, setCheckingAccess] = useState(true);
+
+  // Promo countdown — resets every midnight (purely decorative / urgency)
+  const getSecondsUntilMidnight = () => {
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    return Math.floor((midnight - now) / 1000);
+  };
+  const [promoSecondsLeft, setPromoSecondsLeft] = useState(getSecondsUntilMidnight);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPromoSecondsLeft(getSecondsUntilMidnight());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
   const [pendingPayment, setPendingPayment] = useState(null);
-  const [termsAccepted, setTermsAccepted] = useState(false);
 
   // Avoid running syncAccess multiple times for the same redirect
   const [syncedOrderFromQuery, setSyncedOrderFromQuery] = useState(null);
@@ -32,6 +46,13 @@ const Pricing = () => {
   const [activeTab, setActiveTab] = useState(tabs[0]);
   const [premiumFramesByCategory, setPremiumFramesByCategory] = useState({});
   const [loadingPreviewFrames, setLoadingPreviewFrames] = useState(true);
+  const [selectedPlan, setSelectedPlan] = useState(null);
+
+  const PLANS = {
+    '3days':  { label: '3 Hari', amount: 5000,  originalAmount: 10000, durationLabel: '/ 3 hari',  badge: null },
+    '7days':  { label: '1 Minggu', amount: 7000,  originalAmount: 15000, durationLabel: '/ 1 minggu', badge: 'Populer' },
+    '30days': { label: '1 Bulan', amount: 10000, originalAmount: 35000, durationLabel: '/ 1 bulan', badge: 'Terbaik' },
+  };
 
   useEffect(() => {
     // Set page title
@@ -287,39 +308,51 @@ const Pricing = () => {
       return;
     }
 
-    if (!termsAccepted) {
-      alert(
-        "Sebelum melanjutkan pembayaran, Anda wajib menyetujui Syarat & Ketentuan (termasuk kebijakan No Refund)."
-      );
-      return;
-    }
-
     try {
       setLoading(true);
 
       // Auto-check for pending payment and resume if exists
+      // But first: if user selected a DIFFERENT plan than the pending payment, cancel it
+      let activePending = pendingPayment; // local copy — React setState is async
+      if (activePending && selectedPlan) {
+        const selectedAmount = PLANS[selectedPlan]?.amount;
+        const pendingAmount = activePending.grossAmount;
+        if (pendingAmount && selectedAmount && pendingAmount !== selectedAmount) {
+          console.log(`🔄 Selected plan (${selectedAmount}) differs from pending (${pendingAmount}), canceling old payment...`);
+          try {
+            await paymentService.cancelLatestPending();
+            activePending = null; // clear local copy immediately
+            setPendingPayment(null);
+            setCanPurchase(true);
+          } catch (cancelErr) {
+            console.warn('Cancel pending error:', cancelErr);
+          }
+          // Fall through to create new payment below
+        }
+      }
+
       if (
-        pendingPayment &&
-        (pendingPayment.snapToken || pendingPayment.redirectUrl)
+        activePending &&
+        (activePending.snapToken || activePending.redirectUrl)
       ) {
         console.log("📋 Found pending payment, auto-resuming...");
         await paymentService.loadSnapScript();
 
-        if (pendingPayment.snapToken) {
+        if (activePending.snapToken) {
           try {
-            if (pendingPayment.orderId) {
-              localStorage.setItem("fremio_last_order_id", pendingPayment.orderId);
+            if (activePending.orderId) {
+              localStorage.setItem("fremio_last_order_id", activePending.orderId);
             }
           } catch {
             // ignore
           }
-          paymentService.openSnapPayment(pendingPayment.snapToken, {
+          paymentService.openSnapPayment(activePending.snapToken, {
             onSuccess: () =>
-              syncAccess(pendingPayment.orderId).finally(() =>
+              syncAccess(activePending.orderId).finally(() =>
                 setLoading(false)
               ),
             onPending: () =>
-              syncAccess(pendingPayment.orderId).finally(() =>
+              syncAccess(activePending.orderId).finally(() =>
                 setLoading(false)
               ),
             onError: async () => {
@@ -342,25 +375,29 @@ const Pricing = () => {
                 setLoading(false);
               }
             },
+            onClose: () => {
+              // User closed Snap without paying — allow them to freely switch plan
+              setLoading(false);
+            },
           });
           return;
         }
 
-        if (pendingPayment.redirectUrl) {
+        if (activePending.redirectUrl) {
           try {
-            if (pendingPayment.orderId) {
-              localStorage.setItem("fremio_last_order_id", pendingPayment.orderId);
+            if (activePending.orderId) {
+              localStorage.setItem("fremio_last_order_id", activePending.orderId);
             }
           } catch {
             // ignore
           }
           window.open(
-            pendingPayment.redirectUrl,
+            activePending.redirectUrl,
             "_blank",
             "noopener,noreferrer"
           );
           setTimeout(() => {
-            syncAccess(pendingPayment.orderId);
+            syncAccess(activePending.orderId);
           }, 1500);
           setLoading(false);
           return;
@@ -372,6 +409,7 @@ const Pricing = () => {
         email: currentUser.email,
         name: currentUser.displayName || "Fremio User",
         phone: currentUser.phoneNumber || "",
+        plan: selectedPlan,
       });
 
       // Create payment
@@ -379,6 +417,7 @@ const Pricing = () => {
         email: currentUser.email,
         name: currentUser.displayName || "Fremio User",
         phone: currentUser.phoneNumber || "",
+        plan: selectedPlan,
       });
 
       console.log("✅ Payment response:", response);
@@ -520,7 +559,7 @@ const Pricing = () => {
             color: "#333",
           }}
         >
-          Preview Frame Koleksi Fremio
+          Preview Frame Membership Fremio
         </h3>
 
         <div className="preview-tabs">
@@ -564,6 +603,315 @@ const Pricing = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* PRICING PLANS SECTION */}
+      <div
+        className="pricing-plans-section"
+        style={{
+          padding: '32px 20px',
+          background: '#fff',
+          marginBottom: '10px',
+        }}
+      >
+        <h2
+          style={{
+            fontSize: '26px',
+            fontWeight: '700',
+            textAlign: 'center',
+            marginBottom: '8px',
+            color: '#1a1a1a',
+          }}
+        >
+          Pilih Paket Keanggotaan
+        </h2>
+        <p
+          style={{
+            textAlign: 'center',
+            fontSize: '15px',
+            color: '#666',
+            marginBottom: '20px',
+          }}
+        >
+          Coba dulu atau langsung hemat lebih banyak dengan paket bulanan.
+        </p>
+
+        {/* PROMO COUNTDOWN BANNER */}
+        {(() => {
+          const h = String(Math.floor(promoSecondsLeft / 3600)).padStart(2, '0');
+          const m = String(Math.floor((promoSecondsLeft % 3600) / 60)).padStart(2, '0');
+          const s = String(promoSecondsLeft % 60).padStart(2, '0');
+          return (
+            <div style={{
+              background: 'linear-gradient(135deg, #c89585 0%, #b07060 100%)',
+              borderRadius: '14px',
+              padding: '14px 20px',
+              marginBottom: '28px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '10px',
+              boxShadow: '0 4px 18px rgba(200,149,133,0.35)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '18px' }}>🔥</span>
+                <span style={{ color: '#fff', fontWeight: '700', fontSize: '14px', letterSpacing: '0.3px' }}>
+                  Harga promo hanya berlaku hari ini!
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {[['jam', h], ['menit', m], ['detik', s]].map(([label, val]) => (
+                  <React.Fragment key={label}>
+                    <div style={{
+                      background: 'rgba(0,0,0,0.25)',
+                      borderRadius: '10px',
+                      padding: '8px 14px',
+                      minWidth: '52px',
+                      textAlign: 'center',
+                    }}>
+                      <div style={{ color: '#fff', fontSize: '26px', fontWeight: '800', lineHeight: 1, fontVariantNumeric: 'tabular-nums', fontFeatureSettings: '"tnum"' }}>{val}</div>
+                      <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: '10px', marginTop: '3px', letterSpacing: '0.8px', textTransform: 'uppercase' }}>{label}</div>
+                    </div>
+                    {label !== 'detik' && (
+                      <span style={{ color: '#fff', fontSize: '22px', fontWeight: '700', opacity: 0.8, marginBottom: '12px' }}>:</span>
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+              <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12px' }}>
+                Harga kembali normal tengah malam — jangan sampai kehabisan! ✨
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* 3 Plan Cards */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: '16px',
+            maxWidth: '800px',
+            margin: '0 auto 28px',
+          }}
+        >
+          {Object.entries(PLANS).map(([key, plan]) => {
+            const isSelected = selectedPlan === key;
+            const isBadged = !!plan.badge;
+            const BRAND = '#c89585';
+            const BRAND_LIGHT = '#fef5f1';
+            const BRAND_SHADOW = 'rgba(200,149,133,0.18)';
+            return (
+              <div
+                key={key}
+                onClick={() => !isSelected && setSelectedPlan(key)}
+                style={{
+                  position: 'relative',
+                  border: isSelected ? `2px solid ${BRAND}` : '1px solid #e2e8f0',
+                  borderRadius: '16px',
+                  padding: isBadged ? '36px 20px 24px' : '24px 20px',
+                  background: isSelected ? BRAND_LIGHT : '#fff',
+                  cursor: isSelected ? 'default' : 'pointer',
+                  boxShadow: isSelected
+                    ? `0 4px 16px ${BRAND_SHADOW}`
+                    : '0 2px 8px rgba(0,0,0,0.06)',
+                  transition: 'all 0.2s',
+                  textAlign: 'center',
+                }}
+              >
+                {/* Badge */}
+                {plan.badge && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '-13px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      background: BRAND,
+                      color: '#fff',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      padding: '3px 14px',
+                      borderRadius: '999px',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {plan.badge === 'Terbaik' ? '🌟 Terbaik' : plan.badge}
+                  </div>
+                )}
+
+                {/* Plan label */}
+                <div
+                  style={{
+                    fontSize: '18px',
+                    fontWeight: '700',
+                    color: '#1a1a1a',
+                    marginBottom: '12px',
+                  }}
+                >
+                  {plan.label}
+                </div>
+
+                {/* Strikethrough original price */}
+                <div
+                  style={{
+                    fontSize: '14px',
+                    color: '#ef4444',
+                    textDecoration: 'line-through',
+                    marginBottom: '4px',
+                    fontWeight: '500',
+                  }}
+                >
+                  Rp {plan.originalAmount.toLocaleString('id-ID')}
+                </div>
+
+                {/* Real price */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    marginBottom: '16px',
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: '30px',
+                      fontWeight: '800',
+                      color: isSelected ? BRAND : '#1a1a1a',
+                      lineHeight: '1',
+                    }}
+                  >
+                    Rp {plan.amount.toLocaleString('id-ID')}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '13px',
+                      color: '#888',
+                      fontWeight: '400',
+                    }}
+                  >
+                    {plan.durationLabel}
+                  </span>
+                </div>
+
+                {/* Features */}
+                <ul
+                  style={{
+                    listStyle: 'none',
+                    padding: 0,
+                    margin: '0 0 16px',
+                    fontSize: '13px',
+                    color: '#555',
+                    textAlign: 'left',
+                  }}
+                >
+                  <li style={{ marginBottom: '6px' }}>✓ Akses semua frame premium</li>
+                  <li style={{ marginBottom: '6px' }}>✓ Semua koleksi Fremio</li>
+                  <li style={{ marginBottom: '6px' }}>✓ Akses ke frame terbaru</li>
+                </ul>
+
+                {/* Action button */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isSelected) {
+                      handleBuyPackage();
+                    } else {
+                      setSelectedPlan(key);
+                    }
+                  }}
+                  disabled={isSelected && loading}
+                  style={{
+                    width: '100%',
+                    padding: '10px 0',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: isSelected ? BRAND : '#f3f4f6',
+                    color: isSelected ? '#fff' : '#666',
+                    fontSize: '14px',
+                    fontWeight: '700',
+                    cursor: isSelected && loading ? 'not-allowed' : 'pointer',
+                    transition: 'background 0.2s, transform 0.1s',
+                    boxShadow: isSelected ? `0 4px 12px ${BRAND_SHADOW}` : 'none',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (isSelected && !loading) e.currentTarget.style.background = '#b87d6a';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (isSelected) e.currentTarget.style.background = BRAND;
+                  }}
+                >
+                  {isSelected
+                    ? loading ? 'Memproses...' : 'Bayar Sekarang →'
+                    : 'Pilih'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <p
+          style={{
+            textAlign: 'center',
+            fontSize: '13px',
+            color: '#aaa',
+          }}
+        >
+          🔒 Pembayaran aman via Midtrans · Semua metode tersedia
+        </p>
+
+        {/* Status notes */}
+        {access && (
+          <div
+            style={{
+              maxWidth: '800px',
+              margin: '0 auto 10px',
+              background: '#f0fdf4',
+              border: '1px solid #86efac',
+              borderRadius: '12px',
+              padding: '16px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '10px',
+            }}
+          >
+            <div>
+              <span style={{ fontWeight: '700', color: '#15803d' }}>✅ Keanggotaan aktif</span>
+              <span style={{ fontSize: '13px', color: '#555', marginLeft: '8px' }}>
+                Berakhir{' '}
+                {new Date(access.accessEnd).toLocaleDateString('id-ID', {
+                  day: 'numeric', month: 'long', year: 'numeric',
+                })}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/frames')}
+              style={{
+                background: '#c89585', color: '#fff', border: 'none',
+                borderRadius: '8px', padding: '8px 18px',
+                fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+              }}
+            >
+              Gunakan Frame Premium →
+            </button>
+          </div>
+        )}
+        {!currentUser && (
+          <p style={{ textAlign: 'center', fontSize: '13px', color: '#999', marginTop: '4px' }}>
+            Login diperlukan untuk melanjutkan pembelian.
+          </p>
+        )}
+        {currentUser && !access && pendingPayment && (
+          <p style={{ textAlign: 'center', fontSize: '13px', color: '#b45309', marginTop: '4px' }}>
+            ⏳ Ada transaksi yang belum selesai. Lanjutkan pembayaran atau pilih paket lain — paket lama akan otomatis dibatalkan.
+          </p>
+        )}
       </div>
 
       <div className="pricing-hero">
@@ -718,412 +1066,6 @@ const Pricing = () => {
         </div>
       </div>
 
-      <div className="pricing-offer-card">
-        {access ? (
-          <>
-            <div className="offer-title" style={{ color: "#10b981" }}>
-              ✓ Terima kasih sudah menjadi Member Fremio
-            </div>
-            <div
-              className="offer-subtitle"
-              style={{
-                fontSize: "16px",
-                color: "#666",
-                marginTop: "10px",
-                textAlign: "center",
-              }}
-            >
-              Keanggotaan Anda aktif hingga{" "}
-              {new Date(access.accessEnd).toLocaleDateString("id-ID", {
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })}
-            </div>
-
-            <div className="offer-columns" style={{ marginTop: "30px" }}>
-              <div className="offer-col">
-                <div className="offer-col-title">Yang Kamu Dapatkan:</div>
-                <ul>
-                  <li>✓ Akses ke {access.totalFrames} premium frames</li>
-                  <li>✓ Semua koleksi frame Fremio</li>
-                  <li>✓ Frame baru setiap bulan</li>
-                  <li>✓ Akses lebih awal ke seri mendatang</li>
-                </ul>
-              </div>
-              <div className="offer-col">
-                <div className="offer-col-title">Manfaatkan Keanggotaan:</div>
-                <ul>
-                  <li>Ekspresikan momen dengan frame pilihan</li>
-                  <li>Download hasil tanpa watermark</li>
-                  <li>Akses seri khusus (Holiday, Year-End, dll)</li>
-                  <li>Perpanjang kapan saja sebelum berakhir</li>
-                </ul>
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            {/* WHAT YOU UNLOCK SECTION */}
-            <div
-              style={{
-                padding: "30px 20px 15px",
-                marginBottom: "10px",
-              }}
-            >
-              <h2
-                style={{
-                  fontSize: "28px",
-                  fontWeight: "700",
-                  textAlign: "center",
-                  marginBottom: "20px",
-                  color: "#333",
-                }}
-              >
-                Yang Kamu Dapatkan sebagai Member Fremio
-              </h2>
-              <p
-                style={{
-                  textAlign: "center",
-                  fontSize: "16px",
-                  color: "#666",
-                  marginBottom: "30px",
-                }}
-              >
-                Sebagai member, kamu mendapatkan akses penuh ke seluruh
-                ekosistem Fremio:
-              </p>
-              <div className="offer-columns">
-                <div className="offer-col">
-                  <div className="offer-col-title">Akses Penuh:</div>
-                  <ul>
-                    <li>✓ Unlimited ke seluruh koleksi frame Fremio</li>
-                    <li>✓ Frame baru setiap bulan</li>
-                    <li>✓ Seri khusus (Holiday, Year-End, dll)</li>
-                    <li>✓ Akses lebih awal ke seri mendatang</li>
-                  </ul>
-                </div>
-                <div className="offer-col">
-                  <div className="offer-col-title">
-                    Koleksi Membership Frames:
-                  </div>
-                  <ul>
-                    {membershipCategoryCounts.map((entry) => (
-                      <li key={entry.category}>
-                        {entry.count} {entry.category} frames
-                      </li>
-                    ))}
-                    <li>Total: {membershipTotalFrames} frames</li>
-                  </ul>
-                </div>
-              </div>
-              <p
-                style={{
-                  textAlign: "center",
-                  fontSize: "16px",
-                  fontStyle: "italic",
-                  color: "#888",
-                  marginTop: "10px",
-                  marginBottom: "0",
-                }}
-              >
-                Tanpa perlu memilih satu per satu.
-              </p>
-            </div>
-
-            {/* MEMBERSHIP CARD SECTION */}
-            <div
-              onClick={() => {
-                const ctaButton = document.querySelector(".offer-cta");
-                if (ctaButton) {
-                  ctaButton.scrollIntoView({
-                    behavior: "smooth",
-                    block: "center",
-                  });
-                }
-              }}
-              style={{
-                background: "linear-gradient(135deg, #e0b7a9 0%, #d4a59a 100%)",
-                padding: "20px 20px",
-                borderRadius: "12px",
-                color: "white",
-                textAlign: "center",
-                marginTop: "10px",
-                marginBottom: "10px",
-                boxShadow: "0 4px 12px rgba(224, 183, 169, 0.25)",
-                maxWidth: "400px",
-                margin: "15px auto",
-                cursor: "pointer",
-                transition: "transform 0.2s, box-shadow 0.2s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = "translateY(-2px)";
-                e.currentTarget.style.boxShadow =
-                  "0 6px 16px rgba(224, 183, 169, 0.35)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = "translateY(0)";
-                e.currentTarget.style.boxShadow =
-                  "0 4px 12px rgba(224, 183, 169, 0.25)";
-              }}
-            >
-              <h2
-                style={{
-                  fontSize: "18px",
-                  fontWeight: "700",
-                  marginBottom: "6px",
-                }}
-              >
-                Keanggotaan Fremio
-              </h2>
-              <div
-                style={{
-                  fontSize: "14px",
-                  fontWeight: "600",
-                  marginBottom: "15px",
-                  opacity: 0.95,
-                }}
-              >
-                fremio Member
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "4px",
-                  marginBottom: "8px",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "18px",
-                    fontWeight: "600",
-                    textDecoration: "line-through",
-                    opacity: 0.85,
-                    color: "#dc2626",
-                    letterSpacing: "-0.5px",
-                  }}
-                >
-                  Rp 50.000
-                </span>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    gap: "4px",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "32px",
-                      fontWeight: "800",
-                      lineHeight: "1",
-                    }}
-                  >
-                    Rp 10.000
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "15px",
-                      fontWeight: "400",
-                      opacity: 0.9,
-                    }}
-                  >
-                    / bulan
-                  </span>
-                </div>
-              </div>
-
-              <p
-                style={{
-                  fontSize: "13px",
-                  lineHeight: "1.4",
-                  marginTop: "12px",
-                  opacity: 0.95,
-                }}
-              >
-                Kontribusi ini membantu Fremio terus berkembang, menciptakan
-                frame baru, dan menjaga ruang ekspresi ini tetap terbuka.
-              </p>
-            </div>
-
-            {/* SOCIAL / BELONGING SECTION */}
-            <div
-              id="social-belonging-section"
-              style={{
-                padding: "20px 20px 15px",
-                textAlign: "center",
-                marginBottom: "5px",
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: "20px",
-                  fontWeight: "700",
-                  marginBottom: "15px",
-                  color: "#333",
-                }}
-              >
-                Kamu Tidak Sendiri di Sini
-              </h3>
-              <p
-                style={{
-                  fontSize: "15px",
-                  lineHeight: "1.6",
-                  color: "#666",
-                  maxWidth: "550px",
-                  margin: "0 auto",
-                }}
-              >
-                Fremio digunakan oleh banyak orang dengan cerita yang
-                berbeda-beda.
-                <br />
-                Namun semuanya berbagi satu hal yang sama:
-                <br />
-                <strong>
-                  keinginan untuk mengekspresikan momen dengan cara yang lebih
-                  bermakna.
-                </strong>
-                <br />
-                <br />
-                Setiap member adalah bagian dari perjalanan ini.
-              </p>
-            </div>
-          </>
-        )}
-
-        {!access && (
-          <>
-            {/* FINAL CTA SECTION - Moved to top */}
-            <div
-              id="membership-cta-section"
-              style={{
-                textAlign: "center",
-                padding: "15px 20px 10px",
-                marginTop: "5px",
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: "26px",
-                  fontWeight: "700",
-                  marginBottom: "15px",
-                  color: "#333",
-                }}
-              >
-                Siap Menjadi Bagian dari Fremio?
-              </h3>
-              <p
-                style={{
-                  fontSize: "16px",
-                  color: "#666",
-                  marginBottom: "25px",
-                }}
-              >
-                Ini bukan tentang membeli sesuatu.
-                <br />
-                Ini tentang memilih untuk ikut dalam sebuah perjalanan.
-              </p>
-            </div>
-
-            {/* TRANSPARENCY & TRUST SECTION */}
-            <div className="pricing-terms">
-              <div className="pricing-terms-title">Tentang Keanggotaan</div>
-              <ul className="pricing-terms-list">
-                <li>
-                  Keanggotaan bersifat digital dan aktif selama periode
-                  berlangganan
-                </li>
-                <li>Akses diberikan selama status member aktif</li>
-                <li>Pembayaran bersifat final setelah berhasil diproses</li>
-                <li>
-                  Jika ada kendala, kamu selalu bisa menghubungi kami di{" "}
-                  <a
-                    className="pricing-terms-link"
-                    href="mailto:fremioid@gmail.com"
-                  >
-                    fremioid@gmail.com
-                  </a>
-                </li>
-              </ul>
-              <p
-                style={{
-                  textAlign: "center",
-                  fontSize: "15px",
-                  color: "#666",
-                  marginTop: "20px",
-                  fontStyle: "italic",
-                }}
-              >
-                Kami ingin hubungan yang jujur, sederhana, dan saling
-                menghargai.
-              </p>
-
-              <label className="pricing-terms-agree">
-                <input
-                  type="checkbox"
-                  checked={termsAccepted}
-                  onChange={(e) => setTermsAccepted(e.target.checked)}
-                />
-                <span>
-                  Saya memahami dan menyetujui ketentuan keanggotaan Fremio
-                </span>
-              </label>
-            </div>
-          </>
-        )}
-
-        <button
-          className={`offer-cta ${
-            access
-              ? "active-subscription"
-              : loading || (currentUser && !access && !termsAccepted)
-              ? "disabled"
-              : ""
-          }`}
-          onClick={access ? () => navigate("/frames") : handleBuyPackage}
-          disabled={
-            !access && (loading || (currentUser && !access && !termsAccepted))
-          }
-          style={{
-            fontSize: access ? "16px" : "18px",
-            padding: access ? "12px 30px" : "16px 50px",
-            fontWeight: "700",
-            minHeight: access ? "auto" : "60px",
-            boxShadow: access ? "" : "0 8px 20px rgba(224, 183, 169, 0.4)",
-          }}
-        >
-          {loading
-            ? "Memproses..."
-            : access
-            ? "Gunakan Frame Premium Sekarang →"
-            : "Gabung sebagai Member Fremio"}
-        </button>
-
-        {!currentUser && (
-          <div className="offer-note">Login diperlukan untuk melanjutkan.</div>
-        )}
-
-        {currentUser && !access && pendingPayment && (
-          <div className="offer-note">
-            Anda memiliki transaksi yang sedang pending. Klik "Gabung sebagai
-            Member Fremio" untuk melanjutkan pembayaran.
-          </div>
-        )}
-        {currentUser && !canPurchase && access && (
-          <div className="offer-note">
-            Anda dapat memperpanjang keanggotaan setelah berakhir pada{" "}
-            {new Date(access.accessEnd).toLocaleDateString("id-ID", {
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            })}
-          </div>
-        )}
-      </div>
 
       <div className="payment-info">
         <h3>🔒 Pembayaran Aman</h3>
@@ -1197,8 +1139,10 @@ const Pricing = () => {
         <div className="faq-item">
           <h4>Berapa lama keanggotaan berlaku?</h4>
           <p>
-            Keanggotaan Fremio berlaku selama 30 hari sejak pembayaran berhasil
-            diproses.
+            Tersedia 3 pilihan: <strong>3 hari</strong> (Rp 5.000),{' '}
+            <strong>1 minggu / 7 hari</strong> (Rp 7.000), dan{' '}
+            <strong>1 bulan / 30 hari</strong> (Rp 10.000). Pilih sesuai
+            kebutuhanmu sebelum melanjutkan pembayaran.
           </p>
         </div>
         <div className="faq-item">
