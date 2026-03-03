@@ -36,7 +36,7 @@ const getApiUrl = () => {
  * Get auth token
  */
 const getAuthToken = () => {
-  return localStorage.getItem('token');
+  return localStorage.getItem('fremio_token') || localStorage.getItem('auth_token') || localStorage.getItem('token');
 };
 
 /**

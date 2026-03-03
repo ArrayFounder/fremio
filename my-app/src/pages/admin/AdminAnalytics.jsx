@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { isVPSMode } from "../../config/backend";
-import { getLeanMetrics, getLeanMetricsFromFirebase } from "../../services/analyticsService";
+import { getLeanMetrics, getLeanMetricsFromFirebase, getDashboardOverview } from "../../services/analyticsService";
 import { getAllUsers } from "../../services/userService";
 import "../../styles/admin.css";
 import {
@@ -72,6 +72,12 @@ export default function AdminAnalytics() {
   };
   
   const [leanMetrics, setLeanMetrics] = useState(defaultLeanMetrics);
+  const [registrationData, setRegistrationData] = useState({
+    totalUsers: 0,
+    newUsersInPeriod: 0,
+    activeUsers: 0,
+    newUsersToday: 0,
+  });
   const [analytics, setAnalytics] = useState({
     overview: {
       totalViews: 0,
@@ -126,6 +132,30 @@ export default function AdminAnalytics() {
     
     // In VPS mode, skip localStorage loading - we get data from API
     if (isVPSMode()) {
+      // Fetch registration data from backend
+      try {
+        const days = timeRange === '7days' ? 7 : timeRange === '30days' ? 30 : timeRange === '90days' ? 90 : 365;
+        const overview = await getDashboardOverview(days);
+        const totalUsers = parseInt(overview.total_users) || 0;
+        const newUsers = parseInt(overview.new_users) || 0;
+        const activeUsers = parseInt(overview.active_users) || 0;
+        const signupsToday = parseInt(overview.signups_today) || 0;
+        setRegistrationData({
+          totalUsers,
+          newUsersInPeriod: newUsers,
+          activeUsers,
+          newUsersToday: signupsToday,
+        });
+        setAnalytics(prev => ({
+          ...prev,
+          overview: {
+            ...prev.overview,
+            totalUsers,
+          },
+        }));
+      } catch (err) {
+        console.error("Failed to fetch registration stats:", err);
+      }
       setLoading(false);
       return;
     }
@@ -412,6 +442,121 @@ export default function AdminAnalytics() {
           </div>
         </div>
 
+        {/* User Registration Stats Section */}
+        <div
+          style={{
+            background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+            borderRadius: "16px",
+            padding: "24px",
+            marginBottom: "32px",
+            color: "white",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+            <Users size={24} style={{ color: "white" }} />
+            <h2 style={{ fontSize: "18px", fontWeight: "700", margin: 0 }}>Registrasi User</h2>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+              gap: "16px",
+            }}
+          >
+            {/* Total registered */}
+            <div
+              style={{
+                background: "rgba(255,255,255,0.15)",
+                borderRadius: "12px",
+                padding: "16px",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: "36px", fontWeight: "800", lineHeight: 1 }}>
+                {formatNumber(
+                  isVPSMode()
+                    ? registrationData.totalUsers
+                    : analytics.overview.totalUsers
+                )}
+              </div>
+              <div style={{ fontSize: "13px", opacity: 0.9, marginTop: "6px" }}>Total Pengguna Terdaftar</div>
+            </div>
+
+            {/* New users in selected period */}
+            <div
+              style={{
+                background: "rgba(255,255,255,0.15)",
+                borderRadius: "12px",
+                padding: "16px",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: "36px", fontWeight: "800", lineHeight: 1 }}>
+                {formatNumber(
+                  isVPSMode()
+                    ? registrationData.newUsersInPeriod
+                    : 0
+                )}
+              </div>
+              <div style={{ fontSize: "13px", opacity: 0.9, marginTop: "6px" }}>
+                Daftar Baru (
+                {timeRange === "7days"
+                  ? "7 Hari"
+                  : timeRange === "30days"
+                  ? "30 Hari"
+                  : timeRange === "90days"
+                  ? "90 Hari"
+                  : "Semua Waktu"})
+              </div>
+            </div>
+
+            {/* Active users in period */}
+            <div
+              style={{
+                background: "rgba(255,255,255,0.15)",
+                borderRadius: "12px",
+                padding: "16px",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: "36px", fontWeight: "800", lineHeight: 1 }}>
+                {formatNumber(
+                  isVPSMode()
+                    ? registrationData.activeUsers
+                    : leanMetrics?.weeklyActiveUsers || 0
+                )}
+              </div>
+              <div style={{ fontSize: "13px", opacity: 0.9, marginTop: "6px" }}>User Aktif (Periode)</div>
+            </div>
+
+            {/* Registration rate */}
+            <div
+              style={{
+                background: "rgba(255,255,255,0.15)",
+                borderRadius: "12px",
+                padding: "16px",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: "36px", fontWeight: "800", lineHeight: 1 }}>
+                {isVPSMode() && registrationData.totalUsers > 0
+                  ? `${Math.round(
+                      (registrationData.newUsersInPeriod /
+                        registrationData.totalUsers) *
+                        100
+                    )}%`
+                  : leanMetrics?.totalUsers > 0
+                  ? `${Math.round(
+                      (analytics.overview.totalUsers / leanMetrics.totalUsers) *
+                        100
+                    )}%`
+                  : "0%"}
+              </div>
+              <div style={{ fontSize: "13px", opacity: 0.9, marginTop: "6px" }}>Tingkat Pertumbuhan</div>
+            </div>
+          </div>
+        </div>
+
         {/* Overview Stats - Registered Users & Registration Rate */}
         <div
           style={{
@@ -425,7 +570,7 @@ export default function AdminAnalytics() {
           <MetricCard
             icon={<Users size={24} />}
             label="Registered Users"
-            value={formatNumber(analytics.overview.totalUsers)}
+            value={formatNumber(isVPSMode() ? registrationData.totalUsers : analytics.overview.totalUsers)}
             trend={analytics.trends.usersTrend}
             color="#10b981"
           />
