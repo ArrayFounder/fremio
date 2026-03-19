@@ -14,6 +14,7 @@ export default function ColorPicker({ value = "#FFFFFF", onChange }) {
   }, [value]);
   
   const [hexInput, setHexInput] = useState(normalizedValue);
+  const [isPicking, setIsPicking] = useState(false);
 
   useEffect(() => {
     setHexInput(normalizedValue);
@@ -32,6 +33,25 @@ export default function ColorPicker({ value = "#FFFFFF", onChange }) {
     setHexInput(nextValue);
     if (isValidHex(nextValue)) {
       onChange?.(nextValue);
+    }
+  };
+
+  const handlePipetteClick = async () => {
+    if (!window.EyeDropper) {
+      alert("Fitur eyedropper tidak didukung di browser ini. Gunakan Chrome atau Edge versi terbaru.");
+      return;
+    }
+    try {
+      setIsPicking(true);
+      const eyeDropper = new window.EyeDropper();
+      const { sRGBHex } = await eyeDropper.open();
+      const normalized = sRGBHex.toUpperCase();
+      setHexInput(normalized);
+      onChange?.(normalized);
+    } catch {
+      // User cancelled the eyedropper
+    } finally {
+      setIsPicking(false);
     }
   };
 
@@ -55,7 +75,12 @@ export default function ColorPicker({ value = "#FFFFFF", onChange }) {
           maxLength={7}
           onChange={handleHexInputChange}
         />
-        <button type="button" className="color-picker__pipette" disabled>
+        <button
+          type="button"
+          className={`color-picker__pipette${isPicking ? " color-picker__pipette--active" : ""}`}
+          onClick={handlePipetteClick}
+          title="Ambil warna dari canvas"
+        >
           <Pipette size={16} strokeWidth={2.5} />
         </button>
       </div>

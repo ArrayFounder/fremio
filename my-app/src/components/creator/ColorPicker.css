@@ -159,6 +159,20 @@
   cursor: not-allowed;
 }
 
+.color-picker__pipette--active {
+  background: linear-gradient(135deg, #e0b7a9, #d4a99a) !important;
+  color: #ffffff !important;
+  border-color: #d4a99a !important;
+  box-shadow: 0 6px 18px rgba(224, 183, 169, 0.45) !important;
+  transform: translateY(-2px);
+  animation: pipette-pulse 1s ease-in-out infinite;
+}
+
+@keyframes pipette-pulse {
+  0%, 100% { box-shadow: 0 6px 18px rgba(224, 183, 169, 0.45); }
+  50% { box-shadow: 0 6px 24px rgba(212, 169, 154, 0.7); }
+}
+
 /* Gradient Picker Styles */
 .gradient-picker {
   width: 100%;
