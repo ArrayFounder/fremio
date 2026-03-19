@@ -146,6 +146,8 @@
   transition: all 0.2s ease;
   flex-shrink: 0;
   cursor: pointer;
+  pointer-events: auto;
+  opacity: 1;
 }
 
 .color-picker__pipette:hover:not(:disabled) {
