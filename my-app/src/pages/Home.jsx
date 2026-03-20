@@ -50,12 +50,12 @@ export default function Home() {
   const currentHero = {
     headline: (
       <>
-        Rayakan indahnya momen di{" "}
-        <span className="accent">Bulan Ramadan</span>.
+        Lebaran Lebih Bermakna,{" "}
+        <span className="accent">Bersama Fremio.</span>
       </>
     ),
-    subCopy: "Bersama Fremio, simpan hangatnya Ramadan untuk dikenang selamanya.",
-    cta: "Abadikan Ramadanmu"
+    subCopy: "Simpan tawa, cerita, dan kehangatan keluargamu dalam satu bingkai.",
+    cta: "Abadikan Momenmu"
   };
 
   return (
