@@ -8,9 +8,31 @@ const pool = new pg.Pool({
   host: process.env.DB_HOST || "localhost",
   port: process.env.DB_PORT || 5432,
   database: process.env.DB_NAME || "fremio",
-  user: process.env.DB_USER || "salwa",
+  user: process.env.DB_USER || "fremio_user",
   password: process.env.DB_PASSWORD || "",
 });
+
+// Auto-migrate: ensure shared_groups table exists
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS shared_groups (
+        id          SERIAL PRIMARY KEY,
+        share_id    VARCHAR(16) UNIQUE NOT NULL,
+        title       TEXT,
+        frames      JSONB NOT NULL,
+        preferences JSONB,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_shared_groups_share_id ON shared_groups(share_id)`
+    );
+    console.log("✅ shared_groups table ready");
+  } catch (e) {
+    console.error("❌ shared_groups migration failed:", e.message);
+  }
+})();
 
 // Generate short share ID
 function generateShareId() {

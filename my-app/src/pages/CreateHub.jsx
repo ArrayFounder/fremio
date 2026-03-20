@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Share2, Check, Copy } from "lucide-react";
+import { Plus, Share2, Check, Copy, Trash2 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useToast } from "../contexts/ToastContext.jsx";
 import logoSalem from "../assets/logo-salem.png";
@@ -11,7 +11,9 @@ import userStorage from "../utils/userStorage.js";
 import { generateShareLink } from "../services/frameShareService.js";
 import {
   createDraftGroup,
+  deleteDraftGroup,
   loadDraftGroups,
+  saveDraftGroups,
   toggleDraftInGroup,
   updateDraftGroupPreferences,
 } from "../utils/draftGroupStorage.js";
@@ -29,6 +31,10 @@ export default function CreateHub() {
   const [shareDraftTitle, setShareDraftTitle] = useState("");
   const [copied, setCopied] = useState(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null); // { type: 'frame-batch'|'group', ids?, id?, title? }
+  // Batch-delete mode
+  const [isDeletingMode, setIsDeletingMode] = useState(false);
+  const [deleteSelectedIds, setDeleteSelectedIds] = useState(new Set());
   const isMountedRef = useRef(true);
   const [expandedDescriptions, setExpandedDescriptions] = useState(() => new Set());
 
@@ -160,12 +166,34 @@ export default function CreateHub() {
   }, [reloadDrafts]);
 
   const sortedDrafts = useMemo(() => {
-    return [...drafts].sort((a, b) => {
+    // Build set of cloud IDs already represented by a local draft
+    const localCloudIds = new Set(
+      drafts.map((d) => (d.cloudId != null ? String(d.cloudId) : null)).filter(Boolean)
+    );
+
+    // Cloud drafts that have no local counterpart (created on another device)
+    const cloudOnlyDrafts = cloudDrafts
+      .filter((cd) => !localCloudIds.has(String(cd.id)))
+      .map((cd) => ({
+        id: `cloud-${cd.id}`,
+        cloudId: cd.id,
+        shareId: cd.share_id,
+        title: cd.title || "Untitled",
+        thumbnail: cd.preview_url || null,
+        thumbnailUrl: cd.preview_url || null,
+        preview: cd.preview_url || null,
+        createdAt: cd.created_at,
+        updatedAt: cd.updated_at,
+        isCloudOnly: true,
+        _frameData: cd.frame_data,
+      }));
+
+    return [...drafts, ...cloudOnlyDrafts].sort((a, b) => {
       const left = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
       const right = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
       return right - left;
     });
-  }, [drafts]);
+  }, [drafts, cloudDrafts]);
 
   const activeGroup = useMemo(() => {
     if (activeTab?.type !== "group") return null;
@@ -188,6 +216,77 @@ export default function CreateHub() {
   }, [selectionGroup]);
 
 
+  // Batch-delete helpers
+  const enterDeleteMode = useCallback(() => {
+    setIsDeletingMode(true);
+    setDeleteSelectedIds(new Set());
+    setAddingToGroupId(null);
+  }, []);
+
+  const exitDeleteMode = useCallback(() => {
+    setIsDeletingMode(false);
+    setDeleteSelectedIds(new Set());
+  }, []);
+
+  const toggleDeleteSelection = useCallback((draftId) => {
+    setDeleteSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(draftId)) next.delete(draftId);
+      else next.add(draftId);
+      return next;
+    });
+  }, []);
+
+  const handleDeleteFrame = useCallback(() => {
+    if (deleteSelectedIds.size === 0) return;
+    setConfirmDialog({ type: 'frame-batch', ids: Array.from(deleteSelectedIds) });
+  }, [deleteSelectedIds]);
+
+  const confirmDeleteFrame = useCallback(async (ids) => {
+    try {
+      await Promise.all(ids.map(async (id) => {
+        if (String(id).startsWith('cloud-')) {
+          // Cloud-only draft: delete via API
+          const cloudId = String(id).replace('cloud-', '');
+          await draftService.deleteDraftFromCloud(cloudId).catch(() => {});
+          setCloudDrafts((prev) => prev.filter((cd) => String(cd.id) !== cloudId));
+        } else {
+          await draftStorage.deleteDraft(id);
+        }
+      }));
+      const idSet = new Set(ids);
+      setDrafts((prev) => prev.filter((d) => !idSet.has(d.id)));
+      if (user?.email) {
+        const updatedGroups = loadDraftGroups(user.email).map((g) => ({
+          ...g,
+          draftIds: (g.draftIds || []).filter((id) => !idSet.has(id)),
+        }));
+        saveDraftGroups(user.email, updatedGroups);
+        setGroups(updatedGroups);
+      }
+      showToast("success", `${ids.length} frame berhasil dihapus`);
+    } catch (e) {
+      showToast("error", "Gagal menghapus frame");
+    } finally {
+      setConfirmDialog(null);
+      exitDeleteMode();
+    }
+  }, [user, showToast, exitDeleteMode]);
+
+  // Delete a group only — frames remain in All Frames
+  const handleDeleteGroup = useCallback((groupId, groupName) => {
+    setConfirmDialog({ type: 'group', id: groupId, title: groupName });
+  }, []);
+
+  const confirmDeleteGroup = useCallback((groupId) => {
+    if (!user?.email) return;
+    const updated = deleteDraftGroup(user.email, groupId);
+    setGroups(updated);
+    setActiveTab({ type: 'all' });
+    setConfirmDialog(null);
+    showToast("success", "Group berhasil dihapus (frame tetap ada)");
+  }, [user, showToast]);
+
   // Navigate to editor for new frame
   const handleCreateNew = () => {
     // Clear any active draft
@@ -197,17 +296,48 @@ export default function CreateHub() {
   };
 
   // Navigate to editor with existing draft
-  const handleOpenDraft = (draft) => {
+  const handleOpenDraft = async (draft) => {
     if (!draft) return;
-    
-    // Set active draft in storage for editor to load
+
+    // Cloud-only draft (no local copy): download and cache locally first
+    if (draft.isCloudOnly && draft._frameData) {
+      try {
+        const parsed = JSON.parse(draft._frameData);
+        const localDraft = await draftStorage.saveDraft({
+          title: draft.title,
+          elements: parsed.elements || [],
+          aspectRatio: parsed.aspectRatio,
+          canvasBackground: parsed.canvasBackground,
+          canvasWidth: parsed.canvasWidth,
+          canvasHeight: parsed.canvasHeight,
+          preview: draft.preview || null,
+          thumbnail: draft.thumbnail || null,
+          cloudId: draft.cloudId,
+          shareId: draft.shareId,
+        });
+        // Refresh local list so the cloud entry is replaced by the new local entry
+        setDrafts((prev) => {
+          const without = prev.filter((d) => d.id !== localDraft.id);
+          return [...without, localDraft];
+        });
+        userStorage.setItem("activeDraftId", localDraft.id);
+        userStorage.removeItem("activeDraftSignature");
+        navigate("/create/editor", { state: { draftId: localDraft.id } });
+        return;
+      } catch (err) {
+        console.error("Failed to cache cloud draft locally:", err);
+        showToast("error", "Gagal membuka frame");
+        return;
+      }
+    }
+
+    // Local draft (normal case)
     userStorage.setItem("activeDraftId", draft.id);
     if (draft.signature) {
       userStorage.setItem("activeDraftSignature", draft.signature);
     } else {
       userStorage.removeItem("activeDraftSignature");
     }
-    
     navigate("/create/editor", { state: { draftId: draft.id } });
   };
 
@@ -278,22 +408,11 @@ export default function CreateHub() {
     } catch (error) {
       console.error("Error generating share link:", error);
       
-      // Fallback: use embedded data if cloud fails
-      try {
-        const link = generateShareLink(draft);
-        if (link) {
-          setShareLink(link);
-          setShareDraftTitle(draft.title || "Draft");
-          setShowShareModal(true);
-          setCopied(false);
-          setIsGeneratingLink(false);
-          showToast("warning", "⚠️ Link dibuat dengan mode offline");
-          return;
-        }
-      } catch (e) {}
-      
+      // NOTE: The old ?d= offline fallback is intentionally removed.
+      // Those links strip background/upload images and appear blank for other users.
+      // Always require a successful VPS upload for a valid share link.
       setIsGeneratingLink(false);
-      showToast("error", "Gagal membuat link share. Pastikan sudah login.");
+      showToast("error", "Gagal membuat link share. Periksa koneksi internet dan coba lagi.");
     }
   };
 
@@ -539,6 +658,10 @@ export default function CreateHub() {
             handleToggleDraftInGroup(addingToGroupId, draft.id);
             return;
           }
+          if (mode === "delete") {
+            toggleDeleteSelection(draft.id);
+            return;
+          }
           handleOpenDraft(draft);
         }}
         onMouseEnter={(e) => {
@@ -578,6 +701,47 @@ export default function CreateHub() {
           >
             <Share2 size={14} />
           </button>
+        )}
+
+        {mode === "delete" && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: "6px",
+              border: deleteSelectedIds.has(draft.id)
+                ? "2.5px solid #e57373"
+                : "2.5px solid transparent",
+              background: deleteSelectedIds.has(draft.id)
+                ? "rgba(229,115,115,0.10)"
+                : "transparent",
+              pointerEvents: "none",
+              zIndex: 10,
+              transition: "border-color 0.15s, background 0.15s",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                top: "8px",
+                left: "8px",
+                width: "20px",
+                height: "20px",
+                borderRadius: "50%",
+                background: deleteSelectedIds.has(draft.id) ? "#e57373" : "rgba(255,255,255,0.9)",
+                border: deleteSelectedIds.has(draft.id) ? "none" : "1.5px solid rgba(229,115,115,0.6)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {deleteSelectedIds.has(draft.id) && (
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
+            </div>
+          </div>
         )}
 
         {mode === "select" && (
@@ -722,6 +886,39 @@ export default function CreateHub() {
           <h2 className="create-hub-title">Drafts</h2>
 
           {/* Tabs: All Frames + Groups */}
+          {/* Delete-mode action bar */}
+          {isDeletingMode && (
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "13px", color: "#64748b", flex: 1 }}>
+                {deleteSelectedIds.size === 0
+                  ? "Pilih frame yang ingin dihapus"
+                  : `${deleteSelectedIds.size} frame dipilih`}
+              </span>
+              <button
+                type="button"
+                className="create-hub-group-add-btn"
+                onClick={exitDeleteMode}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                className="create-hub-group-share-btn"
+                style={{
+                  background: deleteSelectedIds.size > 0
+                    ? "linear-gradient(to right, #e57373, #ef5350)"
+                    : "linear-gradient(to right, #ccc, #bbb)",
+                  cursor: deleteSelectedIds.size > 0 ? "pointer" : "not-allowed",
+                }}
+                disabled={deleteSelectedIds.size === 0}
+                onClick={handleDeleteFrame}
+              >
+                <Trash2 size={15} />
+                <span>Hapus ({deleteSelectedIds.size})</span>
+              </button>
+            </div>
+          )}
+
           <div className="create-hub-tabs">
             <button
               type="button"
@@ -734,6 +931,7 @@ export default function CreateHub() {
                 setActiveTab({ type: "all" });
                 setAddingToGroupId(null);
                 setGroupViewMode("frames");
+                if (isDeletingMode) exitDeleteMode();
               }}
             >
               All Frames
@@ -764,6 +962,17 @@ export default function CreateHub() {
             >
               <Plus size={18} strokeWidth={2} />
             </button>
+            {!isDeletingMode && (
+              <button
+                type="button"
+                className="create-hub-tab"
+                style={{ color: "#e57373", borderColor: "rgba(229,115,115,0.45)", marginLeft: "auto" }}
+                onClick={enterDeleteMode}
+                title="Hapus frame"
+              >
+                <Trash2 size={15} />
+              </button>
+            )}
           </div>
 
           {activeTab.type === "group" && activeGroup && (
@@ -801,6 +1010,15 @@ export default function CreateHub() {
                     >
                       <Plus size={16} />
                       <span>Add Frame</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="create-hub-group-add-btn"
+                      style={{ color: "#e57373", borderColor: "rgba(229,115,115,0.45)" }}
+                      onClick={() => handleDeleteGroup(activeGroup.id, activeGroup.name || "Group ini")}
+                    >
+                      <Trash2 size={16} />
+                      <span>Hapus Group</span>
                     </button>
                   </>
                 )}
@@ -1029,7 +1247,7 @@ export default function CreateHub() {
                       key={draft.id || index}
                       draft={draft}
                       index={index}
-                      mode="all"
+                      mode={isDeletingMode ? "delete" : "all"}
                     />
                   ))}
                 </div>
@@ -1043,7 +1261,7 @@ export default function CreateHub() {
                     key={draft.id || index}
                     draft={draft}
                     index={index}
-                    mode={isSelectingForGroup ? "select" : "all"}
+                    mode={isDeletingMode ? "delete" : isSelectingForGroup ? "select" : "all"}
                   />
                 ))}
               </div>
@@ -1093,6 +1311,48 @@ export default function CreateHub() {
             >
               Tutup
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation dialog for delete frame (batch) / delete group */}
+      {confirmDialog && (
+        <div
+          className="create-hub-modal-overlay"
+          onClick={() => setConfirmDialog(null)}
+          style={{ zIndex: 300 }}
+        >
+          <div className="create-hub-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "360px" }}>
+            <h3 className="create-hub-modal-title" style={{ color: "#e57373" }}>
+              {confirmDialog.type === "frame-batch"
+                ? `Hapus ${confirmDialog.ids.length} Frame?`
+                : "Hapus Group?"}
+            </h3>
+            <p className="create-hub-modal-desc">
+              {confirmDialog.type === "frame-batch"
+                ? `${confirmDialog.ids.length} frame akan dihapus permanen dan tidak bisa dikembalikan.`
+                : `Group "${confirmDialog.title}" akan dihapus. Frame di dalamnya tetap ada di All Frames.`}
+            </p>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "16px" }}>
+              <button
+                className="create-hub-modal-close"
+                style={{ margin: 0, flex: 1 }}
+                onClick={() => setConfirmDialog(null)}
+              >
+                Batal
+              </button>
+              <button
+                className="create-hub-group-share-btn"
+                style={{ background: "linear-gradient(to right, #e57373, #ef5350)", flex: 1 }}
+                onClick={() =>
+                  confirmDialog.type === "frame-batch"
+                    ? confirmDeleteFrame(confirmDialog.ids)
+                    : confirmDeleteGroup(confirmDialog.id)
+                }
+              >
+                Hapus
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,11 +1,13 @@
 {
-  "name": "Fremio",
+  "name": "Fremio - Photo Booth Online Indonesia",
   "short_name": "Fremio",
-  "start_url": ".",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#7c3aed",
-  "description": "Fremio - Buat foto dengan frame keren. Upload foto, pilih frame, download hasil!",
+  "description": "Photo booth online & photobox virtual terbaik di Indonesia. Buat foto dengan frame keren, ambil selfie via kamera, lalu download gratis!",
+  "lang": "id",
+  "categories": ["photo", "entertainment", "social"],
   "icons": [
     {
       "src": "/favicon-192.png",

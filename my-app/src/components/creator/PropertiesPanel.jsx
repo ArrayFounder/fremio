@@ -866,6 +866,7 @@ export default function PropertiesPanel({
                 { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱" },
                 { label: "Instagram Feeds", ratio: "4:5", desc: "1080 × 1350", icon: "📷" },
                 { label: "Photostrip", ratio: "2:3", desc: "1200 × 1800", icon: "🎞️" },
+                { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️" },
               ].map((preset) => {
                 const isSelected = canvasAspectRatio === preset.ratio;
                 return (
@@ -1003,6 +1004,7 @@ export default function PropertiesPanel({
                 { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱" },
                 { label: "Instagram Feeds", ratio: "4:5", desc: "1080 × 1350", icon: "📷" },
                 { label: "Photostrip", ratio: "2:3", desc: "1200 × 1800", icon: "🎞️" },
+                { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️" },
               ].map((preset) => {
                 const isSelected = canvasAspectRatio === preset.ratio;
                 return (

@@ -1,0 +1,20 @@
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://fremio.id/sitemap.xml
+
+# Disallow admin and private routes
+Disallow: /admin/
+Disallow: /api/
+Disallow: /reset-password
+Disallow: /set-password
+Disallow: /change-password
+
+# Allow important pages explicitly
+Allow: /
+Allow: /frames
+Allow: /pricing
+Allow: /about
+Allow: /help
+Allow: /affiliates

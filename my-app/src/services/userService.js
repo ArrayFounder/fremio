@@ -93,6 +93,22 @@ export async function getAllUsers() {
 }
 
 /**
+ * Get user registration stats (admin only)
+ */
+export async function getUserStats() {
+  try {
+    const response = await api.get("/users/stats");
+    if (response && response.success) {
+      return response;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching user stats:", error);
+    return null;
+  }
+}
+
+/**
  * Get user by ID
  */
 export async function getUserById(userId) {

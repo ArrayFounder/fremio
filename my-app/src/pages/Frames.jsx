@@ -6,6 +6,7 @@ import safeStorage from "../utils/safeStorage.js";
 import unifiedFrameService from "../services/unifiedFrameService";
 import paymentService from "../services/paymentService";
 import { trackFrameView } from "../services/analyticsService";
+import { useSEO } from "../hooks/useSEO.js";
 
 const DEBUG_FRAMES =
   import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_FRAMES) === "true";
@@ -114,6 +115,20 @@ const isPhotostripCanvas = (frame) => {
 
   const { width, height } = getCanvasSize(frame);
   return width === 1200 && height === 1800;
+};
+
+const is2RCanvas = (frame) => {
+  const ratioRaw =
+    frame?.layout?.aspectRatio ??
+    frame?.layout?.aspect_ratio ??
+    frame?.aspectRatio ??
+    frame?.aspect_ratio;
+
+  const ratio = normalizeRatio(ratioRaw);
+  if (ratio === "2r" || ratio === "1:3" || ratio === "600:1800") return true;
+
+  const { width, height } = getCanvasSize(frame);
+  return width === 600 && height === 1800;
 };
 
 // FrameCard component with expandable description
@@ -293,6 +308,14 @@ export default function Frames() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user: currentUser } = useAuth();
+
+  useSEO({
+    title: "Pilih Frame Foto - Photo Booth Online | Fremio",
+    description: "Pilih dari ratusan frame foto keren untuk photo booth online kamu. Frame wisuda, lebaran, ulang tahun, couple, dan masih banyak lagi. Gratis di Fremio!",
+    keywords: "frame foto online, bingkai foto gratis, frame photo booth, frame wisuda, frame lebaran, frame couple, photobox frame",
+    canonical: "https://fremio.id/frames",
+  });
+
   const [customFrames, setCustomFrames] = useState([]);
   const [imageErrors, setImageErrors] = useState({});
   const [accessibleFrameIds, setAccessibleFrameIds] = useState([]);
@@ -300,16 +323,36 @@ export default function Frames() {
   const [loading, setLoading] = useState(true);
   const [activeCanvasCategory, setActiveCanvasCategory] = useState("story");
 
+  // Promo countdown — resets every midnight (decorative urgency)
+  const getSecondsUntilMidnight = () => {
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    return Math.floor((midnight - now) / 1000);
+  };
+  const [promoSeconds, setPromoSeconds] = useState(getSecondsUntilMidnight);
+  useEffect(() => {
+    const t = setInterval(() => setPromoSeconds(getSecondsUntilMidnight()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   const headlineText =
     activeCanvasCategory === "story"
-      ? "Buat story Instagram kamu indah, instan, dan berbeda"
-      : "Mudah dicetak ukuran 4R di fotocopy terdekat, dan tetap cocok untuk Story Instagram";
+      ? "Kenangan yang pas untuk Story Instagram."
+      : activeCanvasCategory === "4r"
+      ? "Kenangan dalam ukuran foto klasik."
+      : "Kenangan kecil yang selalu dekat.";
 
   const sizeFilteredFrames = useMemo(() => {
     const show4R = activeCanvasCategory === "4r";
+    const show2R = activeCanvasCategory === "2r";
     return (customFrames || []).filter((frame) => {
       const is4RFrame = isPhotostripCanvas(frame);
-      return show4R ? is4RFrame : !is4RFrame;
+      const is2RFrame = is2RCanvas(frame);
+      if (show4R) return is4RFrame && !is2RFrame;
+      if (show2R) return is2RFrame;
+      // story: neither 4R nor 2R
+      return !is4RFrame && !is2RFrame;
     });
   }, [customFrames, activeCanvasCategory]);
 
@@ -611,6 +654,80 @@ export default function Frames() {
             padding: "0 16px",
           }}
         >
+          {/* PROMO MEMBERSHIP BANNER */}
+          {!hasAccess && (() => {
+            const h = String(Math.floor(promoSeconds / 3600)).padStart(2, '0');
+            const m = String(Math.floor((promoSeconds % 3600) / 60)).padStart(2, '0');
+            const s = String(promoSeconds % 60).padStart(2, '0');
+            return (
+              <div style={{
+                background: 'linear-gradient(135deg, #c89585 0%, #a06050 100%)',
+                borderRadius: '16px',
+                padding: '16px 20px',
+                marginBottom: '28px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '14px',
+                boxShadow: '0 4px 20px rgba(200,149,133,0.4)',
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '16px' }}>🔥</span>
+                    <span style={{ color: '#fff', fontWeight: '700', fontSize: '14px' }}>
+                      Harga promo hari ini — akses semua frame premium!
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: '12px' }}>Berakhir dalam</span>
+                    {[h, m, s].map((val, i) => (
+                      <span key={i} style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <span style={{
+                          background: 'rgba(0,0,0,0.25)',
+                          borderRadius: '6px',
+                          padding: '2px 8px',
+                          color: '#fff',
+                          fontWeight: '800',
+                          fontSize: '16px',
+                          fontVariantNumeric: 'tabular-nums',
+                          fontFeatureSettings: '"tnum"',
+                          lineHeight: 1.4,
+                          minWidth: '32px',
+                          textAlign: 'center',
+                        }}>{val}</span>
+                        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '9px', marginTop: '2px' }}>
+                          {['JAM','MIN','DET'][i]}
+                        </span>
+                      </span>
+                    )).reduce((acc, el, i) => [
+                      ...acc,
+                      el,
+                      i < 2 ? <span key={`sep${i}`} style={{ color: '#fff', fontWeight: '800', fontSize: '16px', marginBottom: '10px', opacity: 0.7 }}>:</span> : null
+                    ], [])}
+                  </div>
+                </div>
+                <button
+                  onClick={() => navigate('/pricing')}
+                  style={{
+                    background: '#fff',
+                    color: '#b07060',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '10px 22px',
+                    fontWeight: '800',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+                    flexShrink: 0,
+                  }}
+                >
+                  Jadi Member Sekarang →
+                </button>
+              </div>
+            );
+          })()}
           {/* Canvas Size Category Tabs */}
           <div
             style={{
@@ -669,10 +786,33 @@ export default function Frames() {
                       ? "linear-gradient(to right, #e0b7a9, #c89585)"
                       : "transparent",
                   color: activeCanvasCategory === "4r" ? "white" : "#4a302b",
-                  position: "relative",
                 }}
               >
                 4R
+              </button>
+              <button
+                type="button"
+                aria-pressed={activeCanvasCategory === "2r"}
+                onClick={() => setActiveCanvasCategory("2r")}
+                style={{
+                  border:
+                    activeCanvasCategory === "2r"
+                      ? "none"
+                      : "1px solid rgba(200, 149, 133, 0.55)",
+                  cursor: "pointer",
+                  padding: "8px 14px",
+                  borderRadius: "999px",
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  background:
+                    activeCanvasCategory === "2r"
+                      ? "linear-gradient(to right, #e0b7a9, #c89585)"
+                      : "transparent",
+                  color: activeCanvasCategory === "2r" ? "white" : "#4a302b",
+                  position: "relative",
+                }}
+              >
+                2R
                 <span
                   style={{
                     position: "absolute",
@@ -709,52 +849,7 @@ export default function Frames() {
             {headlineText}
           </h2>
 
-          {/* Upgrade Banner - show if user logged in but no access */}
-          {currentUser && !hasAccess && !loading && (
-            <div
-              style={{
-                background:
-                  "linear-gradient(135deg, #f7e3da 0%, #e0b7a9 55%, #c89585 100%)",
-                color: "#4a302b",
-                padding: "24px",
-                borderRadius: "16px",
-                marginBottom: "30px",
-                textAlign: "center",
-                border: "1px solid rgba(224, 183, 169, 0.35)",
-                boxShadow: "0 12px 32px rgba(224, 183, 169, 0.22)",
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: "18px",
-                  fontWeight: "800",
-                  marginBottom: "8px",
-                }}
-              >
-                🎨 Unlock Premium Frames!
-              </h3>
-              <p style={{ marginBottom: "16px", opacity: 0.9 }}>
-                Gabung sebagai member dan dapatkan akses unlimited hanya Rp 10.000 selama 30
-                hari
-              </p>
-              <button
-                onClick={() => navigate("/pricing")}
-                style={{
-                  background: "linear-gradient(to right, #e0b7a9, #d4a99a)",
-                  color: "white",
-                  border: "none",
-                  padding: "10px 22px",
-                  borderRadius: "12px",
-                  fontWeight: "700",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  boxShadow: "0 10px 22px rgba(224, 183, 169, 0.35)",
-                }}
-              >
-                Lihat Keanggotaan →
-              </button>
-            </div>
-          )}
+
 
           {/* Loading State */}
           {loading && (

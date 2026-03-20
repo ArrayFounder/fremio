@@ -486,7 +486,11 @@ router.get("/:id", optionalAuth, async (req, res) => {
 
     const normalizeUploads = (value) => {
       if (typeof value !== "string" || value.length === 0) return value;
-      if (value.startsWith("data:") || value.startsWith("https://")) return value;
+      if (value.startsWith("data:")) return value;
+      // Strip internal localhost URLs (e.g. http://localhost:5050/uploads/...) → relative path
+      const localhostMatch = value.match(/^https?:\/\/localhost:\d+(\/uploads\/.+)$/);
+      if (localhostMatch) return `${publicBaseUrl}${localhostMatch[1]}`;
+      if (value.startsWith("https://")) return value;
       if (value.startsWith("http://")) return value.replace("http://", "https://");
       if (value.startsWith("/uploads/")) return `${publicBaseUrl}${value}`;
       return value;
@@ -611,7 +615,11 @@ router.get("/:id/config", optionalAuth, async (req, res) => {
 
     const withAbsoluteUploads = (value) => {
       if (typeof value !== "string" || value.length === 0) return value;
-      if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:")) {
+      if (value.startsWith("data:")) return value;
+      // Strip internal localhost URLs (e.g. http://localhost:5050/uploads/...) → relative path
+      const localhostMatch = value.match(/^https?:\/\/localhost:\d+(\/uploads\/.+)$/);
+      if (localhostMatch) return `${publicBaseUrl}${localhostMatch[1]}`;
+      if (value.startsWith("http://") || value.startsWith("https://")) {
         return value;
       }
       if (value.startsWith("/uploads/")) {

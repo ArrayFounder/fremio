@@ -52,6 +52,7 @@ const getDurationDaysByAmount = (amount) => {
   const a = Number(amount);
   if (a === 5000) return 3;
   if (a === 7000) return 7;
+  if (a === 10000) return 30;
   return getAccessDurationDays(); // fallback to env/default (30)
 };
 
@@ -568,34 +569,29 @@ router.post("/pending/cancel", verifyToken, async (req, res) => {
 
         // For missing/unknown orders, still cancel locally.
         // For other errors, also cancel locally to unblock the user, but record the error.
-        await paymentDB.updateTransactionStatus({
-          orderId,
-          transactionStatus: "cancel",
-          paymentType: cancelResult?.payment_type || null,
-          transactionTime: new Date().toISOString(),
-          settlementTime: cancelResult?.settlement_time || null,
-          midtransTransactionId: cancelResult?.transaction_id || null,
-          midtransResponse: {
-            error: msg,
-            note: isMissingOnMidtrans
-              ? "Cancelled locally because Midtrans reported missing transaction"
-              : "Cancelled locally because Midtrans cancel failed",
-          },
-        });
+        try {
+          await paymentDB.markTransactionFailed({
+            orderId,
+            reason: isMissingOnMidtrans ? "midtrans_missing_on_cancel" : "midtrans_cancel_failed",
+            details: msg,
+          });
+        } catch (dbErr) {
+          console.warn("Failed to mark transaction failed:", dbErr?.message);
+        }
 
         cancelledOrderIds.push(orderId);
         continue;
       }
 
-      await paymentDB.updateTransactionStatus({
-        orderId,
-        transactionStatus: "cancel",
-        paymentType: cancelResult?.payment_type,
-        transactionTime: cancelResult?.transaction_time,
-        settlementTime: cancelResult?.settlement_time,
-        midtransTransactionId: cancelResult?.transaction_id,
-        midtransResponse: cancelResult,
-      });
+      try {
+        await paymentDB.markTransactionFailed({
+          orderId,
+          reason: "cancelled_by_user",
+          details: `Midtrans cancel status: ${cancelResult?.transaction_status || 'cancel'}`,
+        });
+      } catch (dbErr) {
+        console.warn("Failed to mark transaction failed after cancel:", dbErr?.message);
+      }
 
       cancelledOrderIds.push(orderId);
     }

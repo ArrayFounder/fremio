@@ -27,6 +27,7 @@ import maintenanceRoutes from "./routes/maintenance.js";
 import webrtcRoutes from "./routes/webrtc.js";
 import adminSubscribersRoutes from "./routes/adminSubscribers.js";
 import usersRoutes from "./routes/users.js";
+import designerRoutes from "./routes/designer.js";
 import { startAutoReconcilePendingService } from "./services/autoReconcilePendingService.js";
 
 // Get __dirname equivalent for ES modules
@@ -538,6 +539,7 @@ app.use("/api/payment", paymentRoutes);
 app.use("/api/maintenance", maintenanceRoutes);
 app.use("/api/admin/subscribers", adminSubscribersRoutes);
 app.use("/api/users", usersRoutes);
+app.use("/api/designer", designerRoutes);
 
 // 404 handler
 app.use((req, res) => {

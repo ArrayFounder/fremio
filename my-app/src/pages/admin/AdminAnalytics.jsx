@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { isVPSMode } from "../../config/backend";
 import { getLeanMetrics, getLeanMetricsFromFirebase, getDashboardOverview } from "../../services/analyticsService";
-import { getAllUsers } from "../../services/userService";
+import { getAllUsers, getUserStats } from "../../services/userService";
 import "../../styles/admin.css";
 import {
   TrendingUp,
@@ -132,29 +132,28 @@ export default function AdminAnalytics() {
     
     // In VPS mode, skip localStorage loading - we get data from API
     if (isVPSMode()) {
-      // Fetch registration data from backend
+      // Fetch registration data from backend via /users/stats endpoint
       try {
-        const days = timeRange === '7days' ? 7 : timeRange === '30days' ? 30 : timeRange === '90days' ? 90 : 365;
-        const overview = await getDashboardOverview(days);
-        const totalUsers = parseInt(overview.total_users) || 0;
-        const newUsers = parseInt(overview.new_users) || 0;
-        const activeUsers = parseInt(overview.active_users) || 0;
-        const signupsToday = parseInt(overview.signups_today) || 0;
-        setRegistrationData({
-          totalUsers,
-          newUsersInPeriod: newUsers,
-          activeUsers,
-          newUsersToday: signupsToday,
-        });
-        setAnalytics(prev => ({
-          ...prev,
-          overview: {
-            ...prev.overview,
+        const stats = await getUserStats();
+        if (stats && stats.success) {
+          const totalUsers = stats.total_users || 0;
+          const newUsersInPeriod = timeRange === '7days' ? stats.new_users_7d
+            : timeRange === '30days' ? stats.new_users_30d
+            : timeRange === '90days' ? stats.new_users_90d
+            : totalUsers;
+          setRegistrationData({
             totalUsers,
-          },
-        }));
+            newUsersInPeriod,
+            activeUsers: stats.active_users || 0,
+            newUsersToday: stats.new_users_today || 0,
+          });
+          setAnalytics(prev => ({
+            ...prev,
+            overview: { ...prev.overview, totalUsers },
+          }));
+        }
       } catch (err) {
-        console.error("Failed to fetch registration stats:", err);
+        console.error("Failed to fetch user stats:", err);
       }
       setLoading(false);
       return;

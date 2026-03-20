@@ -25,6 +25,37 @@ function generateShareId() {
   return result;
 }
 
+// Ensure user_drafts table exists (runs once at startup)
+pool.query(`
+  CREATE TABLE IF NOT EXISTS user_drafts (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT,
+    share_id VARCHAR(20) UNIQUE NOT NULL,
+    title VARCHAR(255) DEFAULT 'Untitled',
+    frame_data TEXT,
+    preview_url TEXT,
+    is_public BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+  )
+`).then(async () => {
+  // Migrate user_id column from INTEGER to TEXT if needed (handles UUID/email user IDs)
+  try {
+    await pool.query(`
+      ALTER TABLE user_drafts
+        ALTER COLUMN user_id TYPE TEXT USING user_id::TEXT
+    `);
+    console.log('✅ [Drafts] user_id column migrated to TEXT');
+  } catch (e) {
+    // Already TEXT or no change needed
+  }
+  pool.query('CREATE INDEX IF NOT EXISTS idx_user_drafts_share_id ON user_drafts(share_id)').catch(() => {});
+  pool.query('CREATE INDEX IF NOT EXISTS idx_user_drafts_user_id ON user_drafts(user_id)').catch(() => {});
+  console.log('✅ [Drafts] user_drafts table ready');
+}).catch(err => {
+  console.error('❌ [Drafts] Failed to create user_drafts table:', err.message);
+});
+
 // Auth middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];

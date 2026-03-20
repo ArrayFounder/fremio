@@ -21,6 +21,7 @@ import {
   PanelLeft,
   Shapes,
   Crown,
+  Palette,
 } from "lucide-react";
 
 export default function AdminLayout() {
@@ -87,6 +88,7 @@ export default function AdminLayout() {
     },
     { path: "/admin/maintenance", icon: Shield, label: "Maintenance" },
     { path: "/admin/subscribers", icon: Crown, label: "Subscribers" },
+    { path: "/admin/designer-submissions", icon: Palette, label: "Designer Submissions" },
     { path: "/admin/settings", icon: Settings, label: "Settings" },
   ];
 

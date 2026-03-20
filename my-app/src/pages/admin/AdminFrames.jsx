@@ -59,6 +59,20 @@ const isPhotostripCanvas = (frame) => {
   return width === 1200 && height === 1800;
 };
 
+const is2RCanvas = (frame) => {
+  const ratioRaw =
+    frame?.layout?.aspectRatio ??
+    frame?.layout?.aspect_ratio ??
+    frame?.aspectRatio ??
+    frame?.aspect_ratio;
+
+  const ratio = normalizeRatio(ratioRaw);
+  if (ratio === "2r" || ratio === "1:3" || ratio === "600:1800") return true;
+
+  const { width, height } = getCanvasSize(frame);
+  return width === 600 && height === 1800;
+};
+
 const normalizeAspectRatioString = (raw) => {
   const normalized = String(raw || "")
     .toLowerCase()
@@ -67,6 +81,7 @@ const normalizeAspectRatioString = (raw) => {
     .replace("x", ":")
     .replace(/\s+/g, "");
   if (normalized === "photostrip" || normalized === "4r") return "2:3";
+  if (normalized === "2r") return "1:3";
   return normalized;
 };
 
@@ -140,9 +155,14 @@ const AdminFrames = () => {
 
   const sizeFilteredFrames = React.useMemo(() => {
     const show4R = activeCanvasCategory === "4r";
+    const show2R = activeCanvasCategory === "2r";
     return (frames || []).filter((frame) => {
       const is4RFrame = isPhotostripCanvas(frame);
-      return show4R ? is4RFrame : !is4RFrame;
+      const is2RFrame = is2RCanvas(frame);
+      if (show4R) return is4RFrame && !is2RFrame;
+      if (show2R) return is2RFrame;
+      // story: neither 4R nor 2R
+      return !is4RFrame && !is2RFrame;
     });
   }, [frames, activeCanvasCategory]);
 
@@ -862,6 +882,26 @@ const AdminFrames = () => {
             }}
           >
             4R (Photostrip)
+          </button>
+          <button
+            type="button"
+            aria-pressed={activeCanvasCategory === "2r"}
+            onClick={() => setActiveCanvasCategory("2r")}
+            style={{
+              border: "none",
+              cursor: "pointer",
+              padding: "8px 14px",
+              borderRadius: "999px",
+              fontWeight: 700,
+              fontSize: "12px",
+              background:
+                activeCanvasCategory === "2r"
+                  ? "linear-gradient(135deg, #4f46e5, #7c3aed)"
+                  : "transparent",
+              color: activeCanvasCategory === "2r" ? "white" : "#3730a3",
+            }}
+          >
+            2R
           </button>
         </div>
       </div>

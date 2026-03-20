@@ -1,5 +1,6 @@
 import express from "express";
 import { body, query } from "express-validator";
+import { randomUUID } from "crypto";
 import { getFirestore } from "../config/firebase.js";
 import { verifyToken } from "../middleware/auth.js";
 import validate from "../middleware/validator.js";
@@ -75,6 +76,52 @@ router.get(
 );
 
 /**
+ * GET /api/drafts/share/:shareId
+ * Get shared draft by share_id (PUBLIC - no auth required)
+ */
+router.get("/share/:shareId", async (req, res) => {
+  try {
+    const db = getFirestore();
+    const snapshot = await db
+      .collection("drafts")
+      .where("share_id", "==", req.params.shareId)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return res.status(404).json({
+        success: false,
+        message: "Draft not found",
+      });
+    }
+
+    const draftDoc = snapshot.docs[0];
+    const draftData = draftDoc.data();
+
+    if (!draftData.is_public) {
+      return res.status(404).json({
+        success: false,
+        message: "Draft not found or not public",
+      });
+    }
+
+    res.json({
+      success: true,
+      draft: {
+        id: draftDoc.id,
+        ...draftData,
+      },
+    });
+  } catch (error) {
+    console.error("Get shared draft error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get shared draft",
+    });
+  }
+});
+
+/**
  * GET /api/drafts/:id
  * Get single draft
  */
@@ -117,6 +164,60 @@ router.get("/:id", verifyToken, async (req, res) => {
 });
 
 /**
+ * POST /api/drafts/public-share
+ * Create a publicly shareable frame (no auth required)
+ */
+router.post("/public-share", async (req, res) => {
+  try {
+    const db = getFirestore();
+    const { title, frameData, previewUrl } = req.body;
+
+    if (!title || !frameData) {
+      return res.status(400).json({
+        success: false,
+        message: "title and frameData are required",
+      });
+    }
+
+    let elements = [];
+    try {
+      const parsed = JSON.parse(frameData);
+      elements = parsed.elements || [];
+    } catch (e) { /* ignore */ }
+
+    const shareId = randomUUID().replace(/-/g, "").substring(0, 16);
+    const draftData = {
+      userId: null,
+      title: title || "Shared Frame",
+      frame_data: frameData,
+      preview_url: previewUrl || null,
+      share_id: shareId,
+      is_public: true,
+      elements,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const draftRef = await db.collection("drafts").add(draftData);
+
+    res.status(201).json({
+      success: true,
+      draft: {
+        id: draftRef.id,
+        share_id: shareId,
+        ...draftData,
+      },
+    });
+  } catch (error) {
+    console.error("Public share error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to create public share",
+    });
+  }
+});
+
+/**
  * POST /api/drafts
  * Create new draft
  */
@@ -126,7 +227,8 @@ router.post(
   [
     body("title").notEmpty().withMessage("Title is required"),
     body("canvasBackground").optional().isString(),
-    body("elements").isArray().withMessage("Elements must be an array"),
+    body("elements").optional().isArray().withMessage("Elements must be an array"),
+    body("frameData").optional().isString(),
   ],
   validate,
   async (req, res) => {
@@ -139,15 +241,38 @@ router.post(
         canvasHeight,
         elements,
         exportConfig,
+        frameData,
+        previewUrl,
       } = req.body;
 
+      // Support both elements-array format AND frameData JSON string format
+      let finalElements = elements || [];
+      let finalBackground = canvasBackground || "#ffffff";
+      let finalWidth = canvasWidth || 1080;
+      let finalHeight = canvasHeight || 1920;
+
+      if (frameData) {
+        try {
+          const parsed = JSON.parse(frameData);
+          if (Array.isArray(parsed.elements)) finalElements = parsed.elements;
+          if (parsed.canvasBackground) finalBackground = parsed.canvasBackground;
+          if (parsed.canvasWidth) finalWidth = parsed.canvasWidth;
+          if (parsed.canvasHeight) finalHeight = parsed.canvasHeight;
+        } catch (e) { /* ignore parse errors */ }
+      }
+
+      const shareId = randomUUID().replace(/-/g, "").substring(0, 16);
       const draftData = {
         userId: req.user.uid,
         title,
-        canvasBackground: canvasBackground || "#ffffff",
-        canvasWidth: canvasWidth || 1080,
-        canvasHeight: canvasHeight || 1920,
-        elements: elements || [],
+        canvasBackground: finalBackground,
+        canvasWidth: finalWidth,
+        canvasHeight: finalHeight,
+        elements: finalElements,
+        frame_data: frameData || null,
+        preview_url: previewUrl || null,
+        share_id: shareId,
+        is_public: false,
         capturedPhotos: [],
         capturedVideos: [],
         exportConfig: exportConfig || {
@@ -167,6 +292,7 @@ router.post(
         draftId: draftRef.id,
         draft: {
           id: draftRef.id,
+          share_id: shareId,
           ...draftData,
         },
       });
@@ -179,6 +305,50 @@ router.post(
     }
   }
 );
+
+/**
+ * PATCH /api/drafts/:id/visibility
+ * Update draft visibility (public/private)
+ */
+router.patch("/:id/visibility", verifyToken, async (req, res) => {
+  try {
+    const db = getFirestore();
+    const draftDoc = await db.collection("drafts").doc(req.params.id).get();
+
+    if (!draftDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: "Draft not found",
+      });
+    }
+
+    const draftData = draftDoc.data();
+    if (draftData.userId !== req.user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    const { isPublic } = req.body;
+    await db.collection("drafts").doc(req.params.id).update({
+      is_public: !!isPublic,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: `Draft is now ${isPublic ? "public" : "private"}`,
+      draft: { id: req.params.id, is_public: !!isPublic },
+    });
+  } catch (error) {
+    console.error("Update visibility error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update visibility",
+    });
+  }
+});
 
 /**
  * PUT /api/drafts/:id

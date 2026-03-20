@@ -540,7 +540,7 @@ class PaymentDatabaseService {
     const query = `
       INSERT INTO payment_transactions (
         user_id, invoice_number, amount, status, currency, gateway, transaction_type, created_at
-      ) VALUES ($1, $2, $3, 'completed', 'IDR', 'manual', 'manual', NOW())
+      ) VALUES ($1, $2, $3, 'completed', 'IDR', 'midtrans', 'one_time', NOW())
       RETURNING *
     `;
 

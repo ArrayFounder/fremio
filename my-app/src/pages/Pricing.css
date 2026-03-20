@@ -304,9 +304,8 @@
 
 .preview-thumb {
   width: 100%;
-  aspect-ratio: 9 / 16;
   background: #f3f4f6;
-  border-radius: 12px;
+  border-radius: 0;
   overflow: hidden;
   border: 1px solid #e5e7eb;
 }

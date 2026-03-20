@@ -1,17 +1,21 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 const HeaderBrandingContext = createContext(null);
 
 export function HeaderBrandingProvider({ children }) {
   const [branding, setBranding] = useState(null);
 
+  // useCallback keeps clearBranding stable across renders so effects
+  // that list it as a dependency don't re-run on every branding change.
+  const clearBranding = useCallback(() => setBranding(null), []);
+
   const api = useMemo(() => {
     return {
       branding,
       setBranding,
-      clearBranding: () => setBranding(null),
+      clearBranding,
     };
-  }, [branding]);
+  }, [branding, clearBranding]);
 
   return (
     <HeaderBrandingContext.Provider value={api}>

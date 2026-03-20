@@ -2,9 +2,10 @@ import { Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext.jsx";
 import { ToastProvider } from "./contexts/ToastContext.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
-import { AdminOnly } from "./components/guards/RoleGuard.simple.jsx";
+import { AdminOnly, DesignerOnly } from "./components/guards/RoleGuard.simple.jsx";
 import RootLayout from "./layouts/RootLayout.jsx";
 import AdminLayout from "./layouts/AdminLayout.jsx";
+import DesignerLayout from "./layouts/DesignerLayout.jsx";
 import Home from "./pages/Home.jsx";
 import Frames from "./pages/Frames.jsx";
 import TakeMoment from "./pages/TakeMoment.jsx";
@@ -38,6 +39,9 @@ import AboutUs from "./pages/AboutUs.jsx";
 import Investor from "./pages/Investor.jsx";
 import Affiliates from "./pages/Affiliates.jsx";
 
+// SEO Landing Pages
+import PhotoboxOnline from "./pages/PhotoboxOnline.jsx";
+
 // Admin Pages
 import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
 import AdminFrames from "./pages/admin/AdminFrames.jsx";
@@ -52,6 +56,13 @@ import AdminAffiliates from "./pages/admin/AdminAffiliates.jsx";
 import AdminPackages from "./pages/admin/AdminPackages.jsx";
 import AdminMaintenance from "./pages/admin/AdminMaintenance.jsx";
 import AdminSubscribers from "./pages/admin/AdminSubscribers.jsx";
+import AdminDesignerSubmissions from "./pages/admin/AdminDesignerSubmissions.jsx";
+
+// Designer Pages
+import DesignerLogin from "./pages/designer/DesignerLogin.jsx";
+import DesignerDashboard from "./pages/designer/DesignerDashboard.jsx";
+import DesignerEditor from "./pages/designer/DesignerEditor.jsx";
+import DesignerNotifications from "./pages/designer/DesignerNotifications.jsx";
 
 // Maintenance
 import Maintenance from "./pages/Maintenance.jsx";
@@ -92,7 +103,14 @@ export default function App() {
             <Route path="investor" element={<Investor />} />
             <Route path="affiliates" element={<Affiliates />} />
 
-            {/* Frames - accessible without login, but clicking frame requires auth */}
+            {/* SEO Landing Pages - target keyword clusters */}
+            <Route path="photobox-online" element={<PhotoboxOnline />} />
+            <Route path="photobooth-online" element={<PhotoboxOnline />} />
+            <Route path="fotobox-online" element={<PhotoboxOnline />} />
+            <Route path="foto-booth-online" element={<PhotoboxOnline />} />
+            <Route path="foto-box-online" element={<PhotoboxOnline />} />
+            <Route path="photobox" element={<PhotoboxOnline />} />
+            <Route path="photobooth" element={<PhotoboxOnline />} />
             <Route path="frames" element={<Frames />} />
 
             {/* Pricing page (public) */}
@@ -203,7 +221,24 @@ export default function App() {
             <Route path="packages" element={<AdminPackages />} />
             <Route path="subscribers" element={<AdminSubscribers />} />
             <Route path="maintenance" element={<AdminMaintenance />} />
+            <Route path="designer-submissions" element={<AdminDesignerSubmissions />} />
             <Route path="settings" element={<AdminSettings />} />
+          </Route>
+
+          {/* Designer Routes - Separate Layout */}
+          <Route path="/designer/login" element={<DesignerLogin />} />
+          <Route
+            path="/designer"
+            element={
+              <DesignerOnly>
+                <DesignerLayout />
+              </DesignerOnly>
+            }
+          >
+            <Route index element={<DesignerDashboard />} />
+            <Route path="dashboard" element={<DesignerDashboard />} />
+            <Route path="editor" element={<DesignerEditor />} />
+            <Route path="notifications" element={<DesignerNotifications />} />
           </Route>
 
           {/* Tablet Printer - Full Screen Route (No Layout) */}

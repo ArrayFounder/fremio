@@ -5,6 +5,28 @@ import paymentService from "../services/paymentService";
 import unifiedFrameService from "../services/unifiedFrameService";
 import "./Pricing.css";
 
+// ── Frame size helpers ────────────────────────────────────────────────────────
+const _normRatio = (v) => String(v || "").toLowerCase().trim();
+const _getWH = (frame) => {
+  const l = frame?.layout, cs = frame?.canvas_size || frame?.canvasSize;
+  const w = l?.canvasWidth ?? l?.canvas_width ?? frame?.canvasWidth ?? frame?.canvas_width ?? cs?.width ?? cs?.w;
+  const h = l?.canvasHeight ?? l?.canvas_height ?? frame?.canvasHeight ?? frame?.canvas_height ?? cs?.height ?? cs?.h;
+  return { w: Number.isFinite(Number(w)) ? Number(w) : null, h: Number.isFinite(Number(h)) ? Number(h) : null };
+};
+const _is4R = (frame) => {
+  const r = _normRatio(frame?.layout?.aspectRatio ?? frame?.layout?.aspect_ratio ?? frame?.aspectRatio ?? frame?.aspect_ratio);
+  if (["photostrip","1200:1800","2:3","4:6","4r"].includes(r)) return true;
+  if (r.includes(":")) { const [a,b] = r.split(":").map(v => Number(v.trim())); if (a===1200&&b===1800) return true; }
+  const {w,h} = _getWH(frame); return w===1200 && h===1800;
+};
+const _is2R = (frame) => {
+  const r = _normRatio(frame?.layout?.aspectRatio ?? frame?.layout?.aspect_ratio ?? frame?.aspectRatio ?? frame?.aspect_ratio);
+  if (["2r","1:3","600:1800"].includes(r)) return true;
+  const {w,h} = _getWH(frame); return w===600 && h===1800;
+};
+const _frameSize = (frame) => _is2R(frame) ? "2r" : _is4R(frame) ? "4r" : "story";
+// ─────────────────────────────────────────────────────────────────────────────
+
 const Pricing = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -36,15 +58,25 @@ const Pricing = () => {
   // Premium frames categories shown on Pricing page
   // Must match the exact category strings used when uploading frames in Admin.
   const tabs = [
+    "Fremio Series",
     "Ramadan Series",
     "Holiday Fremio Series",
+    "Christmas Fremio Series",
+    "Year-End Recap Fremio Series",
     "Aesthetic Scrapbook & Retro",
     "Cute Characters",
     "Self-love",
     "Romance",
+    "Music",
+    "Wedding",
+    "Birthday",
+    "Graduation",
+    "Event",
+    "Custom",
   ];
-  const [activeTab, setActiveTab] = useState(tabs[0]);
-  const [premiumFramesByCategory, setPremiumFramesByCategory] = useState({});
+  const [activeSizeTab, setActiveSizeTab] = useState("story");
+  const [activeCategoryTab, setActiveCategoryTab] = useState(tabs[0]);
+  const [premiumFramesBySizeCategory, setPremiumFramesBySizeCategory] = useState({});
   const [loadingPreviewFrames, setLoadingPreviewFrames] = useState(true);
   const [selectedPlan, setSelectedPlan] = useState(null);
 
@@ -97,35 +129,37 @@ const Pricing = () => {
       setLoadingPreviewFrames(true);
       const frames = await unifiedFrameService.getAllFrames();
 
-      // Pricing preview is based on category only (not tied to paid/free).
       const allowed = new Set(tabs);
-      const grouped = (frames || []).reduce((acc, frame) => {
+      // grouped: { story: { category: frames[] }, '4r': {...}, '2r': {...} }
+      const grouped = {};
+
+      for (const frame of (frames || [])) {
         const rawCategories = Array.isArray(frame?.categories)
           ? frame.categories
-          : String(frame?.category || "")
-              .split(",")
-              .map((c) => c.trim())
-              .filter(Boolean);
+          : String(frame?.category || "").split(",").map((c) => c.trim()).filter(Boolean);
 
         const match = rawCategories.find((c) => allowed.has(String(c)));
-        if (!match) return acc;
+        if (!match) continue;
 
-        if (!acc[match]) acc[match] = [];
-        acc[match].push(frame);
-        return acc;
-      }, {});
+        const size = _frameSize(frame);
+        if (!grouped[size]) grouped[size] = {};
+        if (!grouped[size][match]) grouped[size][match] = [];
+        grouped[size][match].push(frame);
+      }
 
-      // Sort within each category by displayOrder then createdAt
-      Object.keys(grouped).forEach((category) => {
-        grouped[category].sort(
+      // Sort within each size/category by displayOrder
+      for (const size of Object.keys(grouped)) {
+        for (const cat of Object.keys(grouped[size])) {
+          grouped[size][cat].sort(
             (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-        );
-      });
+          );
+        }
+      }
 
-      setPremiumFramesByCategory(grouped);
+      setPremiumFramesBySizeCategory(grouped);
     } catch (error) {
       console.error("Load preview frames error:", error);
-      setPremiumFramesByCategory({});
+      setPremiumFramesBySizeCategory({});
     } finally {
       setLoadingPreviewFrames(false);
     }
@@ -515,7 +549,7 @@ const Pricing = () => {
     );
   }
 
-  const tabFrames = premiumFramesByCategory[activeTab] || [];
+  const tabFrames = premiumFramesBySizeCategory[activeSizeTab]?.[activeCategoryTab] || [];
 
   const pendingCanResume =
     !!pendingPayment &&
@@ -525,20 +559,47 @@ const Pricing = () => {
   const pendingCanManage = !!pendingPayment && !pendingPayment.unavailable;
 
   const previewQuoteByCategory = {
+    "Fremio Series": "“Koleksi khas dari Fremio”",
     "Holiday Fremio Series": "“Holiday Frames untuk temani liburan”",
+    "Christmas Fremio Series": "“Semangat Natal yang meriah”",
+    "Year-End Recap Fremio Series": "“Tutup tahun dengan kenangan indah”",
     "Aesthetic Scrapbook & Retro": "“Aesthetic & Retro untuk cerita kamu”",
     "Cute Characters": "“Cute Characters untuk vibes gemas”",
     "Self-love": "“Self-love untuk momen yang lebih bermakna”",
-    Romance: "Romance untuk momen spesial",
+    Romance: "“Romance untuk momen spesial”",
     "Ramadan Series": "“Ramadan Series untuk momen penuh berkah”",
+    Music: "“Frame spesial bertema musik”",
+    Wedding: "“Abadikan momen pernikahan yang istimewa”",
+    Birthday: "“Rayakan hari spesialmu dengan gaya”",
+    Graduation: "“Momen wisuda yang tak terlupakan”",
+    Event: "“Frame untuk setiap acara spesial”",
+    Custom: "“Frame unik sesuai keinginanmu”",
   };
 
   const previewQuote =
-    previewQuoteByCategory[activeTab] || "“Koleksi frames untuk member Fremio”";
+    previewQuoteByCategory[activeCategoryTab] || "“Koleksi frames untuk member Fremio”";
+
+  // Categories available for the active size (only those with >=1 frame)
+  const currentSizeData = premiumFramesBySizeCategory[activeSizeTab] || {};
+  const availableCategories = tabs.filter(
+    (cat) => (currentSizeData[cat] || []).length > 0
+  );
+
+  const handleSizeChange = (size) => {
+    setActiveSizeTab(size);
+    const sizeData = premiumFramesBySizeCategory[size] || {};
+    const available = tabs.filter((cat) => (sizeData[cat] || []).length > 0);
+    if (!sizeData[activeCategoryTab] || sizeData[activeCategoryTab].length === 0) {
+      setActiveCategoryTab(available[0] || tabs[0]);
+    }
+  };
 
   const membershipCategoryCounts = tabs.map((category) => ({
     category,
-    count: (premiumFramesByCategory[category] || []).length || 0,
+    count: Object.values(premiumFramesBySizeCategory).reduce(
+      (sum, sizeData) => sum + (sizeData[category] || []).length,
+      0
+    ),
   }));
 
   const membershipTotalFrames = membershipCategoryCounts.reduce(
@@ -548,33 +609,129 @@ const Pricing = () => {
 
   return (
     <div className="pricing-container">
-      {/* PREVIEW FRAME KOLEKSI FREMIO - At the top for immediate visibility */}
+      {/* PREVIEW FRAME KOLEKSI FREMIO */}
       <div className="pricing-preview">
+        {/* Header */}
         <h3
           style={{
             fontSize: "24px",
             fontWeight: "700",
             textAlign: "center",
-            marginBottom: "20px",
+            marginBottom: "6px",
             color: "#333",
           }}
         >
           Preview Frame Membership Fremio
         </h3>
+        <p
+          style={{
+            textAlign: "center",
+            fontSize: "14px",
+            color: "#888",
+            marginBottom: "24px",
+          }}
+        >
+          Dapatkan akses ke <strong style={{ color: "#c89585" }}>100+ frame premium</strong> yang terus diperbarui setiap bulan — temukan koleksi yang sesuai dengan momenmu.
+        </p>
 
-        <div className="preview-tabs">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              className={`preview-tab ${activeTab === tab ? "active" : ""}`}
-              onClick={() => setActiveTab(tab)}
-              type="button"
-            >
-              {tab}
-            </button>
-          ))}
+        {/* ── Level 1: Size Toggle ── */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            marginBottom: "16px",
+          }}
+        >
+          <div
+            style={{
+              display: "inline-flex",
+              background: "#fef5f1",
+              borderRadius: "999px",
+              padding: "5px",
+              gap: "4px",
+              boxShadow: "inset 0 1px 4px rgba(200,149,133,0.15)",
+            }}
+          >
+            {[
+              { key: "story", label: "Story Instagram" },
+              { key: "4r",    label: "4R" },
+              { key: "2r",    label: "2R" },
+            ].map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => handleSizeChange(key)}
+                style={{
+                  padding: "9px 20px",
+                  borderRadius: "999px",
+                  border: "none",
+                  fontWeight: "700",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  background:
+                    activeSizeTab === key
+                      ? "linear-gradient(135deg, #e0b7a9, #c89585)"
+                      : "transparent",
+                  color: activeSizeTab === key ? "#fff" : "#7a5248",
+                  boxShadow:
+                    activeSizeTab === key
+                      ? "0 3px 10px rgba(200,149,133,0.4)"
+                      : "none",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
+        {/* ── Level 2: Category Toggle ── */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            flexWrap: "wrap",
+            gap: "8px",
+            marginBottom: "20px",
+            minHeight: "36px",
+          }}
+        >
+          {loadingPreviewFrames ? (
+            <span style={{ fontSize: "13px", color: "#bbb" }}>Memuat kategori...</span>
+          ) : availableCategories.length === 0 ? (
+            <span style={{ fontSize: "13px", color: "#bbb" }}>Belum ada frame untuk ukuran ini</span>
+          ) : (
+            availableCategories.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setActiveCategoryTab(cat)}
+                style={{
+                  padding: "6px 16px",
+                  borderRadius: "999px",
+                  border:
+                    activeCategoryTab === cat
+                      ? "none"
+                      : "1px solid rgba(200,149,133,0.45)",
+                  fontWeight: activeCategoryTab === cat ? "700" : "500",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.18s",
+                  background:
+                    activeCategoryTab === cat
+                      ? "#c89585"
+                      : "transparent",
+                  color: activeCategoryTab === cat ? "#fff" : "#7a5248",
+                }}
+              >
+                {cat}
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* ── Panel ── */}
         <div className="preview-panel">
           <div className="preview-quote">{previewQuote}</div>
 
@@ -588,7 +745,15 @@ const Pricing = () => {
             <div className="preview-grid">
               {tabFrames.slice(0, 10).map((frame, idx) => (
                 <div key={frame.id || idx} className="preview-item">
-                  <div className="preview-thumb">
+                  <div
+                    className="preview-thumb"
+                    style={{
+                      aspectRatio:
+                        activeSizeTab === "4r" ? "2 / 3"
+                        : activeSizeTab === "2r" ? "1 / 3"
+                        : "9 / 16",
+                    }}
+                  >
                     <img
                       src={
                         frame.thumbnailUrl || frame.imageUrl || frame.imagePath
@@ -630,6 +795,17 @@ const Pricing = () => {
             textAlign: 'center',
             fontSize: '15px',
             color: '#666',
+            marginBottom: '6px',
+          }}
+        >
+          Dapatkan akses ke <strong>100+ frame premium</strong> yang terus diperbarui tiap bulan —<br />
+          pilih durasi yang sesuai, mulai dari 3 hari hingga 1 bulan.
+        </p>
+        <p
+          style={{
+            textAlign: 'center',
+            fontSize: '13px',
+            color: '#aaa',
             marginBottom: '20px',
           }}
         >

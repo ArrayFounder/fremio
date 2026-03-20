@@ -618,7 +618,7 @@ export const getRecentActivities = () => {
  * Get dashboard overview
  */
 export const getDashboardOverview = async (days = 30) => {
-  return await fetchAnalytics('/dashboard/overview', { days });
+  return await fetchAnalytics('/dashboard/overview', { period: days });
 };
 
 /**
@@ -689,55 +689,66 @@ export const getRealtimeStats = async () => {
  */
 export const getLeanMetricsFromFirebase = async () => {
   try {
-    const overview = await getDashboardOverview(30);
+    // Use 36500 days (all-time) for funnel/visitor metrics
+    const overview = await getDashboardOverview(36500);
     
-    // Calculate additional metrics
-    const activationRate = overview.uniqueUsers > 0 
-      ? Math.round((overview.downloads / overview.uniqueUsers) * 100) 
+    // Backend returns snake_case from PostgreSQL
+    const totalUsers     = parseInt(overview.total_users)      || 0;
+    const totalSessions  = parseInt(overview.total_sessions)   || 0;
+    const uniqueVisitors = parseInt(overview.unique_visitors)  || 0;
+    const totalDownloads = parseInt(overview.total_downloads)  || 0;
+    const activeUsers    = parseInt(overview.active_users)     || 0;
+    const newUsers       = parseInt(overview.new_users)        || 0;
+
+    const activationRate = totalUsers > 0
+      ? Math.round((totalDownloads / totalUsers) * 100)
       : 0;
-    const retentionRate = overview.totalSessions > 0
-      ? Math.round((overview.uniqueUsers / overview.totalSessions) * 100)
+    const retentionRate = totalSessions > 0
+      ? Math.round((activeUsers / totalSessions) * 100)
       : 0;
-    const weeklyGrowth = 0; // TODO: Calculate from historical data
-    const avgDownloadsPerUser = overview.uniqueUsers > 0
-      ? (overview.downloads / overview.uniqueUsers).toFixed(1)
+    const avgDownloadsPerUser = totalUsers > 0
+      ? (totalDownloads / totalUsers).toFixed(1)
+      : 0;
+    const overallConversion = totalSessions > 0
+      ? Math.round((totalDownloads / totalSessions) * 100)
       : 0;
     
     return {
-      source: 'firebase', // Mark as coming from VPS/Firebase
-      totalVisitors: overview.totalSessions || 0,
-      uniqueVisitors: overview.uniqueUsers || 0,
-      totalUsers: overview.totalUsers || 0,
-      totalPhotosTaken: overview.photosTaken || 0,
-      totalDownloads: overview.downloads || 0,
-      totalShares: overview.shares || 0,
-      conversionRate: overview.conversionRate || 0,
+      source: 'firebase',
+      totalVisitors: totalSessions,
+      uniqueVisitors,
+      totalUsers,
+      totalPhotosTaken: totalDownloads,
+      totalDownloads,
+      totalShares: 0,
+      conversionRate: overallConversion,
       activationRate,
-      activatedUsers: overview.downloads || 0,
+      activatedUsers: totalDownloads,
       retentionRate,
-      weeklyGrowth,
+      weeklyGrowth: 0,
       avgDownloadsPerUser,
-      topFrames: overview.topFrames || [],
-      dailyStats: overview.dailyStats || [],
-      registeredUsers: overview.totalUsers || 0,
+      topFrames: [],
+      dailyStats: [],
+      registeredUsers: totalUsers,
       registrationRate: 0,
-      registrations7Days: 0,
+      registrations7Days: newUsers,
       previousRegistrations7Days: 0,
       topCreators: [],
+      dailyActiveUsers: activeUsers,
+      weeklyActiveUsers: activeUsers,
+      monthlyActiveUsers: activeUsers,
       funnel: {
-        visit: overview.totalSessions || 0,
-        frameView: overview.photosTaken || 0,
-        frameSelect: overview.photosTaken || 0,
-        photoTaken: overview.photosTaken || 0,
-        downloaded: overview.downloads || 0,
+        visit: totalSessions,
+        frameView: totalSessions,
+        frameSelect: totalDownloads,
+        photoTaken: totalDownloads,
+        downloaded: totalDownloads,
       },
       conversionRates: {
         viewToSelect: 100,
         selectToCapture: 100,
-        captureToDownload: overview.photosTaken > 0 
-          ? Math.round((overview.downloads / overview.photosTaken) * 100)
-          : 0,
-        overallConversion: overview.conversionRate || 0,
+        captureToDownload: 100,
+        overallConversion,
       },
     };
   } catch (error) {

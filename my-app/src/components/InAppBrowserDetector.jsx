@@ -7,6 +7,8 @@ import { useState, useEffect } from "react";
 export default function InAppBrowserDetector() {
   const [showPrompt, setShowPrompt] = useState(false);
   const [browserType, setBrowserType] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [showCopyStep, setShowCopyStep] = useState(false);
 
   useEffect(() => {
     const detectInAppBrowser = () => {
@@ -40,30 +42,61 @@ export default function InAppBrowserDetector() {
     detectInAppBrowser();
   }, []);
 
-  const handleOpenInBrowser = () => {
+  const handleOpenInBrowser = async () => {
     const currentUrl = window.location.href;
-    
-    // For iOS - try to open in Safari
-    if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-      // Try intent-based opening for iOS
-      window.location.href = `x-safari-${currentUrl}`;
-      
-      // Fallback: show instructions
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
+    // -- Attempt 1: create a real <a target="_blank"> and click it --
+    // This is the most reliable method — Instagram sometimes lets through
+    // _blank anchor clicks originated from user gestures.
+    const anchor = document.createElement("a");
+    anchor.href = currentUrl;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+
+    // -- Attempt 2: window.open --
+    const opened = window.open(currentUrl, "_blank");
+
+    // -- Attempt 3: platform-specific deep link schemes --
+    if (isAndroid) {
+      // Try to open in Chrome via intent URL
       setTimeout(() => {
-        alert("Tap menu (⋯) di kanan bawah, lalu pilih 'Open in Safari' atau 'Buka di Safari'");
-      }, 500);
-    } 
-    // For Android
-    else if (/Android/i.test(navigator.userAgent)) {
-      // Try intent-based opening for Android
-      const intentUrl = `intent://${currentUrl.replace(/^https?:\/\//, "")}#Intent;scheme=https;package=com.android.chrome;end`;
-      window.location.href = intentUrl;
-      
-      // Fallback
+        window.location.href = `intent://${currentUrl.replace(/^https?:\/\//, "")}#Intent;scheme=https;package=com.android.chrome;action=android.intent.action.VIEW;end`;
+      }, 300);
+    } else if (isIOS) {
+      // Try Chrome for iOS then Safari (will silently fail if not installed — no alert)
       setTimeout(() => {
-        alert("Tap menu (⋮) di kanan atas, lalu pilih 'Open in Chrome' atau 'Buka di Browser'");
-      }, 500);
+        window.location.href = `googlechrome://${currentUrl.replace(/^https?:\/\//, "")}`;
+      }, 300);
     }
+
+    // -- Fallback: copy URL so user can paste manually --
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(currentUrl);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = currentUrl;
+        ta.style.cssText = "position:fixed;opacity:0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 4000);
+    } catch (e) {
+      // clipboard unavailable
+    }
+
+    // Show manual instructions in case all attempts are blocked
+    setShowCopyStep(true);
   };
 
   const handleDismiss = () => {
@@ -146,13 +179,36 @@ export default function InAppBrowserDetector() {
             textAlign: "left",
           }}
         >
-          <p style={{ color: "#5D4E47", fontSize: "13px", fontWeight: "600", marginBottom: "8px" }}>
-            Cara membuka di browser:
-          </p>
-          <ol style={{ color: "#7a6b63", fontSize: "13px", lineHeight: "1.6", paddingLeft: "20px", margin: 0 }}>
-            <li>Tap menu <strong>⋯</strong> (titik tiga) di pojok</li>
-            <li>Pilih <strong>"Open in Safari"</strong> atau <strong>"Buka di Browser"</strong></li>
-          </ol>
+          {showCopyStep ? (
+            <>
+              <p style={{ color: "#5D4E47", fontSize: "13px", fontWeight: "600", marginBottom: "8px" }}>
+                {copied ? "✅ Link disalin! Jika belum terbuka:" : "Jika browser belum terbuka:"}
+              </p>
+              {/iPhone|iPad|iPod/i.test(navigator.userAgent) ? (
+                <ol style={{ color: "#7a6b63", fontSize: "13px", lineHeight: "1.6", paddingLeft: "20px", margin: 0 }}>
+                  <li>Tap <strong>⋯</strong> (titik tiga) di kanan bawah</li>
+                  <li>Pilih <strong>"Open in Safari"</strong> atau <strong>"Buka di Safari"</strong></li>
+                  {copied && <li>Atau buka Safari & <strong>paste link</strong> di address bar</li>}
+                </ol>
+              ) : (
+                <ol style={{ color: "#7a6b63", fontSize: "13px", lineHeight: "1.6", paddingLeft: "20px", margin: 0 }}>
+                  <li>Tap <strong>⋮</strong> (titik tiga) di kanan atas</li>
+                  <li>Pilih <strong>"Open in Chrome"</strong> atau <strong>"Buka di Browser"</strong></li>
+                  {copied && <li>Atau buka Chrome & <strong>paste link</strong> di address bar</li>}
+                </ol>
+              )}
+            </>
+          ) : (
+            <>
+              <p style={{ color: "#5D4E47", fontSize: "13px", fontWeight: "600", marginBottom: "8px" }}>
+                Cara membuka di browser:
+              </p>
+              <ol style={{ color: "#7a6b63", fontSize: "13px", lineHeight: "1.6", paddingLeft: "20px", margin: 0 }}>
+                <li>Tap menu <strong>⋯</strong> (titik tiga) di pojok</li>
+                <li>Pilih <strong>"Open in Safari"</strong> atau <strong>"Buka di Browser"</strong></li>
+              </ol>
+            </>
+          )}
         </div>
 
         {/* Buttons */}
@@ -160,7 +216,7 @@ export default function InAppBrowserDetector() {
           <button
             onClick={handleOpenInBrowser}
             style={{
-              backgroundColor: "#E8A889",
+              backgroundColor: copied ? "#6aaa64" : "#E8A889",
               color: "#fff",
               border: "none",
               borderRadius: "12px",
@@ -169,9 +225,10 @@ export default function InAppBrowserDetector() {
               fontWeight: "600",
               cursor: "pointer",
               width: "100%",
+              transition: "background-color 0.3s",
             }}
           >
-            Buka di Browser
+            {copied ? "✅ Link Disalin!" : "Buka di Browser"}
           </button>
           
           <button

@@ -252,6 +252,15 @@ const getAccessDurationDays = () => {
   return Number.isFinite(raw) && raw > 0 ? raw : 30;
 };
 
+// Derive duration from amount — mirrors the same logic in payment.js
+const getDurationDaysByAmount = (amount) => {
+  const a = Number(amount);
+  if (a === 5000) return 3;
+  if (a === 7000) return 7;
+  if (a === 10000) return 30;
+  return getAccessDurationDays(); // fallback to env/default (30)
+};
+
 const addDays = (date, days) => {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
@@ -313,8 +322,6 @@ router.post("/sync-order", async (req, res) => {
     if (!email || !email.includes("@")) {
       return res.status(400).json({ success: false, message: "Email tidak valid" });
     }
-
-    const durationDays = getAccessDurationDays();
 
     // Resolve userId: local DB first, then Firebase Auth by email.
     let userId = null;
@@ -396,6 +403,10 @@ router.post("/sync-order", async (req, res) => {
         message: "Gagal memastikan transaksi lokal untuk orderId ini",
       });
     }
+
+    // Derive duration from Midtrans amount (Rp 5000 → 3 days, Rp 7000 → 7 days, Rp 10000 → 30 days)
+    const txAmount = Number(st?.gross_amount || tx?.amount || 0);
+    const durationDays = getDurationDaysByAmount(txAmount);
 
     const alreadyGranted = await paymentDB.hasAccessForTransaction(tx.id);
     if (!alreadyGranted) {

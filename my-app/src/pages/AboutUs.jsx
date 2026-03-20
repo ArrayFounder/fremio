@@ -1,4 +1,12 @@
+import { useSEO } from "../hooks/useSEO.js";
+
 export default function AboutUs() {
+  useSEO({
+    title: "Tentang Fremio - Photo Booth Online Indonesia",
+    description: "Kenali Fremio, platform photo booth online dan photobox virtual terbaik di Indonesia. Kami hadir untuk mengabadikan momen spesial kamu.",
+    canonical: "https://fremio.id/about-us",
+  });
+
   const teamMembers = [
     {
       name: "Razzaqu Raydan",

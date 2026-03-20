@@ -1,10 +1,30 @@
+import { useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { Link, useNavigate } from "react-router-dom";
+import paymentService from "../services/paymentService.js";
 import "../styles/profile.css";
 
 export default function Profile() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+
+  const [membershipDays, setMembershipDays] = useState(null);
+
+  useEffect(() => {
+    paymentService
+      .getAccess()
+      .then((res) => {
+        if (res?.success && res?.hasAccess && res?.data?.accessEnd) {
+          const end = new Date(res.data.accessEnd);
+          const now = new Date();
+          const days = Math.ceil((end - now) / (1000 * 60 * 60 * 24));
+          setMembershipDays(days > 0 ? days : 0);
+        } else {
+          setMembershipDays(0);
+        }
+      })
+      .catch(() => setMembershipDays(null));
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -94,6 +114,22 @@ export default function Profile() {
               <div className="profile-row">
                 <div className="label">Registration Date</div>
                 <div className="value">{registered}</div>
+              </div>
+              <div className="profile-row">
+                <div className="label">Status Member</div>
+                <div className="value">
+                  {membershipDays === null ? (
+                    "-"
+                  ) : membershipDays > 0 ? (
+                    <span style={{ color: "#16a34a", fontWeight: 600 }}>
+                      Aktif &mdash; {membershipDays} hari lagi
+                    </span>
+                  ) : (
+                    <span style={{ color: "#dc2626", fontWeight: 600 }}>
+                      Tidak aktif
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="profile-row">
                 <div className="label">First Name</div>

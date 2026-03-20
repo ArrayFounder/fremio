@@ -868,6 +868,20 @@ export default function TakeMoment() {
       ? Math.ceil(maxCaptures / 2)
       : maxCaptures;
 
+  // Auto-set duplicate mode based on slot count:
+  // Odd slots → force duplicate OFF; Even slots → default duplicate ON
+  useEffect(() => {
+    if (maxCaptures > 0) {
+      const isOdd = maxCaptures % 2 !== 0;
+      setIsDuplicateMode(!isOdd);
+      try {
+        safeStorage.setItem("friendsDuplicateMode", isOdd ? "0" : "1");
+      } catch {
+        // ignore
+      }
+    }
+  }, [maxCaptures]);
+
   const pendingStorageIdleRef = useRef(null);
   const pendingStorageTimeoutRef = useRef(null);
   const latestStoragePayloadRef = useRef({ photos: null, videos: null });
@@ -1288,6 +1302,10 @@ export default function TakeMoment() {
 
       (async () => {
         try {
+          // Save shareId immediately so EditPhoto can re-fetch directly from VPS.
+          // This is far more reliable than storing multi-MB base64 frameConfig.
+          sessionStorage.setItem("__fremio_share_id__", shareId);
+
           showToast("info", "⏳ Memuat frame...");
 
           const draftService = (await import("../services/draftService.js"))
@@ -1371,6 +1389,49 @@ export default function TakeMoment() {
           safeStorage.setItem("selectedFrame", frameConfig.id);
           safeStorage.setItem("frameConfigTimestamp", String(Date.now()));
 
+          // CRITICAL FIX: Write to sessionStorage in the format EditPhoto expects.
+          // EditPhoto checks sessionStorage.__fremio_shared_frame_temp__ as PRIORITY 1.
+          // Without this, elements (background-photo, upload overlays) are invisible to other users.
+          // SIZE OPTIMIZATION: exclude the root-level `elements` key from the stored copy
+          // (it's a duplicate of designer.elements) to keep the payload as small as possible.
+          const SHARED_FRAME_KEY = "__fremio_shared_frame_temp__";
+          try {
+            // Build a lean frameConfig: keep all scalar fields and designer, but skip
+            // the top-level `elements` array (identical to designer.elements — avoids doubling size).
+            const { elements: _stripped, ...frameConfigWithoutRootElements } = frameConfig;
+            sessionStorage.setItem(
+              SHARED_FRAME_KEY,
+              JSON.stringify({
+                frameConfig: {
+                  ...frameConfigWithoutRootElements,
+                  __timestamp: Date.now(),
+                  __savedFrom: "TakeMoment_vpsShare",
+                },
+                draftData: {
+                  id: frameConfig.id,
+                  title: cloudDraft.title || frameConfig.title,
+                  aspectRatio: frameConfig.aspectRatio,
+                  elements: [],
+                  canvasBackground: frameConfig.canvasBackground,
+                  canvasWidth: frameConfig.canvasWidth,
+                  canvasHeight: frameConfig.canvasHeight,
+                  preview: cloudDraft.preview_url,
+                  isShared: true,
+                },
+              })
+            );
+            console.log(
+              "✅ [TakeMoment] Shared frame saved to sessionStorage for EditPhoto (" +
+                (frameData.elements?.length || 0) +
+                " elements, no root elements duplication)"
+            );
+          } catch (e) {
+            console.warn(
+              "⚠️ [TakeMoment] Could not save shared frame to sessionStorage:",
+              e.message
+            );
+          }
+
           // Update state
           setMaxCaptures(frameConfig.maxCaptures);
           updateSlotAspectRatio(frameConfig);
@@ -1381,8 +1442,8 @@ export default function TakeMoment() {
             `✅ Frame "${cloudDraft.title}" berhasil dimuat!`
           );
 
-          // Clean up URL
-          window.history.replaceState({}, "", "/take-moment");
+          // Clean up URL — use React Router so its internal state stays in sync
+          navigate("/take-moment", { replace: true });
         } catch (error) {
           console.error("Error loading shared frame from VPS:", error);
           showToast("error", "Gagal memuat frame dari server");
@@ -1415,6 +1476,64 @@ export default function TakeMoment() {
             elementsCount: draft.elements?.length,
             elementTypes: draft.elements?.map((el) => el.type || el.tp),
           });
+
+          // FIX: ?d= links always strip background-photo/upload elements (they're too large for URLs).
+          // When elements is empty, try to find the full draft in the user's local IndexedDB,
+          // upload it to VPS, and redirect to a proper ?share= link so anyone can view it.
+          if (!draft.elements?.length) {
+            console.log("⚠️ [?d= link] elements is empty — trying to find full draft in IndexedDB...");
+            try {
+              const { default: draftStorageMod } = await import("../utils/draftStorage.js");
+              // Try to find by title in user's local drafts
+              const allDrafts = await draftStorageMod.loadDrafts();
+              const matchingDraft = Array.isArray(allDrafts)
+                ? allDrafts.find((d) => d.title === draft.title && d.elements?.length > 0)
+                : null;
+
+              if (matchingDraft) {
+                console.log("✅ Found matching local draft with elements:", matchingDraft.id);
+                showToast("info", "⏳ Memperbarui link share...");
+                try {
+                  const draftService = (await import("../services/draftService.js")).default;
+                  const frameData = JSON.stringify({
+                    aspectRatio: matchingDraft.aspectRatio || "9:16",
+                    canvasBackground: matchingDraft.canvasBackground || "#f7f1ed",
+                    canvasWidth: matchingDraft.canvasWidth || 1080,
+                    canvasHeight: matchingDraft.canvasHeight || 1920,
+                    elements: matchingDraft.elements || [],
+                  });
+                  const result = await draftService.saveDraftToCloud({
+                    title: matchingDraft.title || "Shared Frame",
+                    frameData,
+                    previewUrl: matchingDraft.preview || null,
+                    draftId: null,
+                  });
+                  if (result?.draft?.share_id) {
+                    console.log("✅ Uploaded to VPS, redirecting to ?share=", result.draft.share_id);
+                    // Store shareId and redirect — the ?share= handler will take it from here
+                    sessionStorage.setItem("__fremio_share_id__", result.draft.share_id);
+                    window.history.replaceState(
+                      {},
+                      "",
+                      `/take-moment?share=${result.draft.share_id}`
+                    );
+                    // Reload to let the ?share= handler run
+                    window.location.reload();
+                    return;
+                  }
+                } catch (uploadErr) {
+                  console.warn("⚠️ Could not upload to VPS:", uploadErr.message);
+                }
+              } else {
+                console.log("⚠️ No matching local draft found for title:", draft.title);
+              }
+            } catch (dbErr) {
+              console.warn("⚠️ Could not search local drafts:", dbErr.message);
+            }
+            // If we couldn't find/upload the full draft, show a clear error
+            showToast("error", "Link ini tidak bisa dibuka oleh device lain. Buka halaman Drafts dan buat link baru.");
+            return;
+          }
 
           // Canvas dimensions for coordinate conversion
           const canvasWidth = draft.canvasWidth || 1080;
@@ -1478,8 +1597,8 @@ export default function TakeMoment() {
 
           showToast("success", `✅ Frame "${draft.title}" berhasil dimuat!`);
 
-          // Clean up URL
-          window.history.replaceState({}, "", "/take-moment");
+          // Clean up URL — use React Router so its internal state stays in sync
+          navigate("/take-moment", { replace: true });
         } catch (error) {
           console.error("Error loading embedded frame:", error);
           showToast("error", "Gagal memuat frame");
@@ -1629,8 +1748,8 @@ export default function TakeMoment() {
 
         showToast("success", `Frame "${frameConfig.title}" dimuat`);
 
-        // Remove query param from URL to prevent reload issues
-        window.history.replaceState({}, "", "/take-moment");
+        // Remove query param from URL to prevent reload issues — use React Router
+        navigate("/take-moment", { replace: true });
       } catch (error) {
         console.error("❌ Error loading shared frame:", error);
         showToast("error", "Gagal memuat frame");

@@ -80,6 +80,36 @@ export function UserOnly({ children }) {
   return children;
 }
 
+export function DesignerOnly({ children }) {
+  // Read auth from localStorage directly (designer uses same JWT storage)
+  const storedUser = (() => {
+    try {
+      return JSON.parse(
+        localStorage.getItem("designer_user") ||
+          localStorage.getItem("fremio_user") ||
+          "null"
+      );
+    } catch {
+      return null;
+    }
+  })();
+
+  const token =
+    localStorage.getItem("designer_token") ||
+    localStorage.getItem("fremio_token");
+
+  if (!token || !storedUser) {
+    return <Navigate to="/designer/login" replace />;
+  }
+
+  const role = storedUser?.role;
+  if (role !== "designer" && role !== "admin") {
+    return <Navigate to="/designer/login" replace />;
+  }
+
+  return children;
+}
+
 function LoadingScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-blue-50">

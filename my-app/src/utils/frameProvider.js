@@ -56,13 +56,39 @@ export class FrameDataProvider {
       
       const hasSlots = frameData.slots && Array.isArray(frameData.slots) && frameData.slots.length > 0;
       const hasImage = frameData.imagePath || frameData.thumbnailUrl;
+      const hasDesignerElements = Array.isArray(frameData.designer?.elements) && frameData.designer.elements.length > 0;
+      // Shared/custom frames from the creator: have designer.elements with base64 images but no imagePath/thumbnailUrl
+      const isDirectCustomFrame = (frameData.isSharedFrame || frameData.isCustom) && hasDesignerElements;
       
       console.log(`🔍 Frame data check:`);
       console.log(`  - Has slots: ${hasSlots} (${frameData.slots?.length || 0} slots)`);
       console.log(`  - Has image: ${hasImage}`);
-      console.log(`  - Has layout.elements: ${frameData.layout?.elements?.length || 0} elements`);
+      console.log(`  - Has designer.elements: ${hasDesignerElements} (${frameData.designer?.elements?.length || 0} elements)`);
+      console.log(`  - Is direct custom frame: ${isDirectCustomFrame}`);
       
-      if (hasSlots && hasImage) {
+      if (isDirectCustomFrame) {
+        // User-created shared/custom frame — use designer.elements directly.
+        // These frames store all visuals (background-photo, upload overlays, photo slots)
+        // as base64 images inside designer.elements; there is no imagePath/thumbnailUrl.
+        console.log("✅ Direct custom/shared frame detected, using designer.elements directly");
+        config = {
+          ...frameData,
+          // Ensure required fields have sensible defaults
+          maxCaptures: frameData.maxCaptures || frameData.slots?.length || 1,
+          canvasWidth: frameData.canvasWidth || 1080,
+          canvasHeight: frameData.canvasHeight || 1920,
+          designer: {
+            ...frameData.designer,
+            elements: frameData.designer.elements,
+          },
+        };
+        console.log("✅ Direct config built:", {
+          id: config.id,
+          maxCaptures: config.maxCaptures,
+          designerElements: config.designer.elements.length,
+          elementTypes: config.designer.elements.map(el => el?.type),
+        });
+      } else if (hasSlots && hasImage) {
         // Frame data is complete, use it directly!
         console.log("✅ Frame data is complete, building config directly from frameData");
         
@@ -204,7 +230,7 @@ export class FrameDataProvider {
         console.log("✅ Config built successfully from frameData");
         console.log("   isCustom:", config.isCustom, "(from frameData.isCustom:", frameData.isCustom, ")");
       } else {
-        // Incomplete data, try to fetch from service
+        // Incomplete data, try to fetch from service (admin/Supabase frames)
         console.log("📦 Incomplete data, trying to fetch from service");
         config = await unifiedFrameService.getFrameConfig(frameData.id);
         

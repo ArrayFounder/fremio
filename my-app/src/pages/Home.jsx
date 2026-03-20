@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { trackUserSession, trackFunnelEvent } from "../services/analyticsService";
+import { useSEO } from "../hooks/useSEO.js";
 import frame1 from "../assets/frame1_ramadan.png";
 import frame2 from "../assets/frame2_ramadan.png";
 import frame3 from "../assets/frame3_ramadan.png";
@@ -9,6 +10,13 @@ import frame3 from "../assets/frame3_ramadan.png";
 export default function Home() {
   const { isAuthenticated } = useAuth();
   const [heroVariant, setHeroVariant] = useState('A');
+
+  useSEO({
+    title: "Fremio - Photo Booth Online & Photobox Virtual Indonesia",
+    description: "Fremio adalah photo booth online & photobox virtual terbaik di Indonesia. Ambil foto via kamera, pilih ratusan frame keren, tambahkan stiker & efek, lalu download gratis!",
+    keywords: "fremio, photo booth online, photobox online, photobooth online, photobox virtual, frame foto online, bingkai foto online, selfie frame, foto dengan frame, photo booth indonesia, photo booth gratis",
+    canonical: "https://fremio.id/",
+  });
 
   // A/B Test: Determine variant on first load
   useEffect(() => {
@@ -163,6 +171,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+
     </>
   );
 }

@@ -103,3 +103,11 @@ export const getDraftGroupById = (userId, groupId) => {
   const groups = loadDraftGroups(userId);
   return groups.find((g) => g?.id === groupId) || null;
 };
+
+// Delete a group without touching its drafts (frames stay in All Frames)
+export const deleteDraftGroup = (userId, groupId) => {
+  const existing = loadDraftGroups(userId);
+  const next = existing.filter((g) => g?.id !== groupId);
+  saveDraftGroups(userId, next);
+  return next;
+};

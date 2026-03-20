@@ -24,6 +24,7 @@ export default function AdminUploadFrame() {
   const [frameName, setFrameName] = useState("");
   const [frameDescription, setFrameDescription] = useState("");
   const [frameCategory, setFrameCategory] = useState("custom");
+  const [canvasSize, setCanvasSize] = useState("story"); // "story" | "4r" | "2r"
   const [maxCaptures, setMaxCaptures] = useState(3);
   const [duplicatePhotos, setDuplicatePhotos] = useState(false);
 
@@ -243,6 +244,15 @@ export default function AdminUploadFrame() {
     try {
       // Create frame configuration object with unique ID (name + timestamp)
       const uniqueId = frameName.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
+
+      // Canvas layout based on selected canvas size
+      const canvasLayoutMap = {
+        story: { aspectRatio: "9:16", canvasWidth: 1080, canvasHeight: 1920, orientation: "portrait" },
+        "4r":  { aspectRatio: "4r",   canvasWidth: 1200, canvasHeight: 1800, orientation: "portrait" },
+        "2r":  { aspectRatio: "2r",   canvasWidth: 600,  canvasHeight: 1800, orientation: "portrait" },
+      };
+      const selectedLayout = canvasLayoutMap[canvasSize] || canvasLayoutMap.story;
+
       const frameConfig = {
         id: uniqueId,
         name: frameName,
@@ -260,8 +270,7 @@ export default function AdminUploadFrame() {
           photoIndex: parseInt(slot.photoIndex),
         })),
         layout: {
-          aspectRatio: "9:16",
-          orientation: "portrait",
+          ...selectedLayout,
           backgroundColor: "#ffffff",
         },
       };
@@ -506,6 +515,39 @@ export default function AdminUploadFrame() {
                   </div>
                 </div>
 
+                {/* Canvas Size Selector */}
+                <div>
+                  <label className="admin-label">Ukuran Canvas</label>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "4px" }}>
+                    {[
+                      { key: "story", label: "Story Instagram", sub: "1080×1920 (9:16)" },
+                      { key: "4r",    label: "4R (Photostrip)",  sub: "1200×1800 (2:3)"  },
+                      { key: "2r",    label: "2R",               sub: "600×1800 (1:3)"   },
+                    ].map(({ key, label, sub }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setCanvasSize(key)}
+                        style={{
+                          padding: "8px 14px",
+                          borderRadius: "8px",
+                          border: canvasSize === key ? "2px solid #c89585" : "2px solid #e0b7a9",
+                          background: canvasSize === key ? "linear-gradient(135deg, #e0b7a9, #c89585)" : "#fff",
+                          color: canvasSize === key ? "white" : "#4a302b",
+                          fontWeight: 700,
+                          fontSize: "12px",
+                          cursor: "pointer",
+                          lineHeight: 1.4,
+                          textAlign: "left",
+                        }}
+                      >
+                        <div>{label}</div>
+                        <div style={{ fontSize: "10px", opacity: 0.85, fontWeight: 500 }}>{sub}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div
                   style={{ display: "flex", alignItems: "center", gap: "8px" }}
                 >
@@ -676,7 +718,9 @@ export default function AdminUploadFrame() {
                         }}
                       >
                         <li>✓ Format: PNG dengan transparency</li>
-                        <li>✓ Ukuran: 1080 × 1920 pixels (9:16)</li>
+                        <li>✓ Story: 1080×1920 px (9:16)</li>
+                        <li>✓ 4R: 1200×1800 px (2:3)</li>
+                        <li>✓ 2R: 600×1800 px (1:3)</li>
                         <li>✓ Max size: 15MB</li>
                       </ul>
                     </div>
@@ -952,7 +996,7 @@ export default function AdminUploadFrame() {
                       backgroundColor: "#f7f1ed",
                       borderRadius: "14px",
                       overflow: "hidden",
-                      aspectRatio: "9/16",
+                      aspectRatio: canvasSize === "story" ? "9/16" : canvasSize === "4r" ? "2/3" : "5/7",
                     }}
                   >
                     {/* Frame image */}
@@ -1041,6 +1085,20 @@ export default function AdminUploadFrame() {
                     </p>
                   </div>
                 )}
+                {/* Canvas size info badge */}
+                <div style={{ marginTop: "12px", textAlign: "center" }}>
+                  <span style={{
+                    display: "inline-block",
+                    padding: "4px 12px",
+                    borderRadius: "999px",
+                    background: "#f3e8e3",
+                    color: "#7a4a3a",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                  }}>
+                    Canvas: {canvasSize === "story" ? "Story Instagram (9:16)" : canvasSize === "4r" ? "4R Photostrip (2:3)" : "2R (1:3)"}
+                  </span>
+                </div>
               </div>
             </section>
 

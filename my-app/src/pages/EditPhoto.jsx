@@ -161,6 +161,14 @@ export default function EditPhoto() {
     return { width: w, height: h };
   }, [frameConfig]);
 
+  // Dynamic preview scale: cap height at 480px so very tall canvases (e.g. 2R 1:3)
+  // still fit on a phone screen without requiring a lot of scrolling.
+  const previewScale = useMemo(() => {
+    const MAX_PREVIEW_HEIGHT = 480;
+    const scaleByH = MAX_PREVIEW_HEIGHT / exportCanvasSize.height;
+    return Math.min(scaleByH, 0.25);
+  }, [exportCanvasSize.height]);
+
   const isDesktopSafari =
     typeof window !== "undefined" &&
     /Safari/i.test(navigator.userAgent) &&
@@ -1351,7 +1359,80 @@ export default function EditPhoto() {
         } catch (e) {
           console.warn("⚠️ Failed to read shared frame from sessionStorage:", e);
         }
-        
+
+        // PRIORITY 0 FALLBACK: Re-fetch full frame from VPS using cached shareId.
+        // The full frameConfig (base64 images) is often too large for sessionStorage/localStorage.
+        // Storing only the 8-char shareId is guaranteed to fit, so we always re-fetch.
+        if (!sharedFrameData?.frameConfig?.designer?.elements?.length) {
+          const cachedShareId = sessionStorage.getItem("__fremio_share_id__");
+          if (cachedShareId) {
+            console.log("🔗 [VPS REFETCH] Fetching frame from VPS shareId:", cachedShareId);
+            try {
+              const draftSvc = (await import("../services/draftService.js")).default;
+              const cloudDraft = await draftSvc.getSharedDraft(cachedShareId);
+              if (cloudDraft?.frame_data) {
+                const frameData =
+                  typeof cloudDraft.frame_data === "string"
+                    ? JSON.parse(cloudDraft.frame_data)
+                    : cloudDraft.frame_data;
+                const canvasWidth = frameData.canvasWidth || 1080;
+                const canvasHeight = frameData.canvasHeight || 1920;
+                const photoElements = (frameData.elements || []).filter(
+                  (el) => el?.type === "photo"
+                );
+                const vpsConfig = {
+                  id: `shared-${cachedShareId}`,
+                  title: cloudDraft.title || "Shared Frame",
+                  aspectRatio: frameData.aspectRatio || "9:16",
+                  elements: frameData.elements || [],
+                  canvasBackground: frameData.canvasBackground || "#f7f1ed",
+                  canvasWidth,
+                  canvasHeight,
+                  maxCaptures: photoElements.length || 1,
+                  slots: photoElements.map((el, idx) => ({
+                    id: el.id || `slot_${idx + 1}`,
+                    left: el.x / canvasWidth,
+                    top: el.y / canvasHeight,
+                    width: el.width / canvasWidth,
+                    height: el.height / canvasHeight,
+                    zIndex: el.zIndex || 1,
+                    photoIndex: idx,
+                  })),
+                  designer: {
+                    elements: frameData.elements || [],
+                    canvasBackground: frameData.canvasBackground || "#f7f1ed",
+                    aspectRatio: frameData.aspectRatio || "9:16",
+                    canvasWidth,
+                    canvasHeight,
+                  },
+                  isCustom: true,
+                  isSharedFrame: true,
+                  shareId: cachedShareId,
+                  preview: cloudDraft.preview_url,
+                };
+                sharedFrameData = {
+                  frameConfig: vpsConfig,
+                  draftData: {
+                    id: vpsConfig.id,
+                    title: cloudDraft.title,
+                    aspectRatio: frameData.aspectRatio,
+                    elements: [],
+                    canvasBackground: frameData.canvasBackground,
+                    canvasWidth,
+                    canvasHeight,
+                    isShared: true,
+                  },
+                };
+                console.log(
+                  `✅ [EditPhoto] Re-fetched frame from VPS: shareId=${cachedShareId}, elements=${frameData.elements?.length || 0}`
+                );
+              }
+            } catch (fetchErr) {
+              console.warn("⚠️ [EditPhoto] VPS re-fetch failed:", fetchErr.message);
+            }
+          }
+        }
+
         // CRITICAL FIX: Use userStorage for activeDraftId (Create.jsx uses userStorage which prefixes with user email)
         let activeDraftId = userStorage.getItem("activeDraftId");
         const hasSharedFrameSession = Boolean(sharedFrameData?.frameConfig);
@@ -3447,7 +3528,7 @@ export default function EditPhoto() {
               boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
               overflow: "hidden",
               width: "fit-content",
-              height: `${exportCanvasSize.height * 0.25 + 32}px`,
+              height: `${exportCanvasSize.height * previewScale + 32}px`,
             }}
           >
             {/* Frame Canvas */}
@@ -3465,7 +3546,7 @@ export default function EditPhoto() {
                 borderRadius: "12px",
                 boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
                 overflow: "hidden",
-                transform: "scale(0.25)",
+                transform: `scale(${previewScale})`,
                 transformOrigin: "top center",
               }}
             >
