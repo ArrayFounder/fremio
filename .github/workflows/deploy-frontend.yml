@@ -22,7 +22,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: my-app/package-lock.json
           
@@ -30,43 +30,25 @@ jobs:
         working-directory: ./my-app
         run: npm ci
 
-      - name: Set build env (defaults)
+      - name: Set build env
         run: |
-          echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" >> $GITHUB_ENV
-          echo "VITE_BACKEND_MODE=${{ secrets.VITE_BACKEND_MODE }}" >> $GITHUB_ENV
-          if [ -z "${{ secrets.VITE_API_URL }}" ]; then
-            echo "VITE_API_URL=https://api.fremio.id/api" >> $GITHUB_ENV
-          fi
-          if [ -z "${{ secrets.VITE_BACKEND_MODE }}" ]; then
-            echo "VITE_BACKEND_MODE=VPS" >> $GITHUB_ENV
-          fi
+          echo "VITE_API_URL=${VITE_API_URL:-https://api.fremio.id/api}" >> $GITHUB_ENV
+          echo "VITE_BACKEND_MODE=${VITE_BACKEND_MODE:-VPS}" >> $GITHUB_ENV
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_BACKEND_MODE: ${{ secrets.VITE_BACKEND_MODE }}
         
       - name: Build frontend
         working-directory: ./my-app
         run: npm run build
 
-      - name: Verify build output
-        working-directory: ./my-app
-        run: |
-          echo "Built files:"
-          ls -la dist/assets/index-*.js || true
-          echo "Index snippet:"
-          head -n 5 dist/index.html || true
-          
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: fremio
-          directory: ./my-app/dist
-          branch: main
+          command: pages deploy ./my-app/dist --project-name=fremio --branch=main
 
-
-          
       - name: Notify success
         if: success()
-        run: |
-          echo "✅ Frontend deployed successfully to Cloudflare Pages!"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Commit: ${{ github.sha }}"
+        run: echo "✅ Deployed to Cloudflare Pages!"
