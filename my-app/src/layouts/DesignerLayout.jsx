@@ -285,33 +285,35 @@ export default function DesignerLayout() {
         className="designer-sidebar-desktop"
       >
         <SidebarContent />
-
-        {/* Collapse toggle button */}
-        <button
-          onClick={() => setCollapsed((v) => !v)}
-          style={{
-            position: "absolute",
-            top: "22px",
-            right: "-13px",
-            width: "26px",
-            height: "26px",
-            borderRadius: "50%",
-            background: C.bgAlt,
-            border: `1.5px solid ${C.border}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            zIndex: 110,
-            color: C.textMuted,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
-            transition: "all 0.2s",
-          }}
-          title={collapsed ? "Buka sidebar" : "Tutup sidebar"}
-        >
-          {collapsed ? <ChevronRight size={14} strokeWidth={2.5} /> : <ChevronLeft size={14} strokeWidth={2.5} />}
-        </button>
       </aside>
+
+      {/* ── Desktop sidebar collapse toggle (outside aside to avoid overflow:hidden clip) ── */}
+      <button
+        onClick={() => setCollapsed((v) => !v)}
+        className="designer-sidebar-desktop"
+        style={{
+          position: "fixed",
+          top: "22px",
+          left: `${sidebarWidth - 13}px`,
+          width: "26px",
+          height: "26px",
+          borderRadius: "50%",
+          background: C.bgAlt,
+          border: `1.5px solid ${C.border}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          zIndex: 110,
+          color: C.textMuted,
+          boxShadow: "0 2px 6px rgba(0,0,0,0.10)",
+          transition: "left 0.25s ease, all 0.2s",
+          padding: 0,
+        }}
+        title={collapsed ? "Buka sidebar" : "Tutup sidebar"}
+      >
+        {collapsed ? <ChevronRight size={14} strokeWidth={2.5} /> : <ChevronLeft size={14} strokeWidth={2.5} />}
+      </button>
 
       {/* ── Mobile Drawer ── */}
       {mobileOpen && (
