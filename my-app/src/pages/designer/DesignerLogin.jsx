@@ -94,9 +94,9 @@ export default function DesignerLogin() {
       <div style={styles.card}>
         {/* Logo / Header */}
         <div style={styles.header}>
-          <div style={styles.logo}>🎨</div>
-          <h1 style={styles.title}>Fremio Designer</h1>
-          <p style={styles.subtitle}>Portal untuk desainer frame Fremio</p>
+          <div style={styles.logoText}>fremio</div>
+          <h1 style={styles.title}>Selamat datang kembali</h1>
+          <p style={styles.subtitle}>Masuk ke portal desainer Fremio</p>
         </div>
 
         {/* Tabs */}
@@ -202,7 +202,7 @@ export default function DesignerLogin() {
         )}
 
         <div style={styles.footer}>
-          <a href="/" style={styles.backLink}>← Kembali ke Fremio</a>
+          <a href="/designer" style={styles.backLink}>← Kembali ke halaman utama</a>
         </div>
       </div>
     </div>
@@ -212,67 +212,79 @@ export default function DesignerLogin() {
 const styles = {
   page: {
     minHeight: "100vh",
-    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    background: "#0f0704",
+    backgroundImage: "linear-gradient(180deg, #1a0c09 0%, #0f0704 100%)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     padding: "20px",
     fontFamily: "'Inter', sans-serif",
+    position: "relative",
+    overflow: "hidden",
   },
   card: {
-    background: "#fff",
-    borderRadius: "16px",
-    padding: "40px",
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(224,183,169,0.2)",
+    backdropFilter: "blur(12px)",
+    borderRadius: "20px",
+    padding: "44px 40px",
     width: "100%",
     maxWidth: "420px",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+    boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
+    position: "relative",
+    zIndex: 1,
   },
   header: {
     textAlign: "center",
     marginBottom: "28px",
   },
-  logo: {
-    fontSize: "48px",
-    marginBottom: "8px",
+  logoText: {
+    fontSize: "28px",
+    fontWeight: "800",
+    letterSpacing: "-1px",
+    color: "#fdf7f4",
+    marginBottom: "16px",
   },
   title: {
-    margin: "0 0 4px",
-    fontSize: "24px",
+    margin: "0 0 6px",
+    fontSize: "20px",
     fontWeight: "700",
-    color: "#1a1a2e",
+    color: "#ffffff",
+    letterSpacing: "-0.3px",
   },
   subtitle: {
     margin: 0,
     fontSize: "14px",
-    color: "#666",
+    color: "rgba(255,255,255,0.5)",
   },
   tabs: {
     display: "flex",
-    borderRadius: "8px",
+    borderRadius: "10px",
     overflow: "hidden",
-    border: "1px solid #e0e0e0",
+    border: "1px solid rgba(224,183,169,0.2)",
     marginBottom: "24px",
+    background: "rgba(255,255,255,0.03)",
   },
   tab: {
     flex: 1,
     padding: "10px",
     border: "none",
-    background: "#f5f5f5",
+    background: "transparent",
     cursor: "pointer",
     fontSize: "14px",
     fontWeight: "500",
-    color: "#666",
+    color: "rgba(255,255,255,0.45)",
     transition: "all 0.2s",
   },
   tabActive: {
-    background: "#667eea",
-    color: "#fff",
+    background: "rgba(224,183,169,0.15)",
+    color: "#e0b7a9",
     fontWeight: "700",
   },
   errorBox: {
-    background: "#fff0f0",
-    border: "1px solid #ffcccc",
-    color: "#c33",
+    background: "rgba(200,60,60,0.15)",
+    border: "1px solid rgba(200,60,60,0.3)",
+    color: "#ff9999",
     padding: "10px 14px",
     borderRadius: "8px",
     fontSize: "14px",
@@ -286,34 +298,37 @@ const styles = {
   label: {
     fontSize: "13px",
     fontWeight: "600",
-    color: "#444",
+    color: "rgba(255,255,255,0.6)",
     marginTop: "8px",
     marginBottom: "4px",
   },
   input: {
-    padding: "10px 14px",
-    border: "1px solid #ddd",
-    borderRadius: "8px",
+    padding: "11px 14px",
+    border: "1px solid rgba(224,183,169,0.2)",
+    borderRadius: "10px",
     fontSize: "14px",
     outline: "none",
     transition: "border-color 0.2s",
+    background: "rgba(255,255,255,0.06)",
+    color: "#fff",
   },
   hint: {
     fontSize: "12px",
-    color: "#888",
+    color: "rgba(255,255,255,0.4)",
     margin: "2px 0 8px",
   },
   submitBtn: {
     marginTop: "16px",
-    padding: "12px",
-    background: "linear-gradient(135deg, #667eea, #764ba2)",
-    color: "#fff",
+    padding: "13px",
+    background: "#e0b7a9",
+    color: "#1a0c09",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "100px",
     fontSize: "15px",
     fontWeight: "700",
     cursor: "pointer",
     transition: "opacity 0.2s",
+    letterSpacing: "-0.2px",
   },
   footer: {
     marginTop: "24px",
@@ -321,7 +336,7 @@ const styles = {
   },
   backLink: {
     fontSize: "13px",
-    color: "#667eea",
+    color: "rgba(255,255,255,0.4)",
     textDecoration: "none",
   },
 };

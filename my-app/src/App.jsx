@@ -59,6 +59,7 @@ import AdminSubscribers from "./pages/admin/AdminSubscribers.jsx";
 import AdminDesignerSubmissions from "./pages/admin/AdminDesignerSubmissions.jsx";
 
 // Designer Pages
+import DesignerLanding from "./pages/designer/DesignerLanding.jsx";
 import DesignerLogin from "./pages/designer/DesignerLogin.jsx";
 import DesignerDashboard from "./pages/designer/DesignerDashboard.jsx";
 import DesignerEditor from "./pages/designer/DesignerEditor.jsx";
@@ -225,7 +226,8 @@ export default function App() {
             <Route path="settings" element={<AdminSettings />} />
           </Route>
 
-          {/* Designer Routes - Separate Layout */}
+          {/* Designer Routes */}
+          <Route path="/designer" element={<DesignerLanding />} />
           <Route path="/designer/login" element={<DesignerLogin />} />
           <Route
             path="/designer"
@@ -235,7 +237,6 @@ export default function App() {
               </DesignerOnly>
             }
           >
-            <Route index element={<DesignerDashboard />} />
             <Route path="dashboard" element={<DesignerDashboard />} />
             <Route path="editor" element={<DesignerEditor />} />
             <Route path="notifications" element={<DesignerNotifications />} />
