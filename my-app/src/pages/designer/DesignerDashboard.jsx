@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { PlusSquare, Clock, CheckCircle, XCircle, Eye } from "lucide-react";
+import { PlusSquare, Clock, CheckCircle, XCircle, Pencil } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
@@ -185,16 +185,25 @@ export default function DesignerDashboard() {
                       )}
                     </div>
 
-                    {/* Status Badge */}
-                    <div
-                      style={{
-                        ...styles.statusBadge,
-                        color: cfg.color,
-                        background: cfg.bg,
-                      }}
-                    >
-                      <Icon size={14} />
-                      {cfg.label}
+                    {/* Right side: edit button + status */}
+                    <div style={styles.subRight}>
+                      <Link
+                        to={`/designer/editor?edit=${sub.id}`}
+                        style={styles.editBtn}
+                      >
+                        <Pencil size={13} />
+                        Edit
+                      </Link>
+                      <div
+                        style={{
+                          ...styles.statusBadge,
+                          color: cfg.color,
+                          background: cfg.bg,
+                        }}
+                      >
+                        <Icon size={14} />
+                        {cfg.label}
+                      </div>
                     </div>
                   </div>
                 );
@@ -408,6 +417,28 @@ const styles = {
     fontWeight: "600",
     whiteSpace: "nowrap",
     flexShrink: 0,
+  },
+  subRight: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: "8px",
+    flexShrink: 0,
+  },
+  editBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "5px",
+    padding: "5px 12px",
+    background: "#f0f0ff",
+    color: "#6366f1",
+    border: "1px solid #c7d2fe",
+    borderRadius: "6px",
+    textDecoration: "none",
+    fontSize: "12px",
+    fontWeight: "600",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
   },
   notifList: { display: "flex", flexDirection: "column", gap: "10px" },
   notifCard: {

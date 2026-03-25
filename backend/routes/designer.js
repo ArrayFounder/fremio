@@ -223,6 +223,83 @@ router.get("/submissions", verifyToken, requireDesigner, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────
+// SUBMISSIONS: Get a single submission by ID
+// ─────────────────────────────────────────────────
+router.get("/submissions/:id", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const designerId = req.user.userId;
+    const result = await pool.query(
+      `SELECT * FROM designer_submissions WHERE id = $1 AND designer_id = $2`,
+      [id, designerId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Submission tidak ditemukan" });
+    }
+    res.json({ success: true, submission: result.rows[0] });
+  } catch (error) {
+    console.error("Get submission error:", error);
+    res.status(500).json({ success: false, message: error.message || "Gagal mengambil data" });
+  }
+});
+
+// ─────────────────────────────────────────────────
+// SUBMISSIONS: Update (re-submit) an existing submission
+// ─────────────────────────────────────────────────
+router.put("/submissions/:id", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const designerId = req.user.userId;
+    const { frameName, frameDescription, frameData, thumbnailDataUrl } = req.body;
+
+    if (!frameName || !frameData) {
+      return res.status(400).json({
+        success: false,
+        message: "Nama frame dan data frame diperlukan",
+      });
+    }
+
+    const existing = await pool.query(
+      `SELECT designer_id FROM designer_submissions WHERE id = $1`,
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Submission tidak ditemukan" });
+    }
+    if (existing.rows[0].designer_id !== designerId) {
+      return res.status(403).json({ success: false, message: "Akses ditolak" });
+    }
+
+    const result = await pool.query(
+      `UPDATE designer_submissions
+         SET frame_name = $1, frame_description = $2, frame_data = $3,
+             thumbnail_data_url = $4, status = 'pending', admin_notes = '',
+             submitted_at = NOW(), reviewed_at = NULL, reviewed_by = NULL,
+             published_frame_id = NULL
+       WHERE id = $5
+       RETURNING id, frame_name, status, submitted_at`,
+      [
+        frameName.trim(),
+        (frameDescription || "").trim(),
+        typeof frameData === "string" ? frameData : JSON.stringify(frameData),
+        thumbnailDataUrl || null,
+        id,
+      ]
+    );
+
+    console.log(`✏️ Submission updated: ${frameName} by ${req.user.email}`);
+    res.json({
+      success: true,
+      message: "Frame berhasil diperbarui dan disubmit ulang!",
+      submission: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Update submission error:", error);
+    res.status(500).json({ success: false, message: error.message || "Gagal update submission" });
+  }
+});
+
+// ─────────────────────────────────────────────────
 // SUBMISSIONS: Submit a new frame for review
 // ─────────────────────────────────────────────────
 router.post("/submissions", verifyToken, requireDesigner, async (req, res) => {

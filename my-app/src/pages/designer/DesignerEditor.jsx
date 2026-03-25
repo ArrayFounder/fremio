@@ -9,7 +9,7 @@ import {
   useEffect,
   useCallback,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion as Motion } from "framer-motion";
 import html2canvas from "html2canvas";
 import {
@@ -43,6 +43,8 @@ const panelMotion = {
 
 export default function DesignerEditor() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const editSubmissionId = searchParams.get("edit");
   const { user } = useAuth();
   const fileInputRef = useRef(null);
   const uploadPurposeRef = useRef("upload");
@@ -108,11 +110,61 @@ export default function DesignerEditor() {
     }))
   );
 
-  // Reset store on mount
+  // Reset store on mount / load submission for editing
   useEffect(() => {
-    setElements([]);
-    setCanvasBackground("#f7f1ed");
-  }, []);
+    if (!editSubmissionId) {
+      setElements([]);
+      setCanvasBackground("#f7f1ed");
+      return;
+    }
+    // Load existing submission for editing
+    const token =
+      localStorage.getItem("fremio_token") ||
+      localStorage.getItem("designer_token");
+    fetch(`${API_URL}/designer/submissions/${editSubmissionId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.success || !data.submission) return;
+        const { frame_data, frame_name, frame_description } = data.submission;
+        const fd =
+          typeof frame_data === "string" ? JSON.parse(frame_data) : frame_data;
+        setFrameName(frame_name || "");
+        setFrameDescription(frame_description || "");
+        if (fd.aspectRatio) setCanvasAspectRatio(fd.aspectRatio);
+        const cw = fd.canvasWidth || CANVAS_WIDTH;
+        const ch = fd.canvasHeight || CANVAS_HEIGHT;
+        if (fd.canvasBackground) setCanvasBackground(fd.canvasBackground);
+        // Reconstruct photo slot elements
+        const photoEls = (fd.slots || []).map((slot, i) => ({
+          id: slot.id || `photo_${i}`,
+          type: "photo",
+          x: slot.left * cw,
+          y: slot.top * ch,
+          width: slot.width * cw,
+          height: slot.height * ch,
+          zIndex: slot.zIndex || i + 1,
+          rotation: slot.rotation || 0,
+          locked: false,
+          photoIndex: slot.photoIndex != null ? slot.photoIndex : i,
+          data: {
+            label: "Foto",
+            borderRadius: slot.borderRadius || 0,
+            objectFit: "cover",
+          },
+        }));
+        // Reconstruct other elements (text, shape, upload overlay)
+        const otherEls = (fd.elements || []).map((el) => ({
+          ...el,
+          locked: el.locked ?? false,
+        }));
+        setElements([...photoEls, ...otherEls]);
+        showToast("success", "Frame dimuat untuk diedit.", 2000);
+      })
+      .catch((err) => console.error("Failed to load submission:", err));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editSubmissionId]);
 
   const showToast = useCallback((type, message, duration = 3200) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -252,20 +304,58 @@ export default function DesignerEditor() {
     try {
       const { width: canvasWidth, height: canvasHeight } = getCanvasDimensions(canvasAspectRatio);
 
-      // Capture canvas thumbnail
+      // Capture canvas thumbnail — clone #creator-canvas at full size to avoid
+      // capturing the outer wrapper (which includes padding/whitespace)
       let thumbnailDataUrl = null;
-      if (previewFrameRef.current) {
-        try {
-          const canvas = await html2canvas(previewFrameRef.current, {
-            scale: 1,
-            useCORS: true,
-            allowTaint: true,
-            backgroundColor: canvasBackground || "#ffffff",
+      try {
+        const canvasEl = document.getElementById("creator-canvas");
+        if (canvasEl) {
+          const tempContainer = document.createElement("div");
+          Object.assign(tempContainer.style, {
+            position: "fixed",
+            top: "-10000px",
+            left: "-10000px",
+            width: `${canvasWidth}px`,
+            height: `${canvasHeight}px`,
+            overflow: "hidden",
+            pointerEvents: "none",
+            opacity: "0",
+            zIndex: "-1",
           });
-          thumbnailDataUrl = canvas.toDataURL("image/jpeg", 0.7);
-        } catch (err) {
-          console.warn("Could not capture canvas thumbnail:", err);
+          const clone = canvasEl.cloneNode(true);
+          Object.assign(clone.style, {
+            transform: "none",
+            transformOrigin: "top left",
+            position: "relative",
+            top: "0",
+            left: "0",
+            width: `${canvasWidth}px`,
+            height: `${canvasHeight}px`,
+            margin: "0",
+            boxShadow: "none",
+          });
+          tempContainer.appendChild(clone);
+          document.body.appendChild(tempContainer);
+          try {
+            const captured = await html2canvas(clone, {
+              scale: 0.5,
+              useCORS: true,
+              allowTaint: true,
+              backgroundColor: canvasBackground || "#ffffff",
+              width: canvasWidth,
+              height: canvasHeight,
+              windowWidth: canvasWidth,
+              windowHeight: canvasHeight,
+              scrollX: 0,
+              scrollY: 0,
+            });
+            thumbnailDataUrl = captured.toDataURL("image/jpeg", 0.7);
+          } finally {
+            document.body.removeChild(tempContainer);
+          }
         }
+      } catch (err) {
+        console.warn("Could not capture canvas thumbnail:", err);
       }
 
       // Build photo slots
@@ -352,8 +442,13 @@ export default function DesignerEditor() {
         // Background photo is designer's preview only — not stored in template
       };
 
-      const res = await fetch(`${API_URL}/designer/submissions`, {
-        method: "POST",
+      const url = editSubmissionId
+        ? `${API_URL}/designer/submissions/${editSubmissionId}`
+        : `${API_URL}/designer/submissions`;
+      const method = editSubmissionId ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -369,7 +464,10 @@ export default function DesignerEditor() {
       const data = await res.json();
 
       if (data.success) {
-        showToast("success", "Frame berhasil disubmit! Menunggu review admin...", 3000);
+        const msg = editSubmissionId
+          ? "Frame berhasil diperbarui! Menunggu review admin..."
+          : "Frame berhasil disubmit! Menunggu review admin...";
+        showToast("success", msg, 3000);
         setFrameName("");
         setFrameDescription("");
         setTimeout(() => navigate("/designer/dashboard"), 2000);
