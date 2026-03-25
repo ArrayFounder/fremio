@@ -508,6 +508,29 @@ export default function DesignerEditor() {
 
   return (
     <div className="create-page">
+      {/* Back button */}
+      <div style={{ marginBottom: "12px" }}>
+        <button
+          type="button"
+          onClick={() => navigate("/designer/dashboard")}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "7px 14px",
+            background: "transparent",
+            border: "1px solid #e0b7a9",
+            borderRadius: "8px",
+            fontSize: "13px",
+            fontWeight: "600",
+            color: "#6b7280",
+            cursor: "pointer",
+          }}
+        >
+          ← Dashboard
+        </button>
+      </div>
+
       {/* Hidden file input */}
       <input
         ref={fileInputRef}
