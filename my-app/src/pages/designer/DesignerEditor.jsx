@@ -298,6 +298,8 @@ export default function DesignerEditor() {
         if (uploadPurposeRef.current === "background") {
           const { width: cw, height: ch } = getCanvasDimensions(canvasAspectRatio);
           addBackgroundPhoto(dataUrl, { canvasWidth: cw, canvasHeight: ch });
+          // Fallback: ensure correct sizing after image fully decodes
+          setTimeout(() => fitBackgroundPhotoToCanvas({ canvasWidth: cw, canvasHeight: ch }), 300);
           showToast("success", "Background foto diperbarui.", 2200);
         } else {
           addUploadElement(dataUrl);

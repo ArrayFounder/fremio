@@ -660,7 +660,11 @@ export const useCreatorStore = create((set, get) => ({
     img.src = imageDataUrl;
     
     const processImage = () => {
-      const aspectRatio = img.width / img.height;
+      const iw = img.naturalWidth || img.width;
+      const ih = img.naturalHeight || img.height;
+      if (!iw || !ih) return; // Image not yet decoded — skip to avoid NaN dimensions
+      const aspectRatio = iw / ih;
+      if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) return;
       const canvasAspectRatio = canvasWidth / canvasHeight;
 
       // Calculate size to COVER canvas (not contain)
