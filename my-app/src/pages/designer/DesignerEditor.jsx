@@ -342,9 +342,6 @@ export default function DesignerEditor() {
         otherElements.push(elementToSave);
       }
 
-      // Get background image if it exists
-      const bgImage = backgroundPhotoElement?.data?.image || null;
-
       const frameData = {
         elements: otherElements,
         slots,
@@ -352,7 +349,7 @@ export default function DesignerEditor() {
         canvasWidth,
         canvasHeight,
         aspectRatio: canvasAspectRatio,
-        backgroundImage: bgImage,
+        // Background photo is designer's preview only — not stored in template
       };
 
       const res = await fetch(`${API_URL}/designer/submissions`, {

@@ -260,7 +260,7 @@ router.post("/submissions", verifyToken, requireDesigner, async (req, res) => {
     });
   } catch (error) {
     console.error("Submit frame error:", error);
-    res.status(500).json({ success: false, message: "Gagal submit frame" });
+    res.status(500).json({ success: false, message: error.message || "Gagal submit frame" });
   }
 });
 
