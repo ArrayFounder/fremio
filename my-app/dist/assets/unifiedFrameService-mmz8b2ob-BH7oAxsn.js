@@ -1,1 +1,0 @@
-import{mt as e,pt as t}from"./index-mmz8b2ob-CitMfgNm.js";export{t as VPSFrameClient,e as default};

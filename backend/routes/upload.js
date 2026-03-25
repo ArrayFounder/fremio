@@ -79,13 +79,20 @@ router.post(
 
 /**
  * POST /api/upload/overlay
- * Upload overlay element image (admin only)
+ * Upload overlay element image (admin and designer)
  * Preserves transparency (PNG/WebP). Stores on VPS disk and returns /uploads/overlays/*
  */
+const requireAdminOrDesigner = async (req, res, next) => {
+  if (!req.user) return res.status(401).json({ success: false, message: "Authentication required" });
+  const role = req.user.role;
+  if (role === "admin" || role === "designer" || role === "kreator") return next();
+  return res.status(403).json({ success: false, message: "Access denied" });
+};
+
 router.post(
   "/overlay",
   verifyToken,
-  requireAdmin,
+  requireAdminOrDesigner,
   uploadImage,
   handleUploadError,
   async (req, res) => {

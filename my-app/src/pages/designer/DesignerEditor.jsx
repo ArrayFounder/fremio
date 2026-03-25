@@ -316,17 +316,16 @@ export default function DesignerEditor() {
             const imageToUpload = el.data?.originalImage || el.data?.image;
             if (imageToUpload && imageToUpload.startsWith("data:")) {
               try {
+                const blob = await (await fetch(imageToUpload)).blob();
                 const uploadResult = await unifiedFrameService.uploadOverlayImage(
-                  await (await fetch(imageToUpload)).blob(),
+                  blob,
                   `overlay_${el.id.substring(0, 8)}.png`
                 );
-                if (uploadResult?.imagePath) {
-                  elementToSave.data.image = uploadResult.imagePath;
-                } else {
-                  elementToSave.data.image = imageToUpload; // fallback: keep data URL
-                }
+                // Use server URL if upload succeeded, otherwise keep data URL
+                elementToSave.data.image = uploadResult?.imagePath || imageToUpload;
               } catch {
-                elementToSave.data.image = imageToUpload; // fallback
+                // Upload failed — store data URL directly so submit still works
+                elementToSave.data.image = imageToUpload;
               }
             } else if (imageToUpload) {
               elementToSave.data.image = imageToUpload;
