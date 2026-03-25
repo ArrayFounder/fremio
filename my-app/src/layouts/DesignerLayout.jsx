@@ -52,14 +52,12 @@ export default function DesignerLayout() {
           flexShrink: 0,
           position: "fixed",
           top: 0,
-          left: sidebarOpen ? 0 : "-240px",
+          left: 0,
           height: "100vh",
           zIndex: 100,
           transition: "left 0.3s ease",
-          // Always visible on wide screens
-          "@media (min-width: 768px)": { left: 0 },
         }}
-        className="designer-sidebar"
+        className={`designer-sidebar${sidebarOpen ? " open" : ""}`}
       >
         {/* Brand */}
         <div style={{ padding: "24px 20px 20px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
@@ -195,6 +193,10 @@ export default function DesignerLayout() {
           .designer-sidebar.open { left: 0 !important; }
           .designer-main { margin-left: 0 !important; }
           .designer-menu-btn { display: flex !important; }
+        }
+        @media (min-width: 769px) {
+          .designer-sidebar { left: 0 !important; }
+          .designer-menu-btn { display: none !important; }
         }
       `}</style>
     </div>
