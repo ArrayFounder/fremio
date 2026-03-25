@@ -5,7 +5,7 @@ import { PlusSquare, Clock, CheckCircle, XCircle, Pencil } from "lucide-react";
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
 const getToken = () =>
-  localStorage.getItem("fremio_token") || localStorage.getItem("designer_token");
+  localStorage.getItem("designer_token") || localStorage.getItem("fremio_token");
 
 const STATUS_CONFIG = {
   pending: { label: "Menunggu Review", icon: Clock, color: "#f59e0b", bg: "#fef3c7" },

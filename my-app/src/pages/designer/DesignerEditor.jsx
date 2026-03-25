@@ -119,8 +119,8 @@ export default function DesignerEditor() {
     }
     // Load existing submission for editing
     const token =
-      localStorage.getItem("fremio_token") ||
-      localStorage.getItem("designer_token");
+      localStorage.getItem("designer_token") ||
+      localStorage.getItem("fremio_token");
     fetch(`${API_URL}/designer/submissions/${editSubmissionId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -374,8 +374,8 @@ export default function DesignerEditor() {
       // Process non-photo overlay elements (upload images need uploading)
       const otherElements = [];
       const token =
-        localStorage.getItem("fremio_token") ||
-        localStorage.getItem("designer_token");
+        localStorage.getItem("designer_token") ||
+        localStorage.getItem("fremio_token");
 
       for (const el of elements.filter(
         (e) => e.type !== "photo" && e.type !== "background-photo"
