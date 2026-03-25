@@ -9,7 +9,7 @@ import {
   useEffect,
   useCallback,
 } from "react";
-import { useNavigate, useSearchParams, useBlocker } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion as Motion } from "framer-motion";
 import html2canvas from "html2canvas";
 import {
@@ -67,6 +67,7 @@ export default function DesignerEditor() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [showExitPrompt, setShowExitPrompt] = useState(false);
+  const pendingNavRef = useRef(null);  // target URL when exit was triggered
   const [toast, setToast] = useState(null);
   const [canvasAspectRatio, setCanvasAspectRatio] = useState("9:16");
   const [showCanvasSizeInProperties, setShowCanvasSizeInProperties] = useState(false);
@@ -222,11 +223,30 @@ export default function DesignerEditor() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
-  // Block React Router navigation when dirty
-  const blocker = useBlocker(isDirty && !saving);
+  // Block React Router navigation when dirty — use popstate (works without data router)
   useEffect(() => {
-    if (blocker.state === "blocked") setShowExitPrompt(true);
-  }, [blocker.state]);
+    if (!isDirty) return;
+    // Push an extra history entry so we can intercept the back gesture
+    window.history.pushState(null, "", window.location.href);
+    const handler = () => {
+      // Push again to keep URL stable while modal is open
+      window.history.pushState(null, "", window.location.href);
+      pendingNavRef.current = "/designer/dashboard";
+      setShowExitPrompt(true);
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [isDirty]);
+
+  // safeNavigate — checks dirty before navigating
+  const safeNavigate = useCallback((to) => {
+    if (isDirty) {
+      pendingNavRef.current = to;
+      setShowExitPrompt(true);
+    } else {
+      navigate(to);
+    }
+  }, [isDirty, navigate]);
 
   const showToast = useCallback((type, message, duration = 3200) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -600,7 +620,7 @@ export default function DesignerEditor() {
       <div style={{ marginBottom: "12px" }}>
         <button
           type="button"
-          onClick={() => navigate("/designer/dashboard")}
+          onClick={() => safeNavigate("/designer/dashboard")}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -675,7 +695,7 @@ export default function DesignerEditor() {
                 onClick={() => {
                   handleSaveDraft();
                   setShowExitPrompt(false);
-                  blocker.proceed?.();
+                  navigate(pendingNavRef.current || "/designer/dashboard");
                 }}
                 style={{
                   padding: "12px", borderRadius: "10px", border: "none",
@@ -689,7 +709,7 @@ export default function DesignerEditor() {
                 onClick={() => {
                   setIsDirty(false);
                   setShowExitPrompt(false);
-                  blocker.proceed?.();
+                  navigate(pendingNavRef.current || "/designer/dashboard");
                 }}
                 style={{
                   padding: "12px", borderRadius: "10px",
@@ -702,7 +722,6 @@ export default function DesignerEditor() {
               <button
                 onClick={() => {
                   setShowExitPrompt(false);
-                  blocker.reset?.();
                 }}
                 style={{
                   padding: "10px", borderRadius: "10px", border: "none",
