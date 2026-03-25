@@ -160,6 +160,10 @@ export default function DesignerEditor() {
           locked: el.locked ?? false,
         }));
         setElements([...photoEls, ...otherEls]);
+        // Restore background image — add background-photo element if saved
+        if (fd.backgroundImage) {
+          addBackgroundPhoto(fd.backgroundImage, { canvasWidth: cw, canvasHeight: ch });
+        }
         showToast("success", "Frame dimuat untuk diedit.", 2000);
       })
       .catch((err) => console.error("Failed to load submission:", err));
@@ -432,6 +436,26 @@ export default function DesignerEditor() {
         otherElements.push(elementToSave);
       }
 
+      // Upload background image to server so it can be restored on edit
+      let bgImagePath = null;
+      if (backgroundPhotoElement?.data?.image) {
+        const bgImg = backgroundPhotoElement.data.image;
+        if (bgImg.startsWith("data:")) {
+          try {
+            const blob = await (await fetch(bgImg)).blob();
+            const uploadResult = await unifiedFrameService.uploadOverlayImage(
+              blob,
+              `bg_${Date.now()}.jpg`
+            );
+            bgImagePath = uploadResult?.imagePath || bgImg;
+          } catch {
+            bgImagePath = bgImg;
+          }
+        } else {
+          bgImagePath = bgImg; // already a server URL
+        }
+      }
+
       const frameData = {
         elements: otherElements,
         slots,
@@ -439,7 +463,7 @@ export default function DesignerEditor() {
         canvasWidth,
         canvasHeight,
         aspectRatio: canvasAspectRatio,
-        // Background photo is designer's preview only — not stored in template
+        backgroundImage: bgImagePath,
       };
 
       const url = editSubmissionId

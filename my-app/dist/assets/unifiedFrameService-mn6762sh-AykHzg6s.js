@@ -1,1 +1,0 @@
-import{mt as e,pt as t}from"./index-mn6762sh-Di_jTNUe.js";export{t as VPSFrameClient,e as default};
