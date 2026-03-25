@@ -1,6 +1,29 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { PlusSquare, Clock, CheckCircle, XCircle, Pencil } from "lucide-react";
+
+const GREETINGS = [
+  (name) => ({
+    title: `Hai, ${name}! 👋`,
+    body: "Setiap frame yang kamu buat adalah hadiah abadi bagi seseorang. Hari ini, karya apa yang ingin kamu tinggalkan untuk dunia?",
+  }),
+  (name) => ({
+    title: `Selamat datang, ${name}. ✨`,
+    body: "Di balik setiap foto yang dicetak, ada desainer yang membuat momen itu terasa lebih bermakna — dan hari ini, desainer itu adalah kamu.",
+  }),
+  (name) => ({
+    title: `${name}, studio-mu sudah menanti. 🎨`,
+    body: "Kreativitasmu bukan sekadar keahlian — ini adalah cara kamu bercerita kepada jutaan keluarga Indonesia yang ingin mengabadikan kenangan mereka.",
+  }),
+  (name) => ({
+    title: `Kembali lagi, ${name}! 🖼️`,
+    body: "Karya terbaik selalu lahir dari desainer yang percaya bahwa detail kecil pun punya cerita besar. Teruslah berkarya dengan penuh makna.",
+  }),
+  (name) => ({
+    title: `${name}, karyamu dinantikan. 🌟`,
+    body: "Fremio ada karena desainer seperti kamu percaya bahwa setiap momen layak dirayakan dengan indah. Terima kasih sudah jadi bagian dari cerita ini.",
+  }),
+];
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
@@ -18,6 +41,25 @@ export default function DesignerDashboard() {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("submissions");
+
+  const designerName = useMemo(() => {
+    try {
+      const u = JSON.parse(
+        localStorage.getItem("designer_user") ||
+          localStorage.getItem("fremio_user") ||
+          "null"
+      );
+      return u?.displayName || u?.display_name || u?.email?.split("@")[0] || "Desainer";
+    } catch {
+      return "Desainer";
+    }
+  }, []);
+
+  const greeting = useMemo(() => {
+    const idx = Math.floor(Math.random() * GREETINGS.length);
+    return GREETINGS[idx](designerName);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);  // intentionally empty so it's fixed per session
 
   useEffect(() => {
     loadData();
@@ -93,6 +135,16 @@ export default function DesignerDashboard() {
           <PlusSquare size={18} />
           Buat Frame Baru
         </Link>
+      </div>
+
+      {/* Greeting Banner */}
+      <div style={styles.greetingCard}>
+        <div style={styles.greetingAccent} />
+        <div style={styles.greetingContent}>
+          <h2 style={styles.greetingTitle}>{greeting.title}</h2>
+          <p style={styles.greetingBody}>{greeting.body}</p>
+        </div>
+        <div style={styles.greetingDeco}>🎨</div>
       </div>
 
       {/* Stats */}
@@ -305,6 +357,46 @@ const styles = {
     textDecoration: "none",
     fontWeight: "600",
     fontSize: "14px",
+  },
+  greetingCard: {
+    position: "relative",
+    background: "linear-gradient(135deg, #faeee6 0%, #f5ddd0 60%, #fae6d6 100%)",
+    border: "1px solid rgba(200,149,133,0.3)",
+    borderRadius: "16px",
+    padding: "28px 32px",
+    marginBottom: "24px",
+    display: "flex",
+    alignItems: "center",
+    gap: "20px",
+    overflow: "hidden",
+  },
+  greetingAccent: {
+    position: "absolute",
+    left: 0, top: 0, bottom: 0,
+    width: "5px",
+    background: "linear-gradient(180deg, #c89585, #a06040)",
+    borderRadius: "16px 0 0 16px",
+  },
+  greetingContent: { flex: 1, paddingLeft: "4px" },
+  greetingTitle: {
+    margin: "0 0 8px",
+    fontSize: "19px",
+    fontWeight: "700",
+    color: "#2c1508",
+    letterSpacing: "-0.3px",
+  },
+  greetingBody: {
+    margin: 0,
+    fontSize: "14px",
+    lineHeight: "1.7",
+    color: "#7a4530",
+    maxWidth: "640px",
+  },
+  greetingDeco: {
+    fontSize: "40px",
+    opacity: 0.25,
+    flexShrink: 0,
+    userSelect: "none",
   },
   statsGrid: {
     display: "grid",
