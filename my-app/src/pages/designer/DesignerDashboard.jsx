@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { PlusSquare, Clock, CheckCircle, XCircle, Pencil } from "lucide-react";
+import { PlusSquare, Clock, CheckCircle, XCircle, Pencil, FileText, Trash2 } from "lucide-react";
+import { getDraftsForDesigner, removeDraft } from "./DesignerEditor.jsx";
 
 const GREETINGS = [
   (name) => ({
@@ -39,6 +40,7 @@ const STATUS_CONFIG = {
 export default function DesignerDashboard() {
   const [submissions, setSubmissions] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("submissions");
 
@@ -67,6 +69,8 @@ export default function DesignerDashboard() {
 
   const loadData = async () => {
     setLoading(true);
+    // Load drafts from localStorage
+    setDrafts(getDraftsForDesigner());
     try {
       const [subRes, notifRes] = await Promise.all([
         fetch(`${API_URL}/designer/submissions`, {
@@ -104,6 +108,11 @@ export default function DesignerDashboard() {
       n.map((x) => (x.id === id ? { ...x, is_read: true } : x))
     );
   };
+
+  const handleDeleteDraft = useCallback((id) => {
+    removeDraft(id);
+    setDrafts(getDraftsForDesigner());
+  }, []);
 
   const stats = {
     total: submissions.length,
@@ -169,6 +178,13 @@ export default function DesignerDashboard() {
           onClick={() => setActiveTab("submissions")}
         >
           Submissions ({stats.total})
+        </button>
+        <button
+          style={{ ...styles.tab, ...(activeTab === "drafts" ? styles.tabActive : {}) }}
+          onClick={() => { setDrafts(getDraftsForDesigner()); setActiveTab("drafts"); }}
+        >
+          <FileText size={14} />
+          Drafts {drafts.length > 0 && <span style={{ ...styles.badge, background: "#e0b7a9", color: "#2c1508" }}>{drafts.length}</span>}
         </button>
         <button
           style={{ ...styles.tab, ...(activeTab === "notifications" ? styles.tabActive : {}) }}
@@ -260,6 +276,76 @@ export default function DesignerDashboard() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Drafts Tab */}
+      {activeTab === "drafts" && (
+        <div style={styles.section}>
+          {drafts.length === 0 ? (
+            <div style={styles.emptyState}>
+              <div style={styles.emptyIcon}>📄</div>
+              <h3 style={styles.emptyTitle}>Belum ada draft tersimpan</h3>
+              <p style={styles.emptyText}>
+                Saat kamu sedang mengerjakan frame dan belum siap submit, simpan sebagai draft dari editor.
+              </p>
+              <Link to="/designer/editor" style={styles.createBtn}>
+                <PlusSquare size={16} />
+                Buat Frame Baru
+              </Link>
+            </div>
+          ) : (
+            <div style={styles.submissionList}>
+              {drafts.map((draft) => (
+                <div key={draft.id} style={styles.subCard}>
+                  {/* Icon */}
+                  <div style={{ ...styles.subThumb, background: "#fdf0eb", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <FileText size={28} color="#c89585" />
+                  </div>
+
+                  {/* Info */}
+                  <div style={styles.subInfo}>
+                    <div style={styles.subName}>{draft.frameName || <em style={{ color: "#9ca3af" }}>Tanpa nama</em>}</div>
+                    {draft.frameDescription && (
+                      <div style={styles.subDesc}>{draft.frameDescription}</div>
+                    )}
+                    <div style={styles.subMeta}>
+                      {draft.elementCount != null ? `${draft.elementCount} area foto · ` : ""}
+                      Disimpan:{" "}
+                      {new Date(draft.savedAt).toLocaleDateString("id-ID", {
+                        day: "numeric", month: "short", year: "numeric",
+                        hour: "2-digit", minute: "2-digit",
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ ...styles.subRight, gap: "8px" }}>
+                    <Link
+                      to={`/designer/editor?draft=${draft.id}`}
+                      style={{ ...styles.editBtn, background: "#fdf0eb", color: "#a06040", borderColor: "#e0b7a9", textDecoration: "none" }}
+                    >
+                      <Pencil size={13} />
+                      Lanjutkan
+                    </Link>
+                    <button
+                      onClick={() => handleDeleteDraft(draft.id)}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: "4px",
+                        padding: "6px 12px", borderRadius: "8px",
+                        border: "1px solid #fecaca", background: "#fff5f5",
+                        color: "#ef4444", fontSize: "13px", fontWeight: "600",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <Trash2 size={13} />
+                      Hapus
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

@@ -9,7 +9,7 @@ import {
   useEffect,
   useCallback,
 } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useBlocker } from "react-router-dom";
 import { motion as Motion } from "framer-motion";
 import html2canvas from "html2canvas";
 import {
@@ -21,6 +21,7 @@ import {
   UploadCloud,
   Maximize2,
   Send,
+  Save,
 } from "lucide-react";
 import CanvasPreview from "../../components/creator/CanvasPreview.jsx";
 import PropertiesPanel from "../../components/creator/PropertiesPanel.jsx";
@@ -36,6 +37,14 @@ import "../Create.css";
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
+// ─── Draft helpers (localStorage) ────────────────────────────────────────────
+const DRAFT_KEY = "fremio_designer_drafts";
+const _getDrafts = () => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "[]"); } catch { return []; } };
+const _getDesignerId = () => { try { const u = JSON.parse(localStorage.getItem("designer_user") || localStorage.getItem("fremio_user") || "null"); return u?.id || u?.email || "anon"; } catch { return "anon"; } };
+export const getDraftsForDesigner = () => { const id = _getDesignerId(); return _getDrafts().filter(d => d.designerId === id); };
+export const persistDraft = (draft) => { const all = _getDrafts().filter(d => d.id !== draft.id); localStorage.setItem(DRAFT_KEY, JSON.stringify([draft, ...all].slice(0, 30))); };
+export const removeDraft = (id) => { localStorage.setItem(DRAFT_KEY, JSON.stringify(_getDrafts().filter(d => d.id !== id))); };
+
 const panelMotion = {
   hidden: { opacity: 0, y: 16 },
   visible: { opacity: 1, y: 0 },
@@ -45,13 +54,19 @@ export default function DesignerEditor() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editSubmissionId = searchParams.get("edit");
+  const draftId = searchParams.get("draft");
   const { user } = useAuth();
   const fileInputRef = useRef(null);
   const uploadPurposeRef = useRef("upload");
   const previewFrameRef = useRef(null);
   const toastTimeoutRef = useRef(null);
+  const readyRef = useRef(false);          // true after initial load settles
+  const currentDraftIdRef = useRef(draftId || null); // tracks the draft being edited
 
   const [saving, setSaving] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [showExitPrompt, setShowExitPrompt] = useState(false);
   const [toast, setToast] = useState(null);
   const [canvasAspectRatio, setCanvasAspectRatio] = useState("9:16");
   const [showCanvasSizeInProperties, setShowCanvasSizeInProperties] = useState(false);
@@ -110,11 +125,29 @@ export default function DesignerEditor() {
     }))
   );
 
-  // Reset store on mount / load submission for editing
+  // Reset store on mount / load submission or draft for editing
   useEffect(() => {
+    readyRef.current = false;
+    setIsDirty(false);
+
+    if (draftId) {
+      // Load from localStorage draft
+      const draft = _getDrafts().find((d) => d.id === draftId);
+      if (draft) {
+        setFrameName(draft.frameName || "");
+        setFrameDescription(draft.frameDescription || "");
+        if (draft.canvasAspectRatio) setCanvasAspectRatio(draft.canvasAspectRatio);
+        if (draft.canvasBackground) setCanvasBackground(draft.canvasBackground);
+        setElements(draft.elements || []);
+      }
+      setTimeout(() => { readyRef.current = true; setIsDirty(false); }, 100);
+      return;
+    }
+
     if (!editSubmissionId) {
       setElements([]);
       setCanvasBackground("#f7f1ed");
+      setTimeout(() => { readyRef.current = true; }, 100);
       return;
     }
     // Load existing submission for editing
@@ -165,10 +198,35 @@ export default function DesignerEditor() {
           addBackgroundPhoto(fd.backgroundImage, { canvasWidth: cw, canvasHeight: ch });
         }
         showToast("success", "Frame dimuat untuk diedit.", 2000);
+        setTimeout(() => { readyRef.current = true; setIsDirty(false); }, 100);
       })
       .catch((err) => console.error("Failed to load submission:", err));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editSubmissionId]);
+  }, [editSubmissionId, draftId]);
+
+  // Track unsaved changes (skip during initial load)
+  useEffect(() => {
+    if (!readyRef.current) return;
+    setIsDirty(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elements, frameName, frameDescription, canvasBackground, canvasAspectRatio]);
+
+  // Warn on browser tab close when dirty
+  useEffect(() => {
+    const handler = (e) => {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  // Block React Router navigation when dirty
+  const blocker = useBlocker(isDirty && !saving);
+  useEffect(() => {
+    if (blocker.state === "blocked") setShowExitPrompt(true);
+  }, [blocker.state]);
 
   const showToast = useCallback((type, message, duration = 3200) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -287,6 +345,33 @@ export default function DesignerEditor() {
     ],
     [showCanvasSizeInProperties, selectedElementId, addElement, selectElement, clearSelection, triggerUpload]
   );
+
+  // ─── Save Draft ──────────────────────────────────────────────────────────
+  const handleSaveDraft = useCallback(() => {
+    setSavingDraft(true);
+    try {
+      const id = currentDraftIdRef.current || crypto.randomUUID();
+      currentDraftIdRef.current = id;
+      const draft = {
+        id,
+        designerId: _getDesignerId(),
+        frameName,
+        frameDescription,
+        canvasAspectRatio,
+        canvasBackground,
+        elements,
+        elementCount: elements.filter((e) => e.type === "photo").length,
+        savedAt: new Date().toISOString(),
+      };
+      persistDraft(draft);
+      setIsDirty(false);
+      showToast("success", "Draft tersimpan! ✅", 2000);
+    } catch (e) {
+      showToast("error", "Gagal menyimpan draft: " + e.message);
+    } finally {
+      setSavingDraft(false);
+    }
+  }, [frameName, frameDescription, canvasAspectRatio, canvasBackground, elements, showToast]);
 
   // ─── Submit for Review ────────────────────────────────────────────────────
   const handleSubmit = async () => {
@@ -492,6 +577,9 @@ export default function DesignerEditor() {
           ? "Frame berhasil diperbarui! Menunggu review admin..."
           : "Frame berhasil disubmit! Menunggu review admin...";
         showToast("success", msg, 3000);
+        // Remove draft (if any) after successful submit
+        if (currentDraftIdRef.current) removeDraft(currentDraftIdRef.current);
+        setIsDirty(false);
         setFrameName("");
         setFrameDescription("");
         setTimeout(() => navigate("/designer/dashboard"), 2000);
@@ -561,6 +649,72 @@ export default function DesignerEditor() {
             <span>{toast.message}</span>
           </div>
         </Motion.div>
+      )}
+
+      {/* Exit Prompt Modal */}
+      {showExitPrompt && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 9999,
+        }}>
+          <div style={{
+            background: "#fff", borderRadius: "16px", padding: "32px 28px",
+            maxWidth: "400px", width: "90%",
+            boxShadow: "0 24px 64px rgba(0,0,0,0.2)",
+          }}>
+            <div style={{ fontSize: "32px", marginBottom: "12px", textAlign: "center" }}>💾</div>
+            <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: "700", color: "#1a1a2e", textAlign: "center" }}>
+              Simpan draft sebelum keluar?
+            </h3>
+            <p style={{ margin: "0 0 24px", fontSize: "14px", color: "#6b7280", textAlign: "center", lineHeight: "1.6" }}>
+              Perubahan yang belum disimpan akan hilang jika kamu keluar.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <button
+                onClick={() => {
+                  handleSaveDraft();
+                  setShowExitPrompt(false);
+                  blocker.proceed?.();
+                }}
+                style={{
+                  padding: "12px", borderRadius: "10px", border: "none",
+                  background: "#e0b7a9", color: "#2c1508",
+                  fontSize: "14px", fontWeight: "700", cursor: "pointer",
+                }}
+              >
+                Simpan Draft &amp; Keluar
+              </button>
+              <button
+                onClick={() => {
+                  setIsDirty(false);
+                  setShowExitPrompt(false);
+                  blocker.proceed?.();
+                }}
+                style={{
+                  padding: "12px", borderRadius: "10px",
+                  border: "1px solid #e5e7eb", background: "#fff",
+                  fontSize: "14px", fontWeight: "600", color: "#374151", cursor: "pointer",
+                }}
+              >
+                Keluar tanpa menyimpan
+              </button>
+              <button
+                onClick={() => {
+                  setShowExitPrompt(false);
+                  blocker.reset?.();
+                }}
+                style={{
+                  padding: "10px", borderRadius: "10px", border: "none",
+                  background: "transparent", fontSize: "13px",
+                  color: "#9ca3af", cursor: "pointer",
+                }}
+              >
+                Batal, tetap di editor
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="create-grid">
@@ -724,6 +878,27 @@ export default function DesignerEditor() {
               />
             </div>
           </div>
+
+          {/* Save Draft Button */}
+          <Motion.button
+            type="button"
+            onClick={handleSaveDraft}
+            disabled={savingDraft || saving}
+            className="create-save"
+            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2 }}
+            style={{
+              background: isDirty
+                ? "linear-gradient(135deg, #e0b7a9 0%, #c89585 100%)"
+                : "#f0e6e0",
+              color: isDirty ? "#2c1508" : "#a09090",
+              marginTop: "10px",
+              fontSize: "14px",
+            }}
+          >
+            <Save size={16} strokeWidth={2.5} />
+            {savingDraft ? "Menyimpan..." : isDirty ? "Simpan Draft" : "Draft Tersimpan ✓"}
+          </Motion.button>
 
           {/* Submit Button */}
           <Motion.button
