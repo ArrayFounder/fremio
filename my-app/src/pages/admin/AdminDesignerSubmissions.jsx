@@ -19,7 +19,7 @@ const STATUS_CONFIG = {
   rejected: { label: "Ditolak", icon: XCircle, color: "#ef4444", bg: "#fee2e2" },
 };
 
-const AVAILABLE_CATEGORIES = [
+const BASE_CATEGORIES = [
   "Christmas Fremio Series",
   "Holiday Fremio Series",
   "Year-End Recap Fremio Series",
@@ -36,6 +36,17 @@ const AVAILABLE_CATEGORIES = [
   "Custom",
 ];
 
+function loadAllCategories() {
+  try {
+    const saved = localStorage.getItem("fremio_custom_categories");
+    const custom = saved ? JSON.parse(saved) : [];
+    // Merge without duplicates
+    return [...BASE_CATEGORIES, ...custom.filter((c) => !BASE_CATEGORIES.includes(c))];
+  } catch {
+    return BASE_CATEGORIES;
+  }
+}
+
 export default function AdminDesignerSubmissions() {
   const [submissions, setSubmissions] = useState([]);
   const [designers, setDesigners] = useState([]);
@@ -49,9 +60,21 @@ export default function AdminDesignerSubmissions() {
   const [reviewNotes, setReviewNotes] = useState("");
   const [reviewCategory, setReviewCategory] = useState("Fremio Series");
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [allCategories, setAllCategories] = useState(loadAllCategories);
 
   // Preview modal
   const [previewSub, setPreviewSub] = useState(null);
+
+  // Sync custom categories in real-time when UploadFrame updates localStorage
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === "fremio_custom_categories") {
+        setAllCategories(loadAllCategories());
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -451,7 +474,7 @@ export default function AdminDesignerSubmissions() {
                     onChange={(e) => setReviewCategory(e.target.value)}
                     style={S.select}
                   >
-                    {AVAILABLE_CATEGORIES.map((c) => (
+                    {allCategories.map((c) => (
                       <option key={c} value={c}>
                         {c}
                       </option>
