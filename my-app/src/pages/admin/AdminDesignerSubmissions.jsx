@@ -20,7 +20,14 @@ const STATUS_CONFIG = {
 };
 
 const AVAILABLE_CATEGORIES = [
+  "Christmas Fremio Series",
+  "Holiday Fremio Series",
+  "Year-End Recap Fremio Series",
   "Fremio Series",
+  "Self-love",
+  "Cute Characters",
+  "Romance",
+  "Aesthetic Scrapbook & Retro",
   "Wedding",
   "Birthday",
   "Graduation",

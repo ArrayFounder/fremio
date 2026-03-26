@@ -501,29 +501,56 @@ router.patch(
         const elements = frameData.elements || [];
         const photoSlots = elements.filter((el) => el.type === "photo");
         const canvasBg = frameData.canvasBackground || frameData.backgroundColor || "#ffffff";
-        const canvasW = frameData.canvasWidth || 720;
-        const canvasH = frameData.canvasHeight || 1080;
+        const canvasW = frameData.canvasWidth || 1080;
+        const canvasH = frameData.canvasHeight || 1920;
+
+        // Generate frame ID (frames.id is NOT NULL with no default)
+        const frameId = `frame_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Build slots as JSON array (column type is jsonb)
+        const slotsArray = photoSlots.map((el, idx) => ({
+          id: el.id || `slot_${idx}`,
+          x: el.x || 0,
+          y: el.y || 0,
+          width: el.width || 300,
+          height: el.height || 300,
+        }));
+
+        // Strip base64 data from elements to keep layout payload small
+        const elementsForLayout = elements.map((el) => {
+          if (
+            (el.type === "background-photo" || el.type === "upload") &&
+            typeof el.data?.image === "string" &&
+            el.data.image.startsWith("data:")
+          ) {
+            return { ...el, data: { ...el.data, image: null } };
+          }
+          return el;
+        });
 
         // Build layout for frames table
         const layout = {
-          elements,
+          elements: elementsForLayout,
           backgroundColor: canvasBg,
           canvasWidth: canvasW,
           canvasHeight: canvasH,
+          aspectRatio: frameData.aspectRatio || frameData.canvasAspectRatio || "9:16",
         };
 
         const frameCategory = category || "Fremio Series";
 
-        const imageUrl = submission.thumbnail_data_url || null;
+        // image_path is NOT NULL in frames table; use empty string as fallback
+        const imageUrl = submission.thumbnail_data_url || "";
 
         const frameResult = await client.query(
           `INSERT INTO frames
-             (name, description, category, image_path, layout, canvas_background,
+             (id, name, description, category, image_path, layout, canvas_background,
               canvas_width, canvas_height, slots, max_captures, is_premium,
               is_active, is_hidden, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
            RETURNING id`,
           [
+            frameId,
             submission.frame_name,
             submission.frame_description || "",
             frameCategory,
@@ -532,8 +559,8 @@ router.patch(
             canvasBg,
             canvasW,
             canvasH,
-            photoSlots.length || 1,
-            photoSlots.length || 1,
+            JSON.stringify(slotsArray),
+            slotsArray.length || 1,
             false,
             true,
             false,
