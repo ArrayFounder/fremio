@@ -1,5 +1,15 @@
 import { useNavigate } from "react-router-dom";
 import logoSalem from "../../assets/logo-salem.png";
+import frame1 from "../../assets/frames/FremioSeries/1.png";
+import frame2 from "../../assets/frames/FremioSeries/2.png";
+import frame3 from "../../assets/frames/FremioSeries/3.png";
+import frame4 from "../../assets/frames/FremioSeries/4.png";
+import frame5 from "../../assets/frames/FremioSeries/5.png";
+import frame6 from "../../assets/frames/FremioSeries/6.png";
+import frame7 from "../../assets/frames/FremioSeries/7.png";
+import frame8 from "../../assets/frames/FremioSeries/8.png";
+import frame9 from "../../assets/frames/FremioSeries/9.png";
+import frame10 from "../../assets/frames/FremioSeries/10.png";
 
 const C = {
   bg: "#fdf7f4",
@@ -355,6 +365,36 @@ const css = `
     margin: 0;
   }
 
+  /* === FRAME SHOWCASE === */
+  .dl-frame-showcase {
+    padding: 0 48px 80px;
+    background: #fdf7f4;
+  }
+  .dl-frame-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 16px;
+  }
+  .dl-frame-item {
+    border-radius: 16px;
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+    background: #f0e8e4;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+  }
+  .dl-frame-item:hover {
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.14);
+  }
+  .dl-frame-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
   /* === QUOTE === */
   .dl-quote-section {
     padding: 0 48px 80px;
@@ -478,6 +518,8 @@ const css = `
 
     .dl-features { padding: 60px 24px; }
     .dl-features-grid { grid-template-columns: 1fr; gap: 16px; }
+    .dl-frame-showcase { padding: 0 24px 64px; }
+    .dl-frame-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
     .dl-quote-section { padding: 0 24px 64px; }
     .dl-quote-inner { padding: 40px 28px; }
     .dl-quote-inner::before { display: none; }
@@ -621,6 +663,17 @@ export default function DesignerLanding() {
               identitasmu sebagai seniman.
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* ── FRAME SHOWCASE ── */}
+      <section className="dl-frame-showcase">
+        <div className="dl-frame-grid">
+          {[frame1, frame2, frame3, frame4, frame5, frame6, frame7, frame8, frame9, frame10].map((src, i) => (
+            <div key={i} className="dl-frame-item">
+              <img src={src} alt={`Fremio Series ${i + 1}`} className="dl-frame-img" />
+            </div>
+          ))}
         </div>
       </section>
 
