@@ -954,7 +954,7 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
     res.json({ success: true, message: "Terima kasih! Masukan kamu sudah kami terima." });
   } catch (error) {
     console.error("Feedback error:", error.message, error.code);
-    res.status(500).json({ success: false, message: "Gagal mengirim masukan" });
+    res.status(500).json({ success: false, message: `Gagal mengirim masukan: ${error.message}` });
   }
 });
 
