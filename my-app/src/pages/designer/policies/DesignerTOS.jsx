@@ -223,6 +223,7 @@ const S = {
     textAlign: "center",
     flexShrink: 0,
   },
+  body: {
     flex: 1,
     overflowY: "auto",
     padding: "20px 28px",
