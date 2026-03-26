@@ -86,9 +86,11 @@ const css = `
     min-height: 100vh;
     display: flex;
     align-items: center;
+    justify-content: center;
     padding: 100px 48px 80px;
     overflow: hidden;
     background: ${C.bgHero};
+    text-align: center;
   }
   /* Fremio-style dot pattern */
   .dl-hero::before {
@@ -103,7 +105,10 @@ const css = `
   .dl-hero-inner {
     position: relative;
     z-index: 10;
-    max-width: 620px;
+    max-width: 680px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .dl-badge {
     display: inline-flex;
@@ -156,6 +161,7 @@ const css = `
     color: ${C.textMuted};
     margin: 28px 0 44px;
     max-width: 520px;
+    text-align: center;
   }
   .dl-subtitle strong {
     color: ${C.textMid};
@@ -164,7 +170,7 @@ const css = `
   .dl-cta-group {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
     gap: 16px;
   }
   .dl-btn-main {
@@ -210,87 +216,7 @@ const css = `
   }
 
   /* === FLOATING FRAME MOCKUPS (light-themed) === */
-  .dl-bg-art {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    overflow: hidden;
-  }
-  .dl-frame-wrap {
-    position: absolute;
-    right: 6vw;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 400px;
-    height: 480px;
-  }
-  .dl-photo-frame {
-    position: absolute;
-    border-radius: 12px;
-    overflow: hidden;
-    border: 2px solid;
-  }
-  .dl-pf-mat {
-    position: absolute;
-    inset: 10px;
-    border: 1px solid rgba(255,255,255,0.5);
-    border-radius: 6px;
-    pointer-events: none;
-  }
-  .dl-pf-1 {
-    width: 240px; height: 300px;
-    top: 40px; left: 120px;
-    border-color: rgba(200,149,133,0.5);
-    background: linear-gradient(145deg, #faeee6 0%, #f0cfc0 40%, #e8b8a0 100%);
-    animation: float-a 6s ease-in-out infinite;
-    box-shadow: 0 20px 60px rgba(160,96,64,0.2);
-  }
-  .dl-pf-2 {
-    width: 180px; height: 220px;
-    top: 200px; left: 10px;
-    border-color: rgba(200,149,133,0.35);
-    background: linear-gradient(155deg, #fdf0eb 0%, #f5d8c8 50%, #e8c0a8 100%);
-    transform: rotate(-8deg);
-    animation: float-b 7s ease-in-out infinite;
-    box-shadow: 0 16px 50px rgba(160,96,64,0.15);
-    opacity: 0.9;
-  }
-  .dl-pf-3 {
-    width: 140px; height: 170px;
-    top: 10px; left: 20px;
-    border-color: rgba(200,149,133,0.25);
-    background: linear-gradient(120deg, #fef5f0 0%, #f8e0d0 60%, #ecc8b0 100%);
-    transform: rotate(5deg);
-    animation: float-c 8s ease-in-out infinite;
-    box-shadow: 0 12px 40px rgba(160,96,64,0.12);
-    opacity: 0.8;
-  }
-  .dl-pf-4 {
-    width: 100px; height: 120px;
-    bottom: 20px; right: 10px;
-    border-color: rgba(200,149,133,0.2);
-    background: linear-gradient(160deg, #fff0e8 0%, #f5d5c0 70%, #e8b898 100%);
-    transform: rotate(-4deg);
-    animation: float-d 9s ease-in-out infinite;
-    opacity: 0.7;
-    box-shadow: 0 10px 32px rgba(160,96,64,0.12);
-  }
-  @keyframes float-a {
-    0%, 100% { transform: translateY(0px) rotate(0deg); }
-    50% { transform: translateY(-16px) rotate(0.5deg); }
-  }
-  @keyframes float-b {
-    0%, 100% { transform: translateY(0px) rotate(-8deg); }
-    50% { transform: translateY(-12px) rotate(-7deg); }
-  }
-  @keyframes float-c {
-    0%, 100% { transform: translateY(0px) rotate(5deg); }
-    50% { transform: translateY(-8px) rotate(5.5deg); }
-  }
-  @keyframes float-d {
-    0%, 100% { transform: translateY(0px) rotate(-4deg); }
-    50% { transform: translateY(-10px) rotate(-3.5deg); }
-  }
+
 
   /* === DIVIDER === */
   .dl-divider {
@@ -549,7 +475,7 @@ const css = `
   @media (max-width: 900px) {
     .dl-nav { padding: 14px 24px; }
     .dl-hero { padding: 90px 24px 64px; min-height: auto; }
-    .dl-frame-wrap { display: none; }
+
     .dl-features { padding: 60px 24px; }
     .dl-features-grid { grid-template-columns: 1fr; gap: 16px; }
     .dl-quote-section { padding: 0 24px 64px; }
@@ -593,25 +519,6 @@ export default function DesignerLanding() {
 
       {/* ── HERO ── */}
       <section className="dl-hero">
-        {/* Background art */}
-        <div className="dl-bg-art">
-          {/* Floating photo frame mockups */}
-          <div className="dl-frame-wrap">
-            <div className="dl-photo-frame dl-pf-3">
-              <div className="dl-pf-mat" />
-            </div>
-            <div className="dl-photo-frame dl-pf-2">
-              <div className="dl-pf-mat" />
-            </div>
-            <div className="dl-photo-frame dl-pf-1">
-              <div className="dl-pf-mat" />
-            </div>
-            <div className="dl-photo-frame dl-pf-4">
-              <div className="dl-pf-mat" />
-            </div>
-          </div>
-        </div>
-
         {/* Hero content */}
         <div className="dl-hero-inner">
           <div className="dl-badge">
