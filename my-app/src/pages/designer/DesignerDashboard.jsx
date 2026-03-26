@@ -3,16 +3,32 @@ import { Link } from "react-router-dom";
 import { PlusSquare, Clock, CheckCircle, XCircle, Pencil, FileText, Trash2 } from "lucide-react";
 import { getDraftsForDesigner, removeDraft } from "./DesignerEditor.jsx";
 
-// Mini canvas preview for draft thumbnails
+// ─── Canvas size helpers ───────────────────────────────────────────────────
 const CANVAS_W = 1080;
-const CANVAS_H = 1920;
-function DraftPreview({ draft, width = 72, height = 108 }) {
-  const scale = width / CANVAS_W;
+function _getCanvasDims(ratio) {
+  if (typeof ratio !== "string") return { w: CANVAS_W, h: 1920 };
+  const [rw, rh] = ratio.split(":").map(Number);
+  if (!rw || !rh) return { w: CANVAS_W, h: 1920 };
+  if (rh >= rw) return { w: CANVAS_W, h: Math.round((CANVAS_W * rh) / rw) };
+  return { w: Math.round((1920 * rw) / rh), h: 1920 };
+}
+function _canvasSize(ratio) {
+  const r = (ratio || "9:16").toLowerCase().replace(/\s/g, "");
+  if (["2r","1:3","600:1800"].includes(r)) return "2r";
+  if (["photostrip","1200:1800","2:3","4:6","4r"].includes(r)) return "4r";
+  return "story";
+}
+// Mini canvas preview for draft thumbnails
+function DraftPreview({ draft, thumbW = 72 }) {
+  const ratio = draft.canvasAspectRatio || "9:16";
+  const { w: cW, h: cH } = _getCanvasDims(ratio);
+  const scale = thumbW / cW;
+  const thumbH = Math.round(cH * scale);
   const elements = draft.elements || [];
   const bg = draft.canvasBackground || "#f7f1ed";
   const sorted = [...elements].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
   return (
-    <div style={{ width, height, background: bg, borderRadius: "6px", overflow: "hidden", position: "relative", flexShrink: 0 }}>
+    <div style={{ width: thumbW, height: thumbH, background: bg, borderRadius: "6px", overflow: "hidden", position: "relative", flexShrink: 0 }}>
       {sorted.map((el) => {
         const x = Math.round((el.x ?? 0) * scale);
         const y = Math.round((el.y ?? 0) * scale);
@@ -20,7 +36,7 @@ function DraftPreview({ draft, width = 72, height = 108 }) {
         const h = Math.round((el.height ?? 0) * scale);
         const base = {
           position: "absolute", left: x, top: y, width: w, height: h,
-          borderRadius: el.data?.borderRadius ? Math.round(el.data.borderRadius * scale) : undefined,
+          borderRadius: el.data?.borderRadius ? Math.max(1, Math.round(el.data.borderRadius * scale)) : undefined,
           overflow: "hidden",
           transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
         };
@@ -35,7 +51,7 @@ function DraftPreview({ draft, width = 72, height = 108 }) {
         }
         if (el.type === "text") {
           return (
-            <div key={el.id} style={{ ...base, fontSize: Math.max(5, Math.round((el.data?.fontSize || 40) * scale)), color: el.data?.color || "#000", fontWeight: el.data?.fontWeight || "normal", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", overflow: "hidden", whiteSpace: "nowrap" }}>
+            <div key={el.id} style={{ ...base, fontSize: Math.max(4, Math.round((el.data?.fontSize || 40) * scale)), color: el.data?.color || "#000", fontWeight: el.data?.fontWeight || "normal", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", overflow: "hidden", whiteSpace: "nowrap" }}>
               {el.data?.text || ""}
             </div>
           );
@@ -80,12 +96,36 @@ const STATUS_CONFIG = {
   rejected: { label: "Ditolak", icon: XCircle, color: "#ef4444", bg: "#fee2e2" },
 };
 
+const SIZE_FILTERS = [
+  { key: "all", label: "Semua" },
+  { key: "story", label: "Story Instagram" },
+  { key: "4r", label: "4R" },
+  { key: "2r", label: "2R" },
+];
+function SizeFilterBar({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+      {SIZE_FILTERS.map((f) => (
+        <button key={f.key} onClick={() => onChange(f.key)} style={{
+          padding: "5px 14px", borderRadius: "20px", fontSize: "13px", fontWeight: "600", cursor: "pointer",
+          border: value === f.key ? "1.5px solid #c07055" : "1.5px solid #e0c8c0",
+          background: value === f.key ? "#fdf0eb" : "#fff",
+          color: value === f.key ? "#c07055" : "#7a5a52",
+          transition: "all 0.15s",
+        }}>{f.label}</button>
+      ))}
+    </div>
+  );
+}
+
 export default function DesignerDashboard() {
   const [submissions, setSubmissions] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("drafts");
+  const [draftSizeFilter, setDraftSizeFilter] = useState("all");
+  const [subSizeFilter, setSubSizeFilter] = useState("all");
 
   const designerName = useMemo(() => {
     try {
@@ -241,6 +281,10 @@ export default function DesignerDashboard() {
       {/* Submissions Tab */}
       {activeTab === "submissions" && (
         <div style={styles.section}>
+          {/* Size filter */}
+          {submissions.length > 0 && (
+            <SizeFilterBar value={subSizeFilter} onChange={setSubSizeFilter} />
+          )}
           {submissions.length === 0 ? (
             <div style={styles.emptyState}>
               <div style={styles.emptyIcon}>🎨</div>
@@ -251,9 +295,16 @@ export default function DesignerDashboard() {
                 Buat Frame Sekarang
               </Link>
             </div>
-          ) : (
+          ) : (() => {
+            const filtered = subSizeFilter === "all" ? submissions : submissions.filter(s => _canvasSize(s.canvas_aspect_ratio) === subSizeFilter);
+            return filtered.length === 0 ? (
+              <div style={styles.emptyState}>
+                <div style={styles.emptyIcon}>🔍</div>
+                <h3 style={styles.emptyTitle}>Tidak ada submission ukuran ini</h3>
+              </div>
+            ) : (
             <div style={styles.submissionList}>
-              {submissions.map((sub) => {
+              {filtered.map((sub) => {
                 const cfg = STATUS_CONFIG[sub.status] || STATUS_CONFIG.pending;
                 const Icon = cfg.icon;
                 return (
@@ -321,13 +372,16 @@ export default function DesignerDashboard() {
                 );
               })}
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
-
-      {/* Drafts Tab */}
       {activeTab === "drafts" && (
         <div style={styles.section}>
+          {/* Size filter */}
+          {drafts.length > 0 && (
+            <SizeFilterBar value={draftSizeFilter} onChange={setDraftSizeFilter} />
+          )}
           {drafts.length === 0 ? (
             <div style={styles.emptyState}>
               <div style={styles.emptyIcon}>📄</div>
@@ -340,12 +394,19 @@ export default function DesignerDashboard() {
                 Buat Frame Baru
               </Link>
             </div>
-          ) : (
+          ) : (() => {
+            const filtered = draftSizeFilter === "all" ? drafts : drafts.filter(d => _canvasSize(d.canvasAspectRatio) === draftSizeFilter);
+            return filtered.length === 0 ? (
+              <div style={styles.emptyState}>
+                <div style={styles.emptyIcon}>🔍</div>
+                <h3 style={styles.emptyTitle}>Tidak ada draft ukuran ini</h3>
+              </div>
+            ) : (
             <div style={styles.submissionList}>
-              {drafts.map((draft) => (
+              {filtered.map((draft) => (
                 <div key={draft.id} style={styles.subCard}>
                   {/* Preview */}
-                  <DraftPreview draft={draft} width={72} height={108} />
+                  <DraftPreview draft={draft} thumbW={72} />
 
                   {/* Info */}
                   <div style={styles.subInfo}>
@@ -389,7 +450,8 @@ export default function DesignerDashboard() {
                 </div>
               ))}
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
 

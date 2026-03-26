@@ -208,7 +208,13 @@ router.get("/submissions", verifyToken, requireDesigner, async (req, res) => {
          ds.id, ds.frame_name, ds.frame_description, ds.status,
          ds.admin_notes, ds.submitted_at, ds.reviewed_at,
          ds.thumbnail_data_url,
-         f.id AS published_frame_id, f.name AS published_frame_name
+         f.id AS published_frame_id, f.name AS published_frame_name,
+         COALESCE(
+           CASE WHEN ds.frame_data IS NOT NULL
+                THEN ds.frame_data->>'aspectRatio'
+           END,
+           '9:16'
+         ) AS canvas_aspect_ratio
        FROM designer_submissions ds
        LEFT JOIN frames f ON f.id = ds.published_frame_id
        WHERE ds.designer_id = $1
