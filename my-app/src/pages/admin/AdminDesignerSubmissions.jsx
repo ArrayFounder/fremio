@@ -63,6 +63,8 @@ export default function AdminDesignerSubmissions() {
   const [allCategories, setAllCategories] = useState(loadAllCategories);
   const [repairLoading, setRepairLoading] = useState(false);
   const [repairResult, setRepairResult] = useState(null);
+  const [feedback, setFeedback] = useState([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   // Preview modal
   const [previewSub, setPreviewSub] = useState(null);
@@ -103,6 +105,29 @@ export default function AdminDesignerSubmissions() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadFeedback = async () => {
+    setFeedbackLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/designer/admin/feedback`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (data.success) setFeedback(data.feedback || []);
+    } catch (e) {
+      console.error("Failed to load feedback", e);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
+  const markFeedbackRead = async (id) => {
+    await fetch(`${API_URL}/designer/admin/feedback/${id}/read`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    setFeedback((prev) => prev.map((f) => f.id === id ? { ...f, is_read: true } : f));
   };
 
   const openReviewModal = (submission) => {
@@ -232,6 +257,17 @@ export default function AdminDesignerSubmissions() {
         >
           <Users size={14} style={{ marginRight: "6px" }} />
           Designers ({designers.length})
+        </button>
+        <button
+          style={{ ...S.tab, ...(activeTab === "feedback" ? S.tabActive : {}) }}
+          onClick={() => { setActiveTab("feedback"); loadFeedback(); }}
+        >
+          💬 Masukan Designer
+          {feedback.filter((f) => !f.is_read).length > 0 && (
+            <span style={{ marginLeft: "6px", background: "#ef4444", color: "#fff", borderRadius: "10px", padding: "1px 7px", fontSize: "11px", fontWeight: "700" }}>
+              {feedback.filter((f) => !f.is_read).length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -412,6 +448,66 @@ export default function AdminDesignerSubmissions() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Feedback Tab */}
+      {activeTab === "feedback" && (
+        <div>
+          {feedbackLoading ? (
+            <div style={S.empty}>Memuat masukan...</div>
+          ) : feedback.length === 0 ? (
+            <div style={S.empty}>
+              <div style={{ fontSize: "48px", marginBottom: "12px" }}>💬</div>
+              <div>Belum ada masukan dari designer</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              {feedback.map((f) => (
+                <div
+                  key={f.id}
+                  style={{
+                    background: f.is_read ? "#fff" : "#f0f4ff",
+                    border: `1px solid ${f.is_read ? "#e5e7eb" : "#c7d2fe"}`,
+                    borderLeft: `4px solid ${f.is_read ? "#e5e7eb" : "#6366f1"}`,
+                    borderRadius: "10px",
+                    padding: "16px 20px",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: "700", fontSize: "14px", color: "#1a1a2e" }}>
+                          {f.designer_name || f.designer_email}
+                        </span>
+                        <span style={{ fontSize: "12px", color: "#6b7280" }}>{f.designer_email}</span>
+                        <span style={{
+                          padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "600",
+                          background: { editor: "#dbeafe", bug: "#fee2e2", suggestion: "#d1fae5", general: "#f3f4f6" }[f.type] || "#f3f4f6",
+                          color: { editor: "#1d4ed8", bug: "#b91c1c", suggestion: "#065f46", general: "#374151" }[f.type] || "#374151",
+                        }}>
+                          {{ editor: "🛠 Editor", bug: "🐛 Bug", suggestion: "💡 Saran", general: "💬 Umum" }[f.type] || f.type}
+                        </span>
+                        {!f.is_read && <span style={{ background: "#6366f1", color: "#fff", borderRadius: "10px", padding: "1px 7px", fontSize: "11px", fontWeight: "700" }}>Baru</span>}
+                      </div>
+                      <p style={{ margin: 0, fontSize: "14px", color: "#374151", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{f.message}</p>
+                      <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: "8px" }}>
+                        {new Date(f.submitted_at).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    </div>
+                    {!f.is_read && (
+                      <button
+                        onClick={() => markFeedbackRead(f.id)}
+                        style={{ padding: "5px 12px", background: "#f0f0ff", color: "#6366f1", border: "1px solid #c7d2fe", borderRadius: "6px", fontSize: "12px", fontWeight: "600", cursor: "pointer", whiteSpace: "nowrap" }}
+                      >
+                        Tandai dibaca
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

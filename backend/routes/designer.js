@@ -25,6 +25,35 @@ const pool = new pg.Pool({
   password: process.env.DB_PASSWORD || "postgres123",
 });
 
+// Ensure designer tables exist
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS designer_feedback (
+        id SERIAL PRIMARY KEY,
+        designer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR(50) NOT NULL DEFAULT 'general',
+        message TEXT NOT NULL,
+        is_read BOOLEAN DEFAULT false,
+        submitted_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS designer_agreements (
+        id SERIAL PRIMARY KEY,
+        designer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tos_version VARCHAR(20) NOT NULL DEFAULT '1.0',
+        agreed_at TIMESTAMPTZ DEFAULT NOW(),
+        ip_address VARCHAR(64),
+        user_agent TEXT
+      )
+    `);
+    console.log("✅ Designer tables ready");
+  } catch (e) {
+    console.error("⚠️ Designer table init error:", e.message);
+  }
+})();
+
 // ─────────────────────────────────────────────────
 // AUTH: Register as designer (TOS agreement required)
 // ─────────────────────────────────────────────────
@@ -876,16 +905,6 @@ router.post("/admin/repair-frames", verifyToken, requireAdmin, async (req, res) 
 // ─────────────────────────────────────────────────
 router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS designer_feedback (
-        id SERIAL PRIMARY KEY,
-        designer_id INTEGER NOT NULL REFERENCES users(id),
-        type VARCHAR(50) NOT NULL DEFAULT 'general',
-        message TEXT NOT NULL,
-        submitted_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-
     const { type, message } = req.body;
 
     if (!message || message.trim().length < 10) {
@@ -905,6 +924,37 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
   } catch (error) {
     console.error("Feedback error:", error);
     res.status(500).json({ success: false, message: "Gagal mengirim masukan" });
+  }
+});
+
+// ─────────────────────────────────────────────────
+// ADMIN: List designer feedback
+// ─────────────────────────────────────────────────
+router.get("/admin/feedback", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT df.id, df.type, df.message, df.is_read, df.submitted_at,
+              u.email AS designer_email, u.display_name AS designer_name
+       FROM designer_feedback df
+       JOIN users u ON u.id = df.designer_id
+       ORDER BY df.submitted_at DESC`
+    );
+    res.json({ success: true, feedback: result.rows });
+  } catch (error) {
+    console.error("Get feedback error:", error);
+    res.status(500).json({ success: false, message: "Gagal mengambil data" });
+  }
+});
+
+// ─────────────────────────────────────────────────
+// ADMIN: Mark feedback as read
+// ─────────────────────────────────────────────────
+router.patch("/admin/feedback/:id/read", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    await pool.query(`UPDATE designer_feedback SET is_read = true WHERE id = $1`, [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false });
   }
 });
 
