@@ -15,6 +15,43 @@ import pg from "pg";
 
 const router = express.Router();
 
+/**
+ * Normalize slots: ensure it's always an array with left/top/width/height fractions.
+ * Designer-approved frames stored slots as an integer (e.g. 4) with the old code;
+ * derive proper normalized slots from layout.elements photo types in that case.
+ */
+function normalizeSlots(rawSlots, layoutRaw, canvasW, canvasH) {
+  const parsed = Array.isArray(rawSlots) ? rawSlots : [];
+  if (parsed.length > 0) return parsed;
+  // Try to derive from layout.elements photo elements
+  const elements = layoutRaw?.elements;
+  if (!Array.isArray(elements)) return parsed;
+  const photoEls = elements.filter((el) => el && el.type === "photo");
+  if (photoEls.length === 0) return parsed;
+  const cW = canvasW || 1080;
+  const cH = canvasH || 1920;
+  return photoEls.map((el, idx) => ({
+    id: el.id || `slot_${idx}`,
+    left: (el.x || 0) / cW,
+    top: (el.y || 0) / cH,
+    width: (el.width || 300) / cW,
+    height: (el.height || 300) / cH,
+    photoIndex: el.data?.photoIndex ?? idx,
+    rotation: el.rotation || 0,
+    borderRadius: el.data?.borderRadius || el.borderRadius || 0,
+    zIndex: el.zIndex || 2,
+    aspectRatio: el.data?.aspectRatio || "4:5",
+  }));
+}
+
+/** Resolve image path: handle base64 data URLs, absolute HTTP URLs, and relative paths */
+function resolveImageUrl(imagePath, baseUrl) {
+  if (!imagePath) return null;
+  if (imagePath.startsWith("data:")) return imagePath; // base64, use as-is
+  if (imagePath.startsWith("http")) return imagePath;
+  return `${baseUrl}${imagePath}`;
+}
+
 const resolvePublicBaseUrl = (req) => {
   const explicit = String(process.env.PUBLIC_BASE_URL || "").trim();
   const host = String(req.get("host") || "").trim();
@@ -334,18 +371,21 @@ router.get("/", optionalAuth, async (req, res) => {
       const canSeePremiumDetails =
         allowHidden || !isPremium || accessibleSet.has(String(frame.id));
 
-      const slotsRaw =
+      const rawSlotsValue =
         typeof frame.slots === "string"
           ? JSON.parse(frame.slots)
-          : frame.slots || [];
+          : frame.slots;
       const layoutRaw =
         typeof frame.layout === "string"
           ? JSON.parse(frame.layout)
           : frame.layout || {};
+      const derivedSlots = normalizeSlots(
+        rawSlotsValue, layoutRaw, frame.canvas_width, frame.canvas_height
+      );
 
       // IMPORTANT: Prevent premium frames from being usable without access.
       // We still allow preview (name + thumbnail), but redact slots/layout elements.
-      const slots = canSeePremiumDetails ? slotsRaw : [];
+      const slots = canSeePremiumDetails ? derivedSlots : [];
       const layout = canSeePremiumDetails
         ? layoutRaw
         : {
@@ -354,25 +394,21 @@ router.get("/", optionalAuth, async (req, res) => {
           };
       // Construct full URL for images
       const baseUrl = publicBaseUrl;
-      const imageUrl = frame.image_path?.startsWith("http")
-        ? frame.image_path
-        : `${baseUrl}${frame.image_path}`;
-      const thumbnailUrl = (
-        frame.thumbnail_path || frame.image_path
-      )?.startsWith("http")
-        ? frame.thumbnail_path || frame.image_path
-        : `${baseUrl}${frame.thumbnail_path || frame.image_path}`;
+      const imageUrl = resolveImageUrl(frame.image_path, baseUrl);
+      const thumbnailUrl = resolveImageUrl(
+        frame.thumbnail_path || frame.image_path, baseUrl
+      );
 
       return {
         id: frame.id,
         name: frame.name,
         description: frame.description,
         category: frame.category,
-        imagePath: frame.image_path,
+        imagePath: frame.image_path || null,
         imageUrl: imageUrl,
         thumbnailUrl: thumbnailUrl,
         slots: slots,
-        maxCaptures: frame.max_captures,
+        maxCaptures: frame.max_captures || derivedSlots.length || 1,
         isPremium: isPremium,
         isLocked: isPremium && !canSeePremiumDetails,
         isActive: frame.is_active,
@@ -533,12 +569,13 @@ router.get("/:id", optionalAuth, async (req, res) => {
         imageUrl: frame.image_path?.startsWith("http")
           ? frame.image_path
           : `${publicBaseUrl}${frame.image_path}`,
-        slots:
-          typeof frame.slots === "string"
-            ? JSON.parse(frame.slots)
-            : frame.slots,
-        layout:
+        slots: normalizeSlots(
+          typeof frame.slots === "string" ? JSON.parse(frame.slots) : frame.slots,
           normalizedLayout,
+          frame.canvas_width,
+          frame.canvas_height
+        ),
+        layout: normalizedLayout,
         canvasBackground: frame.canvas_background,
         canvasWidth: frame.canvas_width,
         canvasHeight: frame.canvas_height,
