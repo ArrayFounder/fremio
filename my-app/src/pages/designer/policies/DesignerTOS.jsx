@@ -3,6 +3,7 @@
  * This file is the authoritative source for Designer TOS content.
  * Rendered both as a standalone modal and stored as acceptance evidence.
  */
+import React from "react";
 
 export const TOS_VERSION = "1.0";
 export const TOS_DATE = "2026-03-26";
@@ -93,8 +94,21 @@ const SECTIONS = [
 /**
  * DesignerTOSModal — inline modal overlay for showing TOS during registration.
  * Props: onClose (fn), onAgree (fn)
+ * Designer must scroll to the bottom before the agree button is enabled.
  */
 export function DesignerTOSModal({ onClose, onAgree }) {
+  const [scrolledToBottom, setScrolledToBottom] = React.useState(false);
+  const bodyRef = React.useRef(null);
+
+  const handleScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    // Allow 20px tolerance
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) {
+      setScrolledToBottom(true);
+    }
+  };
+
   return (
     <div style={S.overlay} onClick={onClose}>
       <div style={S.box} onClick={(e) => e.stopPropagation()}>
@@ -107,8 +121,13 @@ export function DesignerTOSModal({ onClose, onAgree }) {
           <button style={S.closeBtn} onClick={onClose}>✕</button>
         </div>
 
+        {/* Scroll hint */}
+        {!scrolledToBottom && (
+          <div style={S.scrollHint}>↓ Scroll ke bawah untuk membaca seluruh ketentuan</div>
+        )}
+
         {/* Intro */}
-        <div style={S.body}>
+        <div style={S.body} ref={bodyRef} onScroll={handleScroll}>
           <p style={S.intro}>
             Dengan mendaftar sebagai Designer di Fremio, kamu menyetujui seluruh ketentuan berikut:
           </p>
@@ -138,8 +157,13 @@ export function DesignerTOSModal({ onClose, onAgree }) {
         <div style={S.footer}>
           <button style={S.cancelBtn} onClick={onClose}>Tutup</button>
           {onAgree && (
-            <button style={S.agreeBtn} onClick={() => { onAgree(); onClose(); }}>
-              Saya Setuju
+            <button
+              style={{ ...S.agreeBtn, opacity: scrolledToBottom ? 1 : 0.45, cursor: scrolledToBottom ? "pointer" : "not-allowed" }}
+              onClick={() => { if (scrolledToBottom) { onAgree(); onClose(); } }}
+              disabled={!scrolledToBottom}
+              title={!scrolledToBottom ? "Scroll ke bawah dulu untuk menyetujui" : ""}
+            >
+              {scrolledToBottom ? "Saya Setuju" : "Scroll ke bawah dulu ↓"}
             </button>
           )}
         </div>
@@ -189,7 +213,16 @@ const S = {
     padding: "2px 6px",
     lineHeight: 1,
   },
-  body: {
+  scrollHint: {
+    background: "#fef3c7",
+    borderBottom: "1px solid #fde68a",
+    color: "#92400e",
+    fontSize: "12px",
+    fontWeight: "600",
+    padding: "8px 28px",
+    textAlign: "center",
+    flexShrink: 0,
+  },
     flex: 1,
     overflowY: "auto",
     padding: "20px 28px",

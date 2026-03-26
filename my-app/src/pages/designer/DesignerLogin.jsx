@@ -196,15 +196,24 @@ export default function DesignerLogin() {
                 id="tos-check"
                 type="checkbox"
                 checked={tosAgreed}
-                onChange={(e) => setTosAgreed(e.target.checked)}
-                style={styles.tosCheckbox}
+                readOnly
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!tosAgreed) setShowTOS(true);
+                  else setTosAgreed(false);
+                }}
+                style={{ ...styles.tosCheckbox, cursor: "pointer" }}
               />
-              <label htmlFor="tos-check" style={styles.tosLabel}>
+              <label
+                htmlFor="tos-check"
+                style={{ ...styles.tosLabel, cursor: "pointer" }}
+                onClick={(e) => { e.preventDefault(); if (!tosAgreed) setShowTOS(true); else setTosAgreed(false); }}
+              >
                 Saya menyetujui syarat dan ketentuan terutama terkait orisinalitas assets.{" "}
                 <button
                   type="button"
                   style={styles.tosLink}
-                  onClick={() => setShowTOS(true)}
+                  onClick={(e) => { e.stopPropagation(); setShowTOS(true); }}
                 >
                   Baca syarat &amp; ketentuan
                 </button>
