@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import frameProvider from "../utils/frameProvider.js";
 import safeStorage from "../utils/safeStorage.js";
@@ -131,6 +131,72 @@ const is2RCanvas = (frame) => {
   return width === 600 && height === 1800;
 };
 
+// Mini canvas preview for designer-approved frames with no thumbnail image
+function LayoutPreview({ frame }) {
+  const canvasRef = useRef(null);
+  const elements = frame?.layout?.elements || [];
+  const cW = frame?.canvasWidth || 1080;
+  const cH = frame?.canvasHeight || 1920;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+    const sX = w / cW;
+    const sY = h / cH;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = frame?.canvasBackground || "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    const sorted = [...elements].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+    const draw = (idx) => {
+      if (idx >= sorted.length) return;
+      const el = sorted[idx];
+      const ex = (el.x || 0) * sX, ey = (el.y || 0) * sY;
+      const ew = (el.width || 0) * sX, eh = (el.height || 0) * sY;
+      if ((el.type === "background-photo" || el.type === "upload") && el.data?.image?.length > 10) {
+        const img = new Image();
+        img.onload = () => { ctx.drawImage(img, ex, ey, ew, eh); draw(idx + 1); };
+        img.onerror = () => draw(idx + 1);
+        img.src = el.data.image;
+        return;
+      } else if (el.type === "photo") {
+        ctx.fillStyle = "rgba(148,163,184,0.4)";
+        ctx.fillRect(ex, ey, ew, eh);
+        ctx.strokeStyle = "rgba(100,116,139,0.6)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(ex, ey, ew, eh);
+        ctx.fillStyle = "rgba(100,116,139,0.8)";
+        ctx.font = `${Math.max(7, ew * 0.12)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("FOTO", ex + ew / 2, ey + eh / 2);
+      } else if (el.type === "shape") {
+        ctx.fillStyle = el.data?.fill || el.data?.color || "#cccccc";
+        ctx.fillRect(ex, ey, ew, eh);
+      } else if (el.type === "text") {
+        ctx.fillStyle = el.data?.color || "#000";
+        ctx.font = `${Math.max(6, (el.data?.fontSize || 24) * sY)}px sans-serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(el.data?.text || "", ex, ey);
+      }
+      draw(idx + 1);
+    };
+    draw(0);
+  }, [elements, cW, cH, frame?.canvasBackground]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={120}
+      height={Math.round(120 * (cH / cW))}
+      style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: "4px" }}
+    />
+  );
+}
+
 // FrameCard component with expandable description
 function FrameCard({
   frame,
@@ -212,20 +278,24 @@ function FrameCard({
           boxSizing: "border-box",
         }}
       >
-        {imageError ? (
-          <div
-            style={{
-              position: "absolute",
-              inset: "12px",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#9ca3af",
-            }}
-          >
-            <span style={{ fontSize: "12px" }}>Gambar tidak tersedia</span>
-          </div>
+        {imageError || !getImageUrl(frame) ? (
+          frame?.layout?.elements?.length > 0 ? (
+            <LayoutPreview frame={frame} />
+          ) : (
+            <div
+              style={{
+                position: "absolute",
+                inset: "12px",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#9ca3af",
+              }}
+            >
+              <span style={{ fontSize: "12px" }}>Gambar tidak tersedia</span>
+            </div>
+          )
         ) : (
           <img
             src={getImageUrl(frame)}

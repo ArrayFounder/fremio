@@ -1,6 +1,81 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import unifiedFrameService from "../../services/unifiedFrameService";
+
+// Mini canvas preview for frames that have no thumbnail image (designer-approved frames)
+function LayoutPreview({ frame, style }) {
+  const canvasRef = useRef(null);
+  const elements = frame?.layout?.elements || [];
+  const cW = frame?.canvasWidth || 1080;
+  const cH = frame?.canvasHeight || 1920;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+    const scaleX = w / cW;
+    const scaleY = h / cH;
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = frame?.canvasBackground || "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+
+    const sorted = [...elements].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+    const drawNext = (idx) => {
+      if (idx >= sorted.length) return;
+      const el = sorted[idx];
+      const ex = (el.x || 0) * scaleX;
+      const ey = (el.y || 0) * scaleY;
+      const ew = (el.width || 0) * scaleX;
+      const eh = (el.height || 0) * scaleY;
+
+      if (el.type === "background-photo" || el.type === "upload") {
+        const src = el.data?.image;
+        if (src && typeof src === "string" && src.length > 10) {
+          const img = new Image();
+          img.onload = () => { ctx.drawImage(img, ex, ey, ew, eh); drawNext(idx + 1); };
+          img.onerror = () => drawNext(idx + 1);
+          img.src = src;
+          return;
+        }
+      } else if (el.type === "photo") {
+        ctx.fillStyle = "rgba(148,163,184,0.4)";
+        ctx.fillRect(ex, ey, ew, eh);
+        ctx.strokeStyle = "rgba(100,116,139,0.6)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(ex, ey, ew, eh);
+        ctx.fillStyle = "rgba(100,116,139,0.7)";
+        ctx.font = `${Math.max(8, ew * 0.12)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("FOTO", ex + ew / 2, ey + eh / 2);
+      } else if (el.type === "shape") {
+        ctx.fillStyle = el.data?.fill || el.data?.color || "#cccccc";
+        ctx.fillRect(ex, ey, ew, eh);
+      } else if (el.type === "text") {
+        ctx.fillStyle = el.data?.color || "#000000";
+        ctx.font = `${Math.max(6, (el.data?.fontSize || 24) * scaleY)}px sans-serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(el.data?.text || "", ex, ey);
+      }
+      drawNext(idx + 1);
+    };
+    drawNext(0);
+  }, [elements, cW, cH, frame?.canvasBackground]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={120}
+      height={Math.round(120 * (cH / cW))}
+      style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "contain", ...style }}
+    />
+  );
+}
 
 const normalizeRatio = (value) => String(value || "").toLowerCase().trim();
 
@@ -634,10 +709,11 @@ const AdminFrames = () => {
               }}
               onError={(e) => {
                 console.error("Image load error for:", displayImageUrl);
-                // Show 'No Image' placeholder instead of just hiding
                 const parent = e.target.parentElement;
                 e.target.style.display = "none";
-                if (parent && !parent.querySelector('.img-error-placeholder')) {
+                // If layout.elements available, the LayoutPreview sibling will show
+                if (parent && !parent.querySelector('.img-error-placeholder') &&
+                    !(frame?.layout?.elements?.length > 0)) {
                   const ph = document.createElement('div');
                   ph.className = 'img-error-placeholder';
                   ph.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#9ca3af;font-size:12px;text-align:center;';
@@ -646,7 +722,12 @@ const AdminFrames = () => {
                 }
               }}
             />
-          ) : (
+          ) : null}
+          {/* Canvas preview for designer frames with no thumbnail */}
+          {!displayImageUrl && frame?.layout?.elements?.length > 0 && (
+            <LayoutPreview frame={frame} />
+          )}
+          {!displayImageUrl && !(frame?.layout?.elements?.length > 0) && (
             <div style={{ 
               position: "absolute",
               top: "50%",

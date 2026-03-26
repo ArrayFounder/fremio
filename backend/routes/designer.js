@@ -3,6 +3,11 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import pg from "pg";
 import { verifyToken, requireAdmin } from "../middleware/auth.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const router = express.Router();
 
@@ -545,8 +550,21 @@ router.patch(
 
         const frameCategory = category || "Fremio Series";
 
-        // image_path is NOT NULL in frames table; use empty string as fallback
-        const imageUrl = submission.thumbnail_data_url || "";
+        // Save thumbnail_data_url (base64) as a real image file on disk
+        let savedImagePath = "";
+        if (submission.thumbnail_data_url && submission.thumbnail_data_url.startsWith("data:image/")) {
+          try {
+            const base64Data = submission.thumbnail_data_url.replace(/^data:image\/\w+;base64,/, "");
+            const uploadDir = path.join(__dirname, "../uploads/frames");
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+            const filename = `designer_${frameId}.png`;
+            fs.writeFileSync(path.join(uploadDir, filename), Buffer.from(base64Data, "base64"));
+            savedImagePath = `/uploads/frames/${filename}`;
+            console.log(`📸 Saved designer thumbnail: ${filename}`);
+          } catch (imgErr) {
+            console.error("Failed to save designer thumbnail:", imgErr.message);
+          }
+        }
 
         const frameResult = await client.query(
           `INSERT INTO frames
@@ -560,7 +578,7 @@ router.patch(
             submission.frame_name,
             submission.frame_description || "",
             frameCategory,
-            imageUrl,
+            savedImagePath,
             JSON.stringify(layout),
             canvasBg,
             canvasW,
