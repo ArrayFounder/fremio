@@ -42,7 +42,7 @@ export default function DesignerDashboard() {
   const [notifications, setNotifications] = useState([]);
   const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState("submissions");
+  const [activeTab, setActiveTab] = useState("drafts");
 
   const designerName = useMemo(() => {
     try {
@@ -174,17 +174,17 @@ export default function DesignerDashboard() {
       {/* Tabs */}
       <div style={styles.tabs}>
         <button
-          style={{ ...styles.tab, ...(activeTab === "submissions" ? styles.tabActive : {}) }}
-          onClick={() => setActiveTab("submissions")}
-        >
-          Submissions ({stats.total})
-        </button>
-        <button
           style={{ ...styles.tab, ...(activeTab === "drafts" ? styles.tabActive : {}) }}
           onClick={() => { setDrafts(getDraftsForDesigner()); setActiveTab("drafts"); }}
         >
           <FileText size={14} />
           Drafts {drafts.length > 0 && <span style={{ ...styles.badge, background: "#e0b7a9", color: "#2c1508" }}>{drafts.length}</span>}
+        </button>
+        <button
+          style={{ ...styles.tab, ...(activeTab === "submissions" ? styles.tabActive : {}) }}
+          onClick={() => setActiveTab("submissions")}
+        >
+          Submissions ({stats.total})
         </button>
         <button
           style={{ ...styles.tab, ...(activeTab === "notifications" ? styles.tabActive : {}) }}
