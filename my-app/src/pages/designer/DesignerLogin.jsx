@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { DesignerTOSModal } from "./policies/DesignerTOS.jsx";
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
@@ -15,8 +16,9 @@ export default function DesignerLogin() {
     password: "",
     confirmPassword: "",
     displayName: "",
-    inviteCode: "",
   });
+  const [tosAgreed, setTosAgreed] = useState(false);
+  const [showTOS, setShowTOS] = useState(false);
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -63,6 +65,10 @@ export default function DesignerLogin() {
       setError("Password minimal 6 karakter");
       return;
     }
+    if (!tosAgreed) {
+      setError("Kamu harus menyetujui Syarat & Ketentuan untuk mendaftar");
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/designer/register`, {
@@ -72,7 +78,7 @@ export default function DesignerLogin() {
           email: regData.email,
           password: regData.password,
           displayName: regData.displayName,
-          inviteCode: regData.inviteCode,
+          tosAgreed: true,
         }),
       });
       const data = await res.json();
@@ -183,22 +189,43 @@ export default function DesignerLogin() {
               onChange={(e) => setRegData((p) => ({ ...p, confirmPassword: e.target.value }))}
               required
             />
-            <label style={styles.label}>Kode Undangan</label>
-            <input
-              style={styles.input}
-              type="text"
-              placeholder="Masukkan kode undangan"
-              value={regData.inviteCode}
-              onChange={(e) => setRegData((p) => ({ ...p, inviteCode: e.target.value }))}
-              required
-            />
-            <p style={styles.hint}>
-              Butuh kode undangan untuk mendaftar sebagai designer.
-            </p>
-            <button style={styles.submitBtn} type="submit" disabled={loading}>
+
+            {/* TOS Checkbox */}
+            <div style={styles.tosRow}>
+              <input
+                id="tos-check"
+                type="checkbox"
+                checked={tosAgreed}
+                onChange={(e) => setTosAgreed(e.target.checked)}
+                style={styles.tosCheckbox}
+              />
+              <label htmlFor="tos-check" style={styles.tosLabel}>
+                Saya menyetujui syarat dan ketentuan terutama terkait orisinalitas assets.{" "}
+                <button
+                  type="button"
+                  style={styles.tosLink}
+                  onClick={() => setShowTOS(true)}
+                >
+                  Baca syarat &amp; ketentuan
+                </button>
+              </label>
+            </div>
+
+            <button
+              style={{ ...styles.submitBtn, opacity: !tosAgreed ? 0.6 : 1 }}
+              type="submit"
+              disabled={loading || !tosAgreed}
+            >
               {loading ? "Mendaftarkan..." : "Daftar sebagai Designer"}
             </button>
           </form>
+        )}
+
+        {showTOS && (
+          <DesignerTOSModal
+            onClose={() => setShowTOS(false)}
+            onAgree={() => setTosAgreed(true)}
+          />
         )}
 
         <div style={styles.footer}>
@@ -315,6 +342,36 @@ const styles = {
     fontSize: "12px",
     color: "rgba(0,0,0,0.38)",
     margin: "2px 0 8px",
+  },
+  tosRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "10px",
+    marginTop: "14px",
+    marginBottom: "4px",
+  },
+  tosCheckbox: {
+    marginTop: "2px",
+    width: "16px",
+    height: "16px",
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  tosLabel: {
+    fontSize: "13px",
+    color: "rgba(0,0,0,0.65)",
+    lineHeight: 1.5,
+    cursor: "default",
+  },
+  tosLink: {
+    background: "none",
+    border: "none",
+    padding: 0,
+    color: "#b5502e",
+    fontWeight: "600",
+    fontSize: "13px",
+    cursor: "pointer",
+    textDecoration: "underline",
   },
   submitBtn: {
     marginTop: "16px",

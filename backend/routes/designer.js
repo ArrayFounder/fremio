@@ -26,23 +26,23 @@ const pool = new pg.Pool({
 });
 
 // ─────────────────────────────────────────────────
-// AUTH: Register as designer (invite-code protected)
+// AUTH: Register as designer (TOS agreement required)
 // ─────────────────────────────────────────────────
 router.post("/register", async (req, res) => {
   try {
-    const { email, password, displayName, inviteCode } = req.body;
+    const { email, password, displayName, tosAgreed } = req.body;
 
-    if (!email || !password || !inviteCode) {
+    if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Email, password, dan invite code diperlukan",
+        message: "Email dan password diperlukan",
       });
     }
 
-    if (inviteCode !== DESIGNER_INVITE_CODE) {
-      return res.status(403).json({
+    if (!tosAgreed) {
+      return res.status(400).json({
         success: false,
-        message: "Invite code tidak valid",
+        message: "Kamu harus menyetujui Syarat & Ketentuan untuk mendaftar",
       });
     }
 
@@ -77,6 +77,35 @@ router.post("/register", async (req, res) => {
     );
 
     const user = result.rows[0];
+
+    // Record TOS agreement as proof
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS designer_agreements (
+          id SERIAL PRIMARY KEY,
+          designer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          tos_version VARCHAR(20) NOT NULL DEFAULT '1.0',
+          agreed_at TIMESTAMPTZ DEFAULT NOW(),
+          ip_address VARCHAR(64),
+          user_agent TEXT
+        )
+      `);
+      await pool.query(
+        `INSERT INTO designer_agreements (designer_id, tos_version, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          user.id,
+          "1.0",
+          req.headers["x-forwarded-for"] || req.socket?.remoteAddress || null,
+          req.headers["user-agent"] || null,
+        ]
+      );
+      console.log(`📋 TOS agreement recorded for designer ${user.email}`);
+    } catch (tosErr) {
+      console.error("Failed to record TOS agreement:", tosErr.message);
+      // Non-fatal: registration still succeeds
+    }
+
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
       JWT_SECRET,
