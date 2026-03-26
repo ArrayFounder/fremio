@@ -243,10 +243,14 @@ const requireDesigner = async (req, res, next) => {
   if (role === "designer" || role === "admin") return next();
 
   try {
-    const result = await pool.query(
-      "SELECT role FROM users WHERE id = $1",
-      [req.user.userId]
-    );
+    let result;
+    const numericId = parseInt(req.user.userId, 10);
+    if (!isNaN(numericId)) {
+      result = await pool.query("SELECT role FROM users WHERE id = $1", [numericId]);
+    } else {
+      // Firebase UID — look up by email
+      result = await pool.query("SELECT role FROM users WHERE email = $1", [req.user.email]);
+    }
     if (
       result.rows.length > 0 &&
       (result.rows[0].role === "designer" || result.rows[0].role === "admin")
@@ -928,6 +932,19 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
       designerId = lookup.rows[0].id;
     }
 
+    // Ensure table exists (fallback if IIFE failed at startup)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS designer_feedback (
+        id SERIAL PRIMARY KEY,
+        designer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR(50) NOT NULL DEFAULT 'general',
+        message TEXT NOT NULL,
+        is_read BOOLEAN DEFAULT false,
+        submitted_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`ALTER TABLE designer_feedback ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT false`);
+
     await pool.query(
       `INSERT INTO designer_feedback (designer_id, type, message) VALUES ($1, $2, $3)`,
       [designerId, feedbackType, message.trim()]
@@ -936,7 +953,7 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
     console.log(`📬 Feedback from designer ${designerId} (${req.user.email}): [${feedbackType}]`);
     res.json({ success: true, message: "Terima kasih! Masukan kamu sudah kami terima." });
   } catch (error) {
-    console.error("Feedback error:", error);
+    console.error("Feedback error:", error.message, error.code);
     res.status(500).json({ success: false, message: "Gagal mengirim masukan" });
   }
 });
