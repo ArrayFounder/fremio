@@ -54,6 +54,7 @@ uploads/
 !public/**/*.png
 !public/**/*.jpg
 !my-app/src/assets/*.png
+!my-app/src/assets/**/*.png
 
 # Logs
 logs/
