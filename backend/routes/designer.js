@@ -507,13 +507,19 @@ router.patch(
         // Generate frame ID (frames.id is NOT NULL with no default)
         const frameId = `frame_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        // Build slots as JSON array (column type is jsonb)
+        // Build slots as normalized fractions (left/top/width/height in 0-1 range)
+        // frameProvider.js expects: slot.left * canvasW, slot.top * canvasH, etc.
         const slotsArray = photoSlots.map((el, idx) => ({
           id: el.id || `slot_${idx}`,
-          x: el.x || 0,
-          y: el.y || 0,
-          width: el.width || 300,
-          height: el.height || 300,
+          left: (el.x || 0) / canvasW,
+          top: (el.y || 0) / canvasH,
+          width: (el.width || 300) / canvasW,
+          height: (el.height || 300) / canvasH,
+          photoIndex: el.data?.photoIndex !== undefined ? el.data.photoIndex : idx,
+          rotation: el.rotation || 0,
+          borderRadius: el.data?.borderRadius || el.borderRadius || 0,
+          zIndex: el.zIndex || 2,
+          aspectRatio: el.data?.aspectRatio || "4:5",
         }));
 
         // Strip base64 data from elements to keep layout payload small

@@ -54,11 +54,38 @@ export class FrameDataProvider {
       // Check if frameData already has slots (full frame object from Frames.jsx)
       let config;
       
-      const hasSlots = frameData.slots && Array.isArray(frameData.slots) && frameData.slots.length > 0;
+      let hasSlots = frameData.slots && Array.isArray(frameData.slots) && frameData.slots.length > 0;
       const hasImage = frameData.imagePath || frameData.thumbnailUrl;
       const hasDesignerElements = Array.isArray(frameData.designer?.elements) && frameData.designer.elements.length > 0;
       // Shared/custom frames from the creator: have designer.elements with base64 images but no imagePath/thumbnailUrl
       const isDirectCustomFrame = (frameData.isSharedFrame || frameData.isCustom) && hasDesignerElements;
+
+      // Designer-approved frames from the database store all elements in layout.elements.
+      // If slots are missing or broken, derive them from photo elements in layout.elements.
+      const photoLayoutEls = Array.isArray(frameData.layout?.elements)
+        ? frameData.layout.elements.filter((el) => el.type === "photo")
+        : [];
+      if (!hasSlots && photoLayoutEls.length > 0) {
+        const cW = frameData.canvasWidth || 1080;
+        const cH = frameData.canvasHeight || 1920;
+        frameData = {
+          ...frameData,
+          slots: photoLayoutEls.map((el, idx) => ({
+            id: el.id || `slot_${idx}`,
+            left: (el.x || 0) / cW,
+            top: (el.y || 0) / cH,
+            width: (el.width || 300) / cW,
+            height: (el.height || 300) / cH,
+            photoIndex: el.data?.photoIndex !== undefined ? el.data.photoIndex : idx,
+            rotation: el.rotation || 0,
+            borderRadius: el.data?.borderRadius || el.borderRadius || 0,
+            zIndex: el.zIndex || 2,
+            aspectRatio: el.data?.aspectRatio || "4:5",
+          })),
+        };
+        hasSlots = true;
+        console.log("🔧 Derived slots from layout.elements:", frameData.slots.length);
+      }
       
       console.log(`🔍 Frame data check:`);
       console.log(`  - Has slots: ${hasSlots} (${frameData.slots?.length || 0} slots)`);
@@ -88,6 +115,33 @@ export class FrameDataProvider {
           designerElements: config.designer.elements.length,
           elementTypes: config.designer.elements.map(el => el?.type),
         });
+      } else if (hasSlots && photoLayoutEls.length > 0 && !hasImage) {
+        // Designer-approved frame: has layout.elements with all visuals but no imagePath thumbnail.
+        // Use layout.elements directly as designer.elements — no need for an imagePath overlay.
+        const cW = frameData.canvasWidth || 1080;
+        const cH = frameData.canvasHeight || 1920;
+        console.log("✅ Designer-layout frame detected, using layout.elements directly");
+        config = {
+          id: frameData.id,
+          name: frameData.name,
+          description: frameData.description || "",
+          maxCaptures: frameData.slots?.length || 1,
+          slots: frameData.slots,
+          imagePath: null,
+          frameImage: null,
+          thumbnailUrl: null,
+          canvasWidth: cW,
+          canvasHeight: cH,
+          designer: {
+            elements: frameData.layout.elements,
+            canvasWidth: cW,
+            canvasHeight: cH,
+            background: frameData.canvasBackground || frameData.layout?.backgroundColor || "#ffffff",
+          },
+          layout: frameData.layout,
+          category: frameData.category || "custom",
+          isCustom: true,
+        };
       } else if (hasSlots && hasImage) {
         // Frame data is complete, use it directly!
         console.log("✅ Frame data is complete, building config directly from frameData");

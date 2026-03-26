@@ -572,12 +572,15 @@ export default function Frames() {
 
     // No login required - allow all users to access frames
 
-    if (!frame.slots || frame.slots.length === 0) {
+    const hasValidSlots = frame.slots && Array.isArray(frame.slots) && frame.slots.length > 0;
+    const hasPhotoInLayout = Array.isArray(frame.layout?.elements) &&
+      frame.layout.elements.some((el) => el.type === "photo");
+    if (!hasValidSlots && !hasPhotoInLayout) {
       alert("Error: Frame ini tidak memiliki slot foto.");
       return;
     }
 
-    if (!frame.imagePath && !frame.thumbnailUrl && !frame.imageUrl) {
+    if (!frame.imagePath && !frame.thumbnailUrl && !frame.imageUrl && !hasPhotoInLayout) {
       alert("Error: Frame ini tidak memiliki gambar.");
       return;
     }
