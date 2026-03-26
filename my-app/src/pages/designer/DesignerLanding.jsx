@@ -301,40 +301,62 @@ const css = `
 
   /* === STATS STRIP === */
   .dl-strip {
-    padding: 32px 48px;
+    padding: 56px 48px;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 40px;
-    flex-wrap: wrap;
+    gap: 12px;
     background: #fff;
   }
   .dl-strip-label {
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 2px;
+    letter-spacing: 3px;
     color: ${C.textFaint};
-    font-weight: 500;
-    white-space: nowrap;
+    font-weight: 600;
+    margin-bottom: 8px;
   }
   .dl-strip-items {
     display: flex;
-    gap: 40px;
+    gap: 0;
     flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+    max-width: 760px;
   }
   .dl-strip-item {
+    flex: 1;
+    min-width: 220px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    align-items: center;
+    gap: 6px;
+    padding: 32px 40px;
+  }
+  .dl-strip-item:first-child {
+    border-right: 1px solid #f0e8e2;
   }
   .dl-strip-num {
-    font-size: 24px;
-    font-weight: 800;
+    font-size: 52px;
+    font-weight: 900;
     color: ${C.accentBtn};
-    letter-spacing: -0.5px;
+    letter-spacing: -2px;
+    line-height: 1;
   }
   .dl-strip-desc {
-    font-size: 12px;
+    font-size: 13px;
     color: ${C.textMuted};
+    text-align: center;
+    line-height: 1.6;
+    max-width: 320px;
+  }
+  .dl-strip-sub {
+    font-size: 11px;
+    color: ${C.textFaint};
+    text-align: center;
+    line-height: 1.7;
+    max-width: 380px;
+    margin-top: 2px;
   }
 
   /* === FEATURES === */
@@ -534,7 +556,7 @@ const css = `
     .dl-quote-inner { padding: 40px 28px; }
     .dl-quote-inner::before { display: none; }
     .dl-bottom-cta { padding: 80px 24px; }
-    .dl-strip { padding: 28px 24px; gap: 24px; }
+    .dl-strip { padding: 40px 24px; gap: 8px; }
     .dl-divider { margin: 0 24px; }
     .dl-footer { padding: 20px 24px; }
   }
@@ -542,7 +564,10 @@ const css = `
     .dl-nav-tag { display: none; }
     .dl-cta-group { align-items: stretch; }
     .dl-btn-main { justify-content: center; }
-    .dl-strip-items { gap: 20px; }
+    .dl-strip-items { gap: 0; flex-direction: column; }
+    .dl-strip-item:first-child { border-right: none; border-bottom: 1px solid #f0e8e2; }
+    .dl-strip-item { padding: 24px 20px; }
+    .dl-strip-num { font-size: 40px; }
     .dl-bottom-cta-btns { flex-direction: column; align-items: stretch; }
     .dl-bottom-cta-btns .dl-btn-main { width: 100%; justify-content: center; }
   }
@@ -644,7 +669,8 @@ export default function DesignerLanding() {
           </div>
           <div className="dl-strip-item">
             <span className="dl-strip-num">1M+</span>
-            <span className="dl-strip-desc">Pengguna dari Indonesia, Malaysia, Singapura, Thailand, Filipina, Jepang, Taiwan, Amerika Serikat, Inggris, dan Prancis</span>
+            <span className="dl-strip-desc">Pengguna aktif dari berbagai negara</span>
+            <span className="dl-strip-sub">🇮🇩 Indonesia &nbsp;·&nbsp; 🇲🇾 Malaysia &nbsp;·&nbsp; 🇸🇬 Singapura &nbsp;·&nbsp; 🇹🇭 Thailand &nbsp;·&nbsp; 🇵🇭 Filipina &nbsp;·&nbsp; 🇯🇵 Jepang &nbsp;·&nbsp; 🇹🇼 Taiwan &nbsp;·&nbsp; 🇺🇸 Amerika Serikat &nbsp;·&nbsp; 🇬🇧 Inggris &nbsp;·&nbsp; 🇫🇷 Prancis</span>
           </div>
         </div>
       </div>
