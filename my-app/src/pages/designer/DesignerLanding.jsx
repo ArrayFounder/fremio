@@ -368,7 +368,7 @@ const css = `
   /* === FRAME SHOWCASE === */
   .dl-frame-showcase {
     padding: 0 48px 80px;
-    background: #fdf7f4;
+    background: #ffffff;
   }
   .dl-frame-grid {
     display: grid;
@@ -377,12 +377,14 @@ const css = `
     gap: 16px;
   }
   .dl-frame-item {
-    border-radius: 16px;
+    border-radius: 12px;
     overflow: hidden;
-    aspect-ratio: 4 / 3;
-    background: #f0e8e4;
+    aspect-ratio: 9 / 16;
+    background: #f9fafb;
     box-shadow: 0 4px 20px rgba(0,0,0,0.08);
     transition: transform 0.25s ease, box-shadow 0.25s ease;
+    padding: 8px;
+    box-sizing: border-box;
   }
   .dl-frame-item:hover {
     transform: translateY(-4px) scale(1.02);
@@ -391,7 +393,7 @@ const css = `
   .dl-frame-img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     display: block;
   }
 
@@ -518,7 +520,7 @@ const css = `
 
     .dl-features { padding: 60px 24px; }
     .dl-features-grid { grid-template-columns: 1fr; gap: 16px; }
-    .dl-frame-showcase { padding: 0 24px 64px; }
+    .dl-frame-showcase { padding: 0 24px 64px; background: #ffffff; }
     .dl-frame-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
     .dl-quote-section { padding: 0 24px 64px; }
     .dl-quote-inner { padding: 40px 28px; }
