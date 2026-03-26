@@ -53,6 +53,7 @@ uploads/
 *.png
 !public/**/*.png
 !public/**/*.jpg
+!my-app/src/assets/*.png
 
 # Logs
 logs/
