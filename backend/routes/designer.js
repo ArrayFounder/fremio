@@ -31,7 +31,7 @@ const pool = new pg.Pool({
     await pool.query(`
       CREATE TABLE IF NOT EXISTS designer_feedback (
         id SERIAL PRIMARY KEY,
-        designer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        designer_id INTEGER NOT NULL,
         type VARCHAR(50) NOT NULL DEFAULT 'general',
         message TEXT NOT NULL,
         is_read BOOLEAN DEFAULT false,
@@ -936,7 +936,7 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS designer_feedback (
         id SERIAL PRIMARY KEY,
-        designer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        designer_id INTEGER NOT NULL,
         type VARCHAR(50) NOT NULL DEFAULT 'general',
         message TEXT NOT NULL,
         is_read BOOLEAN DEFAULT false,
