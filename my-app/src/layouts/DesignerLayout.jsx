@@ -35,10 +35,8 @@ const C = {
 export default function DesignerLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const isEditorPage = location.pathname.startsWith("/designer/editor");
-  // Desktop: collapsed state. Mobile: open/close drawer
-  // Auto-collapse on editor page so canvas has more space
-  const [collapsed, setCollapsed] = useState(isEditorPage);
+  // Desktop: collapsed by default on all designer pages
+  const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const user = (() => {
