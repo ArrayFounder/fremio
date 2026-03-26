@@ -503,32 +503,43 @@ router.patch(
           try { frameData = JSON.parse(frameData); } catch (e) { frameData = {}; }
         }
 
-        const elements = frameData.elements || [];
-        const photoSlots = elements.filter((el) => el.type === "photo");
         const canvasBg = frameData.canvasBackground || frameData.backgroundColor || "#ffffff";
         const canvasW = frameData.canvasWidth || 1080;
         const canvasH = frameData.canvasHeight || 1920;
 
-        // Generate frame ID (frames.id is NOT NULL with no default)
-        const frameId = `frame_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        // ─── CRITICAL: frame_data structure from DesignerEditor.jsx ───────────
+        // frameData.slots     = [{id, left, top, width, height, photoIndex, ...}]
+        //                       (normalized 0-1 fractions for photo areas)
+        // frameData.elements  = non-photo elements only (upload overlays, text,
+        //                       shapes) — NO type:"photo" here!
+        // frameData.backgroundImage = server URL/path to background image
+        //
+        // DO NOT filter elements by type:"photo" — they are not there!
+        // ─────────────────────────────────────────────────────────────────────
 
-        // Build slots as normalized fractions (left/top/width/height in 0-1 range)
-        // frameProvider.js expects: slot.left * canvasW, slot.top * canvasH, etc.
-        const slotsArray = photoSlots.map((el, idx) => ({
-          id: el.id || `slot_${idx}`,
-          left: (el.x || 0) / canvasW,
-          top: (el.y || 0) / canvasH,
-          width: (el.width || 300) / canvasW,
-          height: (el.height || 300) / canvasH,
-          photoIndex: el.data?.photoIndex !== undefined ? el.data.photoIndex : idx,
-          rotation: el.rotation || 0,
-          borderRadius: el.data?.borderRadius || el.borderRadius || 0,
-          zIndex: el.zIndex || 2,
-          aspectRatio: el.data?.aspectRatio || "4:5",
+        // 1. Normalized photo slots (already in the correct format for frameProvider)
+        const normalizedSlots = Array.isArray(frameData.slots) ? frameData.slots : [];
+
+        // 2. Reconstruct photo elements (type:"photo") from slots so they appear in layout.elements
+        const photoElements = normalizedSlots.map((slot, idx) => ({
+          id: slot.id || `photo_${idx}`,
+          type: "photo",
+          x: (slot.left || 0) * canvasW,
+          y: (slot.top || 0) * canvasH,
+          width: (slot.width || 0) * canvasW,
+          height: (slot.height || 0) * canvasH,
+          zIndex: slot.zIndex || (idx + 1),
+          rotation: slot.rotation || 0,
+          data: {
+            label: "Foto",
+            borderRadius: slot.borderRadius || 0,
+            photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : idx,
+            objectFit: "cover",
+          },
         }));
 
-        // Strip base64 data from elements to keep layout payload small
-        const elementsForLayout = elements.map((el) => {
+        // 3. Non-photo overlay elements — strip any accidental base64
+        const overlayElements = (frameData.elements || []).map((el) => {
           if (
             (el.type === "background-photo" || el.type === "upload") &&
             typeof el.data?.image === "string" &&
@@ -539,9 +550,27 @@ router.patch(
           return el;
         });
 
-        // Build layout for frames table
+        // 4. Background image element from frameData.backgroundImage
+        const bgEl = frameData.backgroundImage
+          ? {
+              id: "bg-photo-0",
+              type: "background-photo",
+              x: 0, y: 0,
+              width: canvasW, height: canvasH,
+              zIndex: 0,
+              data: { image: frameData.backgroundImage, objectFit: "cover", label: "Background" },
+            }
+          : null;
+
+        // 5. Build layout: bg → overlay elements → photo slots
+        const layoutElements = [
+          ...(bgEl ? [bgEl] : []),
+          ...overlayElements,
+          ...photoElements,
+        ];
+
         const layout = {
-          elements: elementsForLayout,
+          elements: layoutElements,
           backgroundColor: canvasBg,
           canvasWidth: canvasW,
           canvasHeight: canvasH,
@@ -557,7 +586,7 @@ router.patch(
             const base64Data = submission.thumbnail_data_url.replace(/^data:image\/\w+;base64,/, "");
             const uploadDir = path.join(__dirname, "../uploads/frames");
             if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-            const filename = `designer_${frameId}.png`;
+            const filename = `designer_${Date.now()}_${Math.random().toString(36).substr(2,6)}.png`;
             fs.writeFileSync(path.join(uploadDir, filename), Buffer.from(base64Data, "base64"));
             savedImagePath = `/uploads/frames/${filename}`;
             console.log(`📸 Saved designer thumbnail: ${filename}`);
@@ -566,32 +595,63 @@ router.patch(
           }
         }
 
-        const frameResult = await client.query(
-          `INSERT INTO frames
-             (id, name, description, category, image_path, layout, canvas_background,
-              canvas_width, canvas_height, slots, max_captures, is_premium,
-              is_active, is_hidden, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-           RETURNING id`,
-          [
-            frameId,
-            submission.frame_name,
-            submission.frame_description || "",
-            frameCategory,
-            savedImagePath,
-            JSON.stringify(layout),
-            canvasBg,
-            canvasW,
-            canvasH,
-            JSON.stringify(slotsArray),
-            slotsArray.length || 1,
-            false,
-            true,
-            false,
-            req.user.userId,
-          ]
-        );
-        publishedFrameId = frameResult.rows[0].id;
+        // If this submission was already approved, UPDATE the existing frame record
+        // so re-approving fixes previously broken data
+        const existingFrameId = submission.published_frame_id;
+        if (existingFrameId) {
+          await client.query(
+            `UPDATE frames
+               SET name=$1, description=$2, category=$3, image_path=$4,
+                   layout=$5, canvas_background=$6, canvas_width=$7, canvas_height=$8,
+                   slots=$9, max_captures=$10, is_active=true,
+                   updated_at=NOW()
+             WHERE id=$11`,
+            [
+              submission.frame_name,
+              submission.frame_description || "",
+              frameCategory,
+              savedImagePath || undefined,
+              JSON.stringify(layout),
+              canvasBg,
+              canvasW,
+              canvasH,
+              JSON.stringify(normalizedSlots),
+              normalizedSlots.length || 1,
+              existingFrameId,
+            ]
+          );
+          publishedFrameId = existingFrameId;
+          console.log(`🔄 Updated existing frame ${existingFrameId} for submission "${submission.frame_name}"`);
+        } else {
+          // New approval — INSERT frame
+          const frameId = `frame_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const frameResult = await client.query(
+            `INSERT INTO frames
+               (id, name, description, category, image_path, layout, canvas_background,
+                canvas_width, canvas_height, slots, max_captures, is_premium,
+                is_active, is_hidden, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+             RETURNING id`,
+            [
+              frameId,
+              submission.frame_name,
+              submission.frame_description || "",
+              frameCategory,
+              savedImagePath,
+              JSON.stringify(layout),
+              canvasBg,
+              canvasW,
+              canvasH,
+              JSON.stringify(normalizedSlots),
+              normalizedSlots.length || 1,
+              false,
+              true,
+              false,
+              req.user.userId,
+            ]
+          );
+          publishedFrameId = frameResult.rows[0].id;
+        }
       }
 
       // Update submission status
