@@ -42,7 +42,18 @@ const DRAFT_KEY = "fremio_designer_drafts";
 const _getDrafts = () => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "[]"); } catch { return []; } };
 const _getDesignerId = () => { try { const u = JSON.parse(localStorage.getItem("designer_user") || localStorage.getItem("fremio_user") || "null"); return u?.id || u?.email || "anon"; } catch { return "anon"; } };
 export const getDraftsForDesigner = () => { const id = _getDesignerId(); return _getDrafts().filter(d => d.designerId === id); };
-export const persistDraft = (draft) => { const all = _getDrafts().filter(d => d.id !== draft.id); localStorage.setItem(DRAFT_KEY, JSON.stringify([draft, ...all].slice(0, 30))); };
+// Strip large base64 images before saving to avoid localStorage quota errors
+const _stripImages = (elements) => elements.map((el) => {
+  if ((el.type === 'background-photo' || el.type === 'upload') && el.data?.image) {
+    return { ...el, data: { ...el.data, image: null, _imageStripped: true } };
+  }
+  return el;
+});
+export const persistDraft = (draft) => {
+  const all = _getDrafts().filter(d => d.id !== draft.id);
+  const stripped = { ...draft, elements: _stripImages(draft.elements || []) };
+  localStorage.setItem(DRAFT_KEY, JSON.stringify([stripped, ...all].slice(0, 30)));
+};
 export const removeDraft = (id) => { localStorage.setItem(DRAFT_KEY, JSON.stringify(_getDrafts().filter(d => d.id !== id))); };
 
 const panelMotion = {
@@ -139,7 +150,11 @@ export default function DesignerEditor() {
         setFrameDescription(draft.frameDescription || "");
         if (draft.canvasAspectRatio) setCanvasAspectRatio(draft.canvasAspectRatio);
         if (draft.canvasBackground) setCanvasBackground(draft.canvasBackground);
-        setElements(draft.elements || []);
+        // Filter out stripped image elements (background/upload) — they need re-upload
+        const restoredElements = (draft.elements || []).filter(
+          (el) => !(el.data?._imageStripped)
+        );
+        setElements(restoredElements);
       }
       setTimeout(() => { readyRef.current = true; setIsDirty(false); }, 100);
       return;
