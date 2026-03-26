@@ -1,15 +1,28 @@
 import { useNavigate } from "react-router-dom";
 import logoSalem from "../../assets/logo-salem.png";
-import frame1 from "../../assets/frames/FremioSeries/1.png";
-import frame2 from "../../assets/frames/FremioSeries/2.png";
-import frame3 from "../../assets/frames/FremioSeries/3.png";
-import frame4 from "../../assets/frames/FremioSeries/4.png";
-import frame5 from "../../assets/frames/FremioSeries/5.png";
-import frame6 from "../../assets/frames/FremioSeries/6.png";
-import frame7 from "../../assets/frames/FremioSeries/7.png";
-import frame8 from "../../assets/frames/FremioSeries/8.png";
-import frame9 from "../../assets/frames/FremioSeries/9.png";
-import frame10 from "../../assets/frames/FremioSeries/10.png";
+import frameSmileCelebrate from "../../assets/frames/FremioSeries/Smile & Celebrate.png";
+import frameVintageCandy from "../../assets/frames/FremioSeries/Vintage Candy Booth.png";
+import frameStrikeAPose from "../../assets/frames/FremioSeries/Strike a Pose.png";
+import frameMinimalRed from "../../assets/frames/FremioSeries/Minimal Red - Strike a Pose.png";
+import framePixelFun from "../../assets/frames/FremioSeries/Pixel Fun Adventure.png";
+import frameOurLove from "../../assets/frames/FremioSeries/Our Love Memory.png";
+import frameBluePicnic from "../../assets/frames/FremioSeries/Blue Picnic Vibes.png";
+import frameSnapYourJoy from "../../assets/frames/FremioSeries/Snap Your Joy.png";
+import frameCherishPink from "../../assets/frames/FremioSeries/Cherish Pink Elegance.png";
+import frameYipie from "../../assets/frames/FremioSeries/YIPIE.png";
+
+const FREMIO_FRAMES = [
+  { src: frameSmileCelebrate, name: "Smile & Celebrate" },
+  { src: frameVintageCandy, name: "Vintage Candy Booth" },
+  { src: frameStrikeAPose, name: "Strike a Pose" },
+  { src: frameMinimalRed, name: "Minimal Red" },
+  { src: framePixelFun, name: "Pixel Fun Adventure" },
+  { src: frameOurLove, name: "Our Love Memory" },
+  { src: frameBluePicnic, name: "Blue Picnic Vibes" },
+  { src: frameSnapYourJoy, name: "Snap Your Joy" },
+  { src: frameCherishPink, name: "Cherish Pink Elegance" },
+  { src: frameYipie, name: "YIPIE" },
+];
 
 const C = {
   bg: "#fdf7f4",
@@ -417,6 +430,20 @@ const css = `
     object-fit: contain;
     display: block;
   }
+  .dl-frame-item-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .dl-frame-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: #7a5a52;
+    text-align: center;
+    line-height: 1.3;
+    letter-spacing: 0.1px;
+  }
 
   /* === QUOTE === */
   .dl-quote-section {
@@ -696,9 +723,12 @@ export default function DesignerLanding() {
           <h2 className="dl-frame-showcase-title">Beberapa karya terbaik kami</h2>
         </div>
         <div className="dl-frame-grid">
-          {[frame1, frame2, frame3, frame4, frame5, frame6, frame7, frame8, frame9, frame10].map((src, i) => (
-            <div key={i} className="dl-frame-item">
-              <img src={src} alt={`Fremio Series ${i + 1}`} className="dl-frame-img" />
+          {FREMIO_FRAMES.map((frame, i) => (
+            <div key={i} className="dl-frame-item-wrap">
+              <div className="dl-frame-item">
+                <img src={frame.src} alt={frame.name} className="dl-frame-img" />
+              </div>
+              <div className="dl-frame-name">{frame.name}</div>
             </div>
           ))}
         </div>
