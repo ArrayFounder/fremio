@@ -639,20 +639,12 @@ export default function DesignerLanding() {
         <span className="dl-strip-label">Fremio dalam angka</span>
         <div className="dl-strip-items">
           <div className="dl-strip-item">
-            <span className="dl-strip-num">50K+</span>
-            <span className="dl-strip-desc">Foto dicetak setiap bulan</span>
+            <span className="dl-strip-num">10M+</span>
+            <span className="dl-strip-desc">Awareness</span>
           </div>
           <div className="dl-strip-item">
-            <span className="dl-strip-num">120+</span>
-            <span className="dl-strip-desc">Kota di seluruh Indonesia</span>
-          </div>
-          <div className="dl-strip-item">
-            <span className="dl-strip-num">100%</span>
-            <span className="dl-strip-desc">Royalti untuk desainer</span>
-          </div>
-          <div className="dl-strip-item">
-            <span className="dl-strip-num">∞</span>
-            <span className="dl-strip-desc">Kenangan yang tercipta</span>
+            <span className="dl-strip-num">1M+</span>
+            <span className="dl-strip-desc">Pengguna dari Indonesia, Malaysia, Singapura, Thailand, Filipina, Jepang, Taiwan, Amerika Serikat, Inggris, dan Prancis</span>
           </div>
         </div>
       </div>
