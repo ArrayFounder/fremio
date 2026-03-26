@@ -604,11 +604,12 @@ export default function DesignerLanding() {
             </p>
           </div>
           <div className="dl-feat-card">
-            <div className="dl-feat-icon">💰</div>
-            <h3 className="dl-feat-title">Royalti Setiap Kali Dicetak</h3>
+            <div className="dl-feat-icon">🏅</div>
+            <h3 className="dl-feat-title">Sertifikat Kontributor</h3>
             <p className="dl-feat-desc">
-              Setiap kali frame karyamu digunakan, kamu mendapatkan royalti.
-              Desain sekali, hasilkan terus — bahkan saat kamu sedang tidur.
+              Semakin banyak orang menggunakan frame karyamu, semakin tinggi
+              pengakuan yang kamu dapatkan. Fremio memberikan sertifikat resmi
+              sebagai bukti nyata kontribusi dan dampak karyamu dalam komunitas.
             </p>
           </div>
           <div className="dl-feat-card">
