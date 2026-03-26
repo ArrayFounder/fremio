@@ -290,7 +290,7 @@ export default function DesignerDashboard() {
           <span style={styles.feedbackBannerEmoji}>💬</span>
           <div>
             <div style={styles.feedbackBannerTitle}>Ada masukan atau keluhan?</div>
-            <div style={styles.feedbackBannerSub}>Ceritakan ke kami — mulai dari tools yang terasa kaku, fitur yang kurang, hingga ide yang ingin kamu lihat di Fremio.</div>
+            <div style={styles.feedbackBannerSub}>Ceritakan ke kami — mulai dari tools yang kamu butuhkan hingga ide yang ingin kamu lihat di Fremio for Designer</div>
           </div>
         </div>
         <button style={styles.feedbackBannerBtn} onClick={() => { setShowFeedback(true); setFeedbackResult(null); }}>
