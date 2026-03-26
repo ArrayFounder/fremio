@@ -649,16 +649,19 @@ export default function DesignerLanding() {
             </button>
             <button
               className="dl-btn-ghost"
-              onClick={() => navigate("/designer/login")}
+              onClick={() => document.getElementById('dl-next-section')?.scrollIntoView({ behavior: 'smooth' })}
             >
-              Sudah punya akun? Masuk di sini
+              Kenali Fremio lebih dekat
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 3v10M4 9l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
             </button>
           </div>
         </div>
       </section>
 
       {/* ── STATS STRIP ── */}
-      <hr className="dl-divider" />
+      <hr id="dl-next-section" className="dl-divider" />
       <div className="dl-strip">
         <span className="dl-strip-label">Fremio dalam angka</span>
         <div className="dl-strip-items">
