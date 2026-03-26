@@ -38,6 +38,10 @@ const pool = new pg.Pool({
         submitted_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    // Add is_read column if it doesn't exist (older installs)
+    await pool.query(`
+      ALTER TABLE designer_feedback ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT false
+    `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS designer_agreements (
         id SERIAL PRIMARY KEY,
@@ -914,12 +918,22 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
     const allowedTypes = ["bug", "suggestion", "editor", "general"];
     const feedbackType = allowedTypes.includes(type) ? type : "general";
 
+    // Resolve to integer DB user ID (Firebase UIDs are strings, not integers)
+    let designerId = parseInt(req.user.userId, 10);
+    if (isNaN(designerId)) {
+      const lookup = await pool.query("SELECT id FROM users WHERE email = $1", [req.user.email]);
+      if (lookup.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "User tidak ditemukan" });
+      }
+      designerId = lookup.rows[0].id;
+    }
+
     await pool.query(
       `INSERT INTO designer_feedback (designer_id, type, message) VALUES ($1, $2, $3)`,
-      [req.user.userId, feedbackType, message.trim()]
+      [designerId, feedbackType, message.trim()]
     );
 
-    console.log(`📬 Feedback from designer ${req.user.userId}: [${feedbackType}]`);
+    console.log(`📬 Feedback from designer ${designerId} (${req.user.email}): [${feedbackType}]`);
     res.json({ success: true, message: "Terima kasih! Masukan kamu sudah kami terima." });
   } catch (error) {
     console.error("Feedback error:", error);
