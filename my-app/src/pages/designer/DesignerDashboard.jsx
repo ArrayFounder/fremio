@@ -3,6 +3,49 @@ import { Link } from "react-router-dom";
 import { PlusSquare, Clock, CheckCircle, XCircle, Pencil, FileText, Trash2 } from "lucide-react";
 import { getDraftsForDesigner, removeDraft } from "./DesignerEditor.jsx";
 
+// Mini canvas preview for draft thumbnails
+const CANVAS_W = 1080;
+const CANVAS_H = 1920;
+function DraftPreview({ draft, width = 72, height = 108 }) {
+  const scale = width / CANVAS_W;
+  const elements = draft.elements || [];
+  const bg = draft.canvasBackground || "#f7f1ed";
+  const sorted = [...elements].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+  return (
+    <div style={{ width, height, background: bg, borderRadius: "6px", overflow: "hidden", position: "relative", flexShrink: 0 }}>
+      {sorted.map((el) => {
+        const x = Math.round((el.x ?? 0) * scale);
+        const y = Math.round((el.y ?? 0) * scale);
+        const w = Math.round((el.width ?? 0) * scale);
+        const h = Math.round((el.height ?? 0) * scale);
+        const base = {
+          position: "absolute", left: x, top: y, width: w, height: h,
+          borderRadius: el.data?.borderRadius ? Math.round(el.data.borderRadius * scale) : undefined,
+          overflow: "hidden",
+          transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+        };
+        if ((el.type === "background-photo" || el.type === "upload") && el.data?.image) {
+          return <img key={el.id} src={el.data.image} style={{ ...base, objectFit: "cover", display: "block" }} alt="" />;
+        }
+        if (el.type === "photo") {
+          return <div key={el.id} style={{ ...base, background: el.data?.fill || "#d1e3f0", border: "1px solid rgba(0,0,0,0.1)" }} />;
+        }
+        if (el.type === "shape") {
+          return <div key={el.id} style={{ ...base, background: el.data?.fill || "#ccc", opacity: el.data?.opacity ?? 1 }} />;
+        }
+        if (el.type === "text") {
+          return (
+            <div key={el.id} style={{ ...base, fontSize: Math.max(5, Math.round((el.data?.fontSize || 40) * scale)), color: el.data?.color || "#000", fontWeight: el.data?.fontWeight || "normal", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", overflow: "hidden", whiteSpace: "nowrap" }}>
+              {el.data?.text || ""}
+            </div>
+          );
+        }
+        return null;
+      })}
+    </div>
+  );
+}
+
 const GREETINGS = [
   (name) => ({
     title: `Hai, ${name}! 👋`,
@@ -301,10 +344,8 @@ export default function DesignerDashboard() {
             <div style={styles.submissionList}>
               {drafts.map((draft) => (
                 <div key={draft.id} style={styles.subCard}>
-                  {/* Icon */}
-                  <div style={{ ...styles.subThumb, background: "#fdf0eb", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <FileText size={28} color="#c89585" />
-                  </div>
+                  {/* Preview */}
+                  <DraftPreview draft={draft} width={72} height={108} />
 
                   {/* Info */}
                   <div style={styles.subInfo}>
