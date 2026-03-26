@@ -367,7 +367,7 @@ const css = `
 
   /* === FRAME SHOWCASE === */
   .dl-frame-showcase {
-    padding: 0 48px 80px;
+    padding: 80px 48px 80px;
     background: #ffffff;
   }
   .dl-frame-showcase-header {
