@@ -370,25 +370,46 @@ const css = `
     padding: 0 48px 80px;
     background: #ffffff;
   }
+  .dl-frame-showcase-header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+  .dl-frame-showcase-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: ${C.accentMid};
+    margin: 0 0 10px;
+  }
+  .dl-frame-showcase-title {
+    font-size: clamp(24px, 3vw, 36px);
+    font-weight: 800;
+    color: ${C.textDark};
+    letter-spacing: -0.5px;
+    margin: 0;
+    line-height: 1.2;
+  }
   .dl-frame-grid {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    grid-template-rows: repeat(2, 1fr);
-    gap: 16px;
+    gap: 12px;
+    max-width: 860px;
+    margin: 0 auto;
   }
   .dl-frame-item {
-    border-radius: 12px;
+    border-radius: 10px;
     overflow: hidden;
     aspect-ratio: 9 / 16;
     background: #f9fafb;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07);
     transition: transform 0.25s ease, box-shadow 0.25s ease;
-    padding: 8px;
+    padding: 6px;
     box-sizing: border-box;
   }
   .dl-frame-item:hover {
-    transform: translateY(-4px) scale(1.02);
-    box-shadow: 0 12px 32px rgba(0,0,0,0.14);
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.13);
   }
   .dl-frame-img {
     width: 100%;
@@ -521,7 +542,7 @@ const css = `
     .dl-features { padding: 60px 24px; }
     .dl-features-grid { grid-template-columns: 1fr; gap: 16px; }
     .dl-frame-showcase { padding: 0 24px 64px; background: #ffffff; }
-    .dl-frame-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .dl-frame-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 100%; }
     .dl-quote-section { padding: 0 24px 64px; }
     .dl-quote-inner { padding: 40px 28px; }
     .dl-quote-inner::before { display: none; }
@@ -670,6 +691,10 @@ export default function DesignerLanding() {
 
       {/* ── FRAME SHOWCASE ── */}
       <section className="dl-frame-showcase">
+        <div className="dl-frame-showcase-header">
+          <p className="dl-frame-showcase-label">Koleksi Original</p>
+          <h2 className="dl-frame-showcase-title">Beberapa karya terbaik kami</h2>
+        </div>
         <div className="dl-frame-grid">
           {[frame1, frame2, frame3, frame4, frame5, frame6, frame7, frame8, frame9, frame10].map((src, i) => (
             <div key={i} className="dl-frame-item">
@@ -683,11 +708,10 @@ export default function DesignerLanding() {
       <div className="dl-quote-section">
         <div className="dl-quote-inner">
           <p className="dl-quote-text">
-            Desain bukan hanya soal estetika — ini soal{" "}
-            <strong>memberi ruang bagi emosi manusia</strong> untuk tinggal
-            di sebuah foto dan dikenang hingga generasi berikutnya.
+            Design is art that makes itself useful.{" "}
+            <strong>Bukan sekadar estetika, tapi juga punya fungsi, tujuan dan makna.</strong>
           </p>
-          <span className="dl-quote-author">Fremio Designer Philosophy</span>
+          <span className="dl-quote-author">sanidhia — Chief Design Officer of Fremio</span>
         </div>
       </div>
 
