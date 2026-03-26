@@ -69,8 +69,8 @@ export default function DesignerDashboard() {
 
   const loadData = async () => {
     setLoading(true);
-    // Load drafts from localStorage
-    setDrafts(getDraftsForDesigner());
+    // Load drafts from IndexedDB
+    getDraftsForDesigner().then(setDrafts).catch(() => {});
     try {
       const [subRes, notifRes] = await Promise.all([
         fetch(`${API_URL}/designer/submissions`, {
@@ -109,9 +109,10 @@ export default function DesignerDashboard() {
     );
   };
 
-  const handleDeleteDraft = useCallback((id) => {
-    removeDraft(id);
-    setDrafts(getDraftsForDesigner());
+  const handleDeleteDraft = useCallback(async (id) => {
+    await removeDraft(id);
+    const updated = await getDraftsForDesigner();
+    setDrafts(updated);
   }, []);
 
   const stats = {
@@ -175,7 +176,7 @@ export default function DesignerDashboard() {
       <div style={styles.tabs}>
         <button
           style={{ ...styles.tab, ...(activeTab === "drafts" ? styles.tabActive : {}) }}
-          onClick={() => { setDrafts(getDraftsForDesigner()); setActiveTab("drafts"); }}
+          onClick={() => { getDraftsForDesigner().then(setDrafts).catch(() => {}); setActiveTab("drafts"); }}
         >
           <FileText size={14} />
           Drafts {drafts.length > 0 && <span style={{ ...styles.badge, background: "#e0b7a9", color: "#2c1508" }}>{drafts.length}</span>}

@@ -37,24 +37,59 @@ import "../Create.css";
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
-// ─── Draft helpers (localStorage) ────────────────────────────────────────────
-const DRAFT_KEY = "fremio_designer_drafts";
-const _getDrafts = () => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "[]"); } catch { return []; } };
-const _getDesignerId = () => { try { const u = JSON.parse(localStorage.getItem("designer_user") || localStorage.getItem("fremio_user") || "null"); return u?.id || u?.email || "anon"; } catch { return "anon"; } };
-export const getDraftsForDesigner = () => { const id = _getDesignerId(); return _getDrafts().filter(d => d.designerId === id); };
-// Strip large base64 images before saving to avoid localStorage quota errors
-const _stripImages = (elements) => elements.map((el) => {
-  if ((el.type === 'background-photo' || el.type === 'upload') && el.data?.image) {
-    return { ...el, data: { ...el.data, image: null, _imageStripped: true } };
-  }
-  return el;
+// ─── Draft helpers (IndexedDB) ───────────────────────────────────────────────
+const DRAFT_DB_NAME = "fremio_drafts_db";
+const DRAFT_STORE = "designer_drafts";
+let _draftDb = null;
+const _openDraftDB = () => new Promise((resolve, reject) => {
+  if (_draftDb) { resolve(_draftDb); return; }
+  const req = indexedDB.open(DRAFT_DB_NAME, 1);
+  req.onerror = () => reject(req.error);
+  req.onsuccess = () => { _draftDb = req.result; resolve(_draftDb); };
+  req.onupgradeneeded = (e) => {
+    const db = e.target.result;
+    if (!db.objectStoreNames.contains(DRAFT_STORE)) {
+      db.createObjectStore(DRAFT_STORE, { keyPath: "id" });
+    }
+  };
 });
-export const persistDraft = (draft) => {
-  const all = _getDrafts().filter(d => d.id !== draft.id);
-  const stripped = { ...draft, elements: _stripImages(draft.elements || []) };
-  localStorage.setItem(DRAFT_KEY, JSON.stringify([stripped, ...all].slice(0, 30)));
+const _getDesignerId = () => { try { const u = JSON.parse(localStorage.getItem("designer_user") || localStorage.getItem("fremio_user") || "null"); return u?.id || u?.email || "anon"; } catch { return "anon"; } };
+export const getDraftsForDesigner = async () => {
+  try {
+    const db = await _openDraftDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([DRAFT_STORE], "readonly");
+      const req = tx.objectStore(DRAFT_STORE).getAll();
+      req.onsuccess = () => {
+        const id = _getDesignerId();
+        resolve((req.result || []).filter(d => d.designerId === id).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt)).slice(0, 30));
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch { return []; }
 };
-export const removeDraft = (id) => { localStorage.setItem(DRAFT_KEY, JSON.stringify(_getDrafts().filter(d => d.id !== id))); };
+export const persistDraft = async (draft) => {
+  try {
+    const db = await _openDraftDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([DRAFT_STORE], "readwrite");
+      const req = tx.objectStore(DRAFT_STORE).put(draft);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { console.error("persistDraft failed:", e); throw e; }
+};
+export const removeDraft = async (id) => {
+  try {
+    const db = await _openDraftDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([DRAFT_STORE], "readwrite");
+      const req = tx.objectStore(DRAFT_STORE).delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { console.error("removeDraft failed:", e); }
+};
 
 const panelMotion = {
   hidden: { opacity: 0, y: 16 },
@@ -143,20 +178,30 @@ export default function DesignerEditor() {
     setIsDirty(false);
 
     if (draftId) {
-      // Load from localStorage draft
-      const draft = _getDrafts().find((d) => d.id === draftId);
-      if (draft) {
-        setFrameName(draft.frameName || "");
-        setFrameDescription(draft.frameDescription || "");
-        if (draft.canvasAspectRatio) setCanvasAspectRatio(draft.canvasAspectRatio);
-        if (draft.canvasBackground) setCanvasBackground(draft.canvasBackground);
-        // Filter out stripped image elements (background/upload) — they need re-upload
-        const restoredElements = (draft.elements || []).filter(
-          (el) => !(el.data?._imageStripped)
-        );
-        setElements(restoredElements);
-      }
-      setTimeout(() => { readyRef.current = true; setIsDirty(false); }, 100);
+      // Load from IndexedDB draft
+      const loadDraft = async () => {
+        try {
+          const db = await _openDraftDB();
+          const draft = await new Promise((resolve, reject) => {
+            const tx = db.transaction([DRAFT_STORE], "readonly");
+            const req = tx.objectStore(DRAFT_STORE).get(draftId);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => reject(req.error);
+          });
+          if (draft) {
+            setFrameName(draft.frameName || "");
+            setFrameDescription(draft.frameDescription || "");
+            if (draft.canvasAspectRatio) setCanvasAspectRatio(draft.canvasAspectRatio);
+            if (draft.canvasBackground) setCanvasBackground(draft.canvasBackground);
+            setElements(draft.elements || []);
+          }
+        } catch (e) {
+          console.error("Failed to load draft:", e);
+        } finally {
+          setTimeout(() => { readyRef.current = true; setIsDirty(false); }, 100);
+        }
+      };
+      loadDraft();
       return;
     }
 
@@ -384,7 +429,7 @@ export default function DesignerEditor() {
   );
 
   // ─── Save Draft ──────────────────────────────────────────────────────────
-  const handleSaveDraft = useCallback(() => {
+  const handleSaveDraft = useCallback(async () => {
     setSavingDraft(true);
     try {
       const id = currentDraftIdRef.current || crypto.randomUUID();
@@ -400,7 +445,7 @@ export default function DesignerEditor() {
         elementCount: elements.filter((e) => e.type === "photo").length,
         savedAt: new Date().toISOString(),
       };
-      persistDraft(draft);
+      await persistDraft(draft);
       setIsDirty(false);
       showToast("success", "Draft tersimpan! ✅", 2000);
     } catch (e) {
@@ -615,7 +660,7 @@ export default function DesignerEditor() {
           : "Frame berhasil disubmit! Menunggu review admin...";
         showToast("success", msg, 3000);
         // Remove draft (if any) after successful submit
-        if (currentDraftIdRef.current) removeDraft(currentDraftIdRef.current);
+        if (currentDraftIdRef.current) await removeDraft(currentDraftIdRef.current);
         setIsDirty(false);
         setFrameName("");
         setFrameDescription("");
