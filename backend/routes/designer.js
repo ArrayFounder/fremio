@@ -964,16 +964,16 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
 router.get("/admin/feedback", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT df.id, df.type, df.message, df.is_read, df.submitted_at,
+      `SELECT df.id, df.designer_id, df.type, df.message, df.is_read, df.submitted_at,
               u.email AS designer_email, u.display_name AS designer_name
        FROM designer_feedback df
-       JOIN users u ON u.id = df.designer_id
+       LEFT JOIN users u ON u.id = df.designer_id
        ORDER BY df.submitted_at DESC`
     );
     res.json({ success: true, feedback: result.rows });
   } catch (error) {
     console.error("Get feedback error:", error);
-    res.status(500).json({ success: false, message: "Gagal mengambil data" });
+    res.status(500).json({ success: false, message: "Gagal mengambil data: " + error.message });
   }
 });
 

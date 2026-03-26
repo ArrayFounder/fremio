@@ -480,7 +480,7 @@ export default function AdminDesignerSubmissions() {
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", flexWrap: "wrap" }}>
                         <span style={{ fontWeight: "700", fontSize: "14px", color: "#1a1a2e" }}>
-                          {f.designer_name || f.designer_email}
+                          {f.designer_name || f.designer_email || `Designer #${f.designer_id}`}
                         </span>
                         <span style={{ fontSize: "12px", color: "#6b7280" }}>{f.designer_email}</span>
                         <span style={{
