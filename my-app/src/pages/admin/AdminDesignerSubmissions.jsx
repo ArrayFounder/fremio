@@ -61,6 +61,8 @@ export default function AdminDesignerSubmissions() {
   const [reviewCategory, setReviewCategory] = useState("Fremio Series");
   const [reviewLoading, setReviewLoading] = useState(false);
   const [allCategories, setAllCategories] = useState(loadAllCategories);
+  const [repairLoading, setRepairLoading] = useState(false);
+  const [repairResult, setRepairResult] = useState(null);
 
   // Preview modal
   const [previewSub, setPreviewSub] = useState(null);
@@ -143,6 +145,25 @@ export default function AdminDesignerSubmissions() {
     }
   };
 
+  const repairFrames = async () => {
+    if (!window.confirm("Perbaiki semua frame designer yang bermasalah? Proses ini akan memperbarui data slot foto dari submission aslinya.")) return;
+    setRepairLoading(true);
+    setRepairResult(null);
+    try {
+      const res = await fetch(`${API_URL}/designer/admin/repair-frames`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      setRepairResult(data);
+      if (data.repaired?.length > 0) loadData();
+    } catch (e) {
+      setRepairResult({ success: false, message: e.message });
+    } finally {
+      setRepairLoading(false);
+    }
+  };
+
   const stats = {
     total: submissions.length,
     pending: submissions.filter((s) => s.status === "pending").length,
@@ -158,7 +179,29 @@ export default function AdminDesignerSubmissions() {
           <h1 style={S.pageTitle}>Designer Submissions</h1>
           <p style={S.pageSubtitle}>Review dan kelola frame yang disubmit designer</p>
         </div>
+        <button
+          onClick={repairFrames}
+          disabled={repairLoading}
+          style={{ padding: "8px 16px", background: repairLoading ? "#9ca3af" : "#f59e0b", color: "white",
+                   border: "none", borderRadius: "8px", cursor: repairLoading ? "not-allowed" : "pointer",
+                   fontSize: "13px", fontWeight: 600 }}
+        >
+          {repairLoading ? "Memperbaiki..." : "🔧 Perbaiki Slot Frame"}
+        </button>
       </div>
+      {repairResult && (
+        <div style={{ margin: "0 0 16px", padding: "12px 16px", borderRadius: "8px",
+                      background: repairResult.success ? "#d1fae5" : "#fee2e2",
+                      fontSize: "13px", color: repairResult.success ? "#065f46" : "#991b1b" }}>
+          {repairResult.message}
+          {repairResult.repaired?.length > 0 && (
+            <span> — {repairResult.repaired.map(f => f.name).join(", ")}</span>
+          )}
+          {repairResult.failed?.length > 0 && (
+            <span style={{ color: "#b45309" }}> | Gagal: {repairResult.failed.map(f => `${f.name}: ${f.reason}`).join(", ")}</span>
+          )}
+        </div>
+      )}
 
       {/* Stats */}
       <div style={S.statsGrid}>

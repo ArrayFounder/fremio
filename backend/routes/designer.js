@@ -709,6 +709,140 @@ router.patch(
 );
 
 // ─────────────────────────────────────────────────
+// ADMIN: Repair broken designer-approved frames
+// Reads frame_data.slots from designer_submissions and rebuilds
+// the frames table with correct slots + layout.elements
+// ─────────────────────────────────────────────────
+router.post("/admin/repair-frames", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    // Find all approved submissions that have a published_frame_id
+    const subResult = await pool.query(
+      `SELECT ds.id AS sub_id, ds.frame_name, ds.frame_description,
+              ds.frame_data, ds.thumbnail_data_url, ds.published_frame_id,
+              f.slots AS current_slots, f.canvas_width, f.canvas_height,
+              f.canvas_background, f.category
+         FROM designer_submissions ds
+         JOIN frames f ON f.id = ds.published_frame_id
+        WHERE ds.status = 'approved' AND ds.published_frame_id IS NOT NULL`
+    );
+
+    const repaired = [];
+    const failed = [];
+
+    for (const sub of subResult.rows) {
+      try {
+        let frameData = sub.frame_data;
+        if (typeof frameData === "string") {
+          try { frameData = JSON.parse(frameData); } catch { frameData = {}; }
+        }
+
+        // Check if slots already valid
+        const currentSlots = Array.isArray(sub.current_slots)
+          ? sub.current_slots
+          : (typeof sub.current_slots === "string" ? JSON.parse(sub.current_slots) : null);
+
+        const hasValidSlots = Array.isArray(currentSlots) && currentSlots.length > 0 &&
+          typeof currentSlots[0] === "object" && ("left" in currentSlots[0] || "top" in currentSlots[0]);
+
+        if (hasValidSlots) {
+          continue; // Already good, skip
+        }
+
+        const normalizedSlots = Array.isArray(frameData.slots) ? frameData.slots : [];
+        if (normalizedSlots.length === 0) {
+          failed.push({ id: sub.published_frame_id, name: sub.frame_name, reason: "No slots in frame_data" });
+          continue;
+        }
+
+        const canvasW = frameData.canvasWidth || sub.canvas_width || 1080;
+        const canvasH = frameData.canvasHeight || sub.canvas_height || 1920;
+        const canvasBg = frameData.canvasBackground || sub.canvas_background || "#ffffff";
+
+        // Reconstruct photo elements from slots
+        const photoElements = normalizedSlots.map((slot, idx) => ({
+          id: slot.id || `photo_${idx}`,
+          type: "photo",
+          x: (slot.left || 0) * canvasW,
+          y: (slot.top || 0) * canvasH,
+          width: (slot.width || 0) * canvasW,
+          height: (slot.height || 0) * canvasH,
+          zIndex: slot.zIndex || (idx + 1),
+          rotation: slot.rotation || 0,
+          data: { label: "Foto", borderRadius: slot.borderRadius || 0,
+                  photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : idx, objectFit: "cover" },
+        }));
+
+        const overlayElements = (frameData.elements || []).map((el) => {
+          if ((el.type === "background-photo" || el.type === "upload") &&
+              typeof el.data?.image === "string" && el.data.image.startsWith("data:")) {
+            return { ...el, data: { ...el.data, image: null } };
+          }
+          return el;
+        });
+
+        const bgEl = frameData.backgroundImage
+          ? { id: "bg-photo-0", type: "background-photo", x: 0, y: 0,
+              width: canvasW, height: canvasH, zIndex: 0,
+              data: { image: frameData.backgroundImage, objectFit: "cover", label: "Background" } }
+          : null;
+
+        const layoutElements = [...(bgEl ? [bgEl] : []), ...overlayElements, ...photoElements];
+
+        const layout = {
+          elements: layoutElements,
+          backgroundColor: canvasBg,
+          canvasWidth: canvasW,
+          canvasHeight: canvasH,
+          aspectRatio: frameData.aspectRatio || frameData.canvasAspectRatio || "9:16",
+        };
+
+        // Save thumbnail if not already saved
+        let imagePath = undefined;
+        if (sub.thumbnail_data_url && sub.thumbnail_data_url.startsWith("data:image/")) {
+          try {
+            const base64Data = sub.thumbnail_data_url.replace(/^data:image\/\w+;base64,/, "");
+            const uploadDir = path.join(__dirname, "../uploads/frames");
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+            const filename = `designer_repair_${sub.published_frame_id}.png`;
+            fs.writeFileSync(path.join(uploadDir, filename), Buffer.from(base64Data, "base64"));
+            imagePath = `/uploads/frames/${filename}`;
+          } catch { /* keep undefined */ }
+        }
+
+        const updateQuery = imagePath
+          ? `UPDATE frames SET slots=$1, layout=$2, canvas_width=$3, canvas_height=$4,
+                               canvas_background=$5, max_captures=$6, image_path=$7,
+                               updated_at=NOW() WHERE id=$8`
+          : `UPDATE frames SET slots=$1, layout=$2, canvas_width=$3, canvas_height=$4,
+                               canvas_background=$5, max_captures=$6, updated_at=NOW() WHERE id=$7`;
+
+        const updateParams = imagePath
+          ? [JSON.stringify(normalizedSlots), JSON.stringify(layout), canvasW, canvasH,
+             canvasBg, normalizedSlots.length, imagePath, sub.published_frame_id]
+          : [JSON.stringify(normalizedSlots), JSON.stringify(layout), canvasW, canvasH,
+             canvasBg, normalizedSlots.length, sub.published_frame_id];
+
+        await pool.query(updateQuery, updateParams);
+        repaired.push({ id: sub.published_frame_id, name: sub.frame_name, slots: normalizedSlots.length });
+        console.log(`🔧 Repaired frame: ${sub.frame_name} (${sub.published_frame_id}) — ${normalizedSlots.length} slots`);
+      } catch (err) {
+        failed.push({ id: sub.published_frame_id, name: sub.frame_name, reason: err.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Repaired ${repaired.length} frame(s). ${failed.length} failed.`,
+      repaired,
+      failed,
+    });
+  } catch (error) {
+    console.error("Repair frames error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────
 // ADMIN: List all designers
 // ─────────────────────────────────────────────────
 router.get("/admin/designers", verifyToken, requireAdmin, async (req, res) => {
