@@ -126,6 +126,11 @@ export default function DesignerDashboard() {
   const [activeTab, setActiveTab] = useState("drafts");
   const [draftSizeFilter, setDraftSizeFilter] = useState("all");
   const [subSizeFilter, setSubSizeFilter] = useState("all");
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackType, setFeedbackType] = useState("general");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackResult, setFeedbackResult] = useState(null);
 
   const designerName = useMemo(() => {
     try {
@@ -180,6 +185,30 @@ export default function DesignerDashboard() {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     setNotifications((n) => n.map((x) => ({ ...x, is_read: true })));
+  };
+
+  const handleFeedbackSubmit = async (e) => {
+    e.preventDefault();
+    if (feedbackMessage.trim().length < 10) return;
+    setFeedbackLoading(true);
+    setFeedbackResult(null);
+    try {
+      const res = await fetch(`${API_URL}/designer/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ type: feedbackType, message: feedbackMessage }),
+      });
+      const data = await res.json();
+      setFeedbackResult(data);
+      if (data.success) {
+        setFeedbackMessage("");
+        setFeedbackType("general");
+      }
+    } catch {
+      setFeedbackResult({ success: false, message: "Tidak dapat menghubungi server" });
+    } finally {
+      setFeedbackLoading(false);
+    }
   };
 
   const markRead = async (id) => {
@@ -254,6 +283,87 @@ export default function DesignerDashboard() {
           </div>
         ))}
       </div>
+
+      {/* Feedback Banner */}
+      <div style={styles.feedbackBanner}>
+        <div style={styles.feedbackBannerLeft}>
+          <span style={styles.feedbackBannerEmoji}>💬</span>
+          <div>
+            <div style={styles.feedbackBannerTitle}>Ada masukan atau keluhan?</div>
+            <div style={styles.feedbackBannerSub}>Ceritakan ke kami — mulai dari tools yang terasa kaku, fitur yang kurang, hingga ide yang ingin kamu lihat di Fremio.</div>
+          </div>
+        </div>
+        <button style={styles.feedbackBannerBtn} onClick={() => { setShowFeedback(true); setFeedbackResult(null); }}>
+          Kirim Masukan
+        </button>
+      </div>
+
+      {/* Feedback Modal */}
+      {showFeedback && (
+        <div style={styles.modalOverlay} onClick={() => setShowFeedback(false)}>
+          <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Kirim Masukan ke Fremio</h2>
+              <button style={styles.modalClose} onClick={() => setShowFeedback(false)}>✕</button>
+            </div>
+            <p style={styles.modalDesc}>
+              Kami senang mendengar dari kamu. Setiap masukan membantu Fremio menjadi tools yang lebih baik buat semua desainer.
+            </p>
+            {feedbackResult ? (
+              <div style={{ ...styles.feedbackResult, background: feedbackResult.success ? "#d1fae5" : "#fee2e2", color: feedbackResult.success ? "#065f46" : "#c0392b" }}>
+                {feedbackResult.success ? "✅ " : "❌ "}{feedbackResult.message}
+                {feedbackResult.success && (
+                  <button style={styles.feedbackNewBtn} onClick={() => { setFeedbackResult(null); setShowFeedback(false); }}>
+                    Tutup
+                  </button>
+                )}
+              </div>
+            ) : (
+              <form onSubmit={handleFeedbackSubmit}>
+                <label style={styles.feedbackLabel}>Kategori</label>
+                <div style={styles.feedbackTypeRow}>
+                  {[
+                    { key: "editor", label: "🛠 Editor / Tools" },
+                    { key: "bug", label: "🐛 Bug / Error" },
+                    { key: "suggestion", label: "💡 Saran Fitur" },
+                    { key: "general", label: "💬 Umum" },
+                  ].map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      style={{ ...styles.feedbackTypeBtn, ...(feedbackType === t.key ? styles.feedbackTypeBtnActive : {}) }}
+                      onClick={() => setFeedbackType(t.key)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <label style={styles.feedbackLabel}>Pesan</label>
+                <textarea
+                  style={styles.feedbackTextarea}
+                  rows={5}
+                  placeholder="Ceritakan detail masukan, keluhan, atau ide kamu di sini..."
+                  value={feedbackMessage}
+                  onChange={(e) => setFeedbackMessage(e.target.value)}
+                  required
+                />
+                <div style={styles.feedbackFooter}>
+                  <span style={{ fontSize: "12px", color: feedbackMessage.length < 10 ? "#ef4444" : "#9ca3af" }}>
+                    {feedbackMessage.length < 10 ? `Minimal ${10 - feedbackMessage.length} karakter lagi` : `${feedbackMessage.length} karakter`}
+                  </span>
+                  <button
+                    type="submit"
+                    style={{ ...styles.feedbackSubmitBtn, opacity: feedbackLoading || feedbackMessage.trim().length < 10 ? 0.6 : 1 }}
+                    disabled={feedbackLoading || feedbackMessage.trim().length < 10}
+                  >
+                    {feedbackLoading ? "Mengirim..." : "Kirim Masukan"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div style={styles.tabs}>
@@ -754,6 +864,120 @@ const styles = {
     color: "#6366f1",
     borderRadius: "6px",
     cursor: "pointer",
+    fontSize: "13px",
+  },
+  feedbackBanner: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "16px",
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: "12px",
+    padding: "18px 24px",
+    marginBottom: "20px",
+    boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+    flexWrap: "wrap",
+  },
+  feedbackBannerLeft: { display: "flex", alignItems: "center", gap: "14px", flex: 1 },
+  feedbackBannerEmoji: { fontSize: "28px", flexShrink: 0 },
+  feedbackBannerTitle: { fontWeight: "700", fontSize: "15px", color: "#1a1a2e", marginBottom: "3px" },
+  feedbackBannerSub: { fontSize: "13px", color: "#666", lineHeight: 1.5 },
+  feedbackBannerBtn: {
+    padding: "9px 20px",
+    background: "#6366f1",
+    color: "#fff",
+    border: "none",
+    borderRadius: "8px",
+    fontWeight: "600",
+    fontSize: "14px",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999,
+    padding: "20px",
+  },
+  modalBox: {
+    background: "#fff",
+    borderRadius: "16px",
+    padding: "32px",
+    width: "100%",
+    maxWidth: "520px",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+  },
+  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" },
+  modalTitle: { margin: 0, fontSize: "18px", fontWeight: "800", color: "#1a1a2e" },
+  modalClose: { background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: "#9ca3af", lineHeight: 1 },
+  modalDesc: { fontSize: "14px", color: "#555", marginBottom: "20px", lineHeight: 1.6 },
+  feedbackLabel: { display: "block", fontWeight: "600", fontSize: "13px", color: "#374151", marginBottom: "8px" },
+  feedbackTypeRow: { display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" },
+  feedbackTypeBtn: {
+    padding: "6px 12px",
+    border: "1.5px solid #e5e7eb",
+    borderRadius: "20px",
+    background: "#fff",
+    fontSize: "13px",
+    cursor: "pointer",
+    color: "#374151",
+    fontWeight: "500",
+  },
+  feedbackTypeBtnActive: {
+    border: "1.5px solid #6366f1",
+    background: "#eef2ff",
+    color: "#4f46e5",
+    fontWeight: "700",
+  },
+  feedbackTextarea: {
+    width: "100%",
+    padding: "12px",
+    border: "1.5px solid #e5e7eb",
+    borderRadius: "10px",
+    fontSize: "14px",
+    resize: "vertical",
+    outline: "none",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+    marginBottom: "12px",
+    color: "#1a1a2e",
+  },
+  feedbackFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" },
+  feedbackSubmitBtn: {
+    padding: "10px 22px",
+    background: "#6366f1",
+    color: "#fff",
+    border: "none",
+    borderRadius: "8px",
+    fontWeight: "700",
+    fontSize: "14px",
+    cursor: "pointer",
+  },
+  feedbackResult: {
+    borderRadius: "10px",
+    padding: "16px 20px",
+    fontSize: "14px",
+    fontWeight: "500",
+    lineHeight: 1.6,
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  feedbackNewBtn: {
+    alignSelf: "flex-start",
+    padding: "7px 16px",
+    background: "#10b981",
+    color: "#fff",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
+    fontWeight: "600",
     fontSize: "13px",
   },
 };

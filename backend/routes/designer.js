@@ -843,6 +843,43 @@ router.post("/admin/repair-frames", verifyToken, requireAdmin, async (req, res) 
 });
 
 // ─────────────────────────────────────────────────
+// FEEDBACK: Submit designer feedback / complaint
+// ─────────────────────────────────────────────────
+router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS designer_feedback (
+        id SERIAL PRIMARY KEY,
+        designer_id INTEGER NOT NULL REFERENCES users(id),
+        type VARCHAR(50) NOT NULL DEFAULT 'general',
+        message TEXT NOT NULL,
+        submitted_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    const { type, message } = req.body;
+
+    if (!message || message.trim().length < 10) {
+      return res.status(400).json({ success: false, message: "Pesan minimal 10 karakter" });
+    }
+
+    const allowedTypes = ["bug", "suggestion", "editor", "general"];
+    const feedbackType = allowedTypes.includes(type) ? type : "general";
+
+    await pool.query(
+      `INSERT INTO designer_feedback (designer_id, type, message) VALUES ($1, $2, $3)`,
+      [req.user.userId, feedbackType, message.trim()]
+    );
+
+    console.log(`📬 Feedback from designer ${req.user.userId}: [${feedbackType}]`);
+    res.json({ success: true, message: "Terima kasih! Masukan kamu sudah kami terima." });
+  } catch (error) {
+    console.error("Feedback error:", error);
+    res.status(500).json({ success: false, message: "Gagal mengirim masukan" });
+  }
+});
+
+// ─────────────────────────────────────────────────
 // ADMIN: List all designers
 // ─────────────────────────────────────────────────
 router.get("/admin/designers", verifyToken, requireAdmin, async (req, res) => {
