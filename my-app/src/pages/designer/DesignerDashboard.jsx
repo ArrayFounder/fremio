@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Link } from "react-router-dom";
-import { PlusSquare, Clock, CheckCircle, XCircle, Pencil, FileText, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { PlusSquare, Clock, CheckCircle, XCircle, Pencil, FileText, Trash2, BookOpen } from "lucide-react";
 import { getDraftsForDesigner, removeDraft } from "./DesignerEditor.jsx";
 
 // ─── Canvas size helpers ───────────────────────────────────────────────────
@@ -87,6 +87,49 @@ const GREETINGS = [
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
+// Version key — bump this string to force re-show tutorial for all existing designers
+const TUTORIAL_KEY = "designer_tutorial_v1";
+
+const TUTORIAL_STEPS = [
+  {
+    icon: "👋",
+    title: "Selamat datang di Fremio Designer Studio!",
+    body: "Di sini kamu bisa membuat frame foto kustom yang akan digunakan jutaan pengguna di seluruh Indonesia. Yuk, kenali caranya dalam beberapa langkah singkat.",
+    action: null,
+  },
+  {
+    icon: "🎨",
+    title: "Buat Frame Baru",
+    body: "Klik tombol \"Buat Frame Baru\" untuk membuka editor. Di editor kamu bisa menambahkan elemen foto, background, teks, dan shape — lalu atur posisi dan ukurannya sesukamu.",
+    action: null,
+  },
+  {
+    icon: "📐",
+    title: "Pilih Ukuran Canvas",
+    body: "Fremio mendukung tiga ukuran canvas: Story Instagram (9:16), 4R (2:3), dan 2R (1:3). Pilih ukuran yang sesuai dengan konsep frame-mu sebelum mulai desain.",
+    action: null,
+  },
+  {
+    icon: "📤",
+    title: "Submit untuk Review",
+    body: "Setelah frame selesai, klik tombol Submit di editor. Tim Fremio akan mereview desainmu dalam 1–3 hari kerja. Kamu akan mendapat notifikasi saat review selesai.",
+    action: null,
+  },
+  {
+    icon: "✅",
+    title: "Frame Diterima & Dipublikasikan",
+    body: "Saat framemu diterima, otomatis ditampilkan di halaman Frames Fremio — dan semua pengguna bisa menggunakannya untuk sesi foto mereka!",
+    action: null,
+  },
+  {
+    icon: "💰",
+    title: "Dapatkan Penghasilan",
+    body: "Setiap kali frame-mu digunakan oleh pengguna, kamu mendapatkan poin yang bisa dicairkan ke Wallet-mu. Semakin banyak dipakai, semakin besar penghasilanmu!",
+    action: "/designer/wallet",
+    actionLabel: "Lihat Wallet →",
+  },
+];
+
 const getToken = () =>
   localStorage.getItem("designer_token") || localStorage.getItem("fremio_token");
 
@@ -119,6 +162,7 @@ function SizeFilterBar({ value, onChange }) {
 }
 
 export default function DesignerDashboard() {
+  const navigate = useNavigate();
   const [submissions, setSubmissions] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [drafts, setDrafts] = useState([]);
@@ -131,6 +175,15 @@ export default function DesignerDashboard() {
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackResult, setFeedbackResult] = useState(null);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+
+  // Certificate claim state
+  const [certStatus, setCertStatus] = useState(null); // null = loading, { certificate_name, certificate_claimed_at }
+  const [showCertModal, setShowCertModal] = useState(false);
+  const [certName, setCertName] = useState("");
+  const [certLoading, setCertLoading] = useState(false);
+  const [certError, setCertError] = useState("");
 
   const designerName = useMemo(() => {
     try {
@@ -155,6 +208,14 @@ export default function DesignerDashboard() {
     loadData();
   }, []);
 
+  // Auto-show tutorial if this version hasn't been seen yet
+  useEffect(() => {
+    if (localStorage.getItem(TUTORIAL_KEY) !== "seen") {
+      setTutorialStep(0);
+      setShowTutorial(true);
+    }
+  }, []);
+
   const loadData = async () => {
     setLoading(true);
     // Load drafts from IndexedDB
@@ -176,6 +237,45 @@ export default function DesignerDashboard() {
       console.error("Error loading dashboard data", e);
     } finally {
       setLoading(false);
+    }
+    // Fetch certificate status independently so it can't break submissions loading
+    try {
+      const certRes = await fetch(`${API_URL}/designer/certificate-status`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const certData = await certRes.json();
+      if (certData.success) setCertStatus({ certificate_name: certData.certificate_name, certificate_claimed_at: certData.certificate_claimed_at });
+      else setCertStatus({ certificate_name: null, certificate_claimed_at: null });
+    } catch {
+      setCertStatus({ certificate_name: null, certificate_claimed_at: null });
+    }
+  };
+
+  const handleCertClaim = async () => {
+    if (!certName.trim() || certName.trim().length < 2) {
+      setCertError("Nama lengkap minimal 2 karakter");
+      return;
+    }
+    setCertLoading(true);
+    setCertError("");
+    try {
+      const res = await fetch(`${API_URL}/designer/certificate-claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ fullName: certName.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCertStatus({ certificate_name: certName.trim(), certificate_claimed_at: new Date().toISOString() });
+        setShowCertModal(false);
+        setCertName("");
+      } else {
+        setCertError(data.message || "Gagal menyimpan");
+      }
+    } catch {
+      setCertError("Tidak dapat menghubungi server");
+    } finally {
+      setCertLoading(false);
     }
   };
 
@@ -253,10 +353,19 @@ export default function DesignerDashboard() {
           <h1 style={styles.pageTitle}>Dashboard Designer</h1>
           <p style={styles.pageSubtitle}>Kelola frame desain kamu di sini</p>
         </div>
-        <Link to="/designer/editor" style={styles.createBtn}>
-          <PlusSquare size={18} />
-          Buat Frame Baru
-        </Link>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            onClick={() => { setTutorialStep(0); setShowTutorial(true); }}
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 18px", borderRadius: "10px", border: "1.5px solid #e0b7a9", background: "#fdf0eb", color: "#c07055", fontWeight: 700, fontSize: "14px", cursor: "pointer" }}
+          >
+            <BookOpen size={16} />
+            Tutorial
+          </button>
+          <Link to="/designer/editor" style={styles.createBtn}>
+            <PlusSquare size={18} />
+            Buat Frame Baru
+          </Link>
+        </div>
       </div>
 
       {/* Greeting Banner */}
@@ -282,6 +391,197 @@ export default function DesignerDashboard() {
             <div style={styles.statLabel}>{stat.label}</div>
           </div>
         ))}
+      </div>
+
+      {/* Certificate Progress Banner */}
+      {(() => {
+        const published = stats.approved;
+        const progress = published % 2 === 0 ? 0 : 1;
+        const pct = Math.round((progress / 2) * 100);
+        const canClaim = published >= 2;
+        const alreadyClaimed = !!certStatus?.certificate_name;
+        return (
+          <div style={{
+            background: "linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)",
+            border: "2px solid #f59e0b",
+            borderRadius: "16px",
+            padding: "18px 22px",
+            marginBottom: "16px",
+            position: "relative",
+            overflow: "hidden",
+          }}>
+            <div style={{ position: "absolute", top: -20, right: -20, width: 80, height: 80, borderRadius: "50%", background: "rgba(245,158,11,0.15)", pointerEvents: "none" }} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1 }}>
+                <span style={{ fontSize: "28px", flexShrink: 0 }}>🏆</span>
+                <div>
+                  {alreadyClaimed ? (
+                    <>
+                      <div style={{ fontSize: "15px", fontWeight: "800", color: "#92400e", marginBottom: "3px" }}>
+                        Sertifikatmu sudah diajukan! 🎉
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#b45309", fontWeight: "600" }}>
+                        Nama: <strong>{certStatus.certificate_name}</strong>
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#b45309", marginTop: "2px" }}>
+                        Sertifikat akan dikirim ke alamat emailmu · Admin sedang memproses
+                      </div>
+                    </>
+                  ) : canClaim ? (
+                    <>
+                      <div style={{ fontSize: "15px", fontWeight: "800", color: "#92400e", marginBottom: "3px" }}>
+                        Selamat! 2 frame kamu sudah disetujui 🎉
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#b45309", marginBottom: "4px", fontWeight: "600" }}>
+                        🎖️ Kamu berhak mendapatkan sertifikat penghargaan
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: "15px", fontWeight: "800", color: "#92400e", marginBottom: "3px" }}>
+                        Tambah {2 - published} frame lagi untuk mendapatkan sertifikat penghargaan
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#b45309", marginBottom: "6px", fontWeight: "600" }}>
+                        🎖️ Sertifikat hanya untuk 100 Designers pertama
+                      </div>
+                      <div style={{ marginTop: "8px", height: "7px", borderRadius: "99px", background: "rgba(180,83,9,0.2)", width: "200px", maxWidth: "100%" }}>
+                        <div style={{ height: "100%", borderRadius: "99px", background: "linear-gradient(90deg,#f59e0b,#d97706)", width: `${pct}%`, transition: "width 0.4s ease" }} />
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#b45309", marginTop: "3px" }}>{progress}/2 menuju sertifikat</div>
+                    </>
+                  )}
+                </div>
+              </div>
+              {alreadyClaimed ? (
+                <button
+                  onClick={() => { setCertName(certStatus.certificate_name || ""); setCertError(""); setShowCertModal(true); }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: "6px",
+                    padding: "9px 18px", borderRadius: "10px",
+                    border: "2px solid #f59e0b", background: "#fff",
+                    color: "#b45309", fontWeight: "700", fontSize: "13px",
+                    whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer",
+                  }}
+                >
+                  ✏️ Edit Nama
+                </button>
+              ) : canClaim ? (
+                <button
+                  onClick={() => { setCertName(""); setCertError(""); setShowCertModal(true); }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: "6px",
+                    padding: "9px 18px", borderRadius: "10px", border: "none",
+                    background: "linear-gradient(135deg,#f59e0b,#d97706)",
+                    color: "#fff", fontWeight: "700", fontSize: "13px",
+                    whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer",
+                    boxShadow: "0 4px 12px rgba(245,158,11,0.35)",
+                  }}
+                >
+                  🎖️ Ambil Sertifikat
+                </button>
+              ) : !canClaim ? (
+                <Link
+                  to="/designer/editor"
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: "6px",
+                    padding: "9px 18px", borderRadius: "10px", border: "none",
+                    background: "linear-gradient(135deg,#f59e0b,#d97706)",
+                    color: "#fff", fontWeight: "700", fontSize: "13px",
+                    textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0,
+                    boxShadow: "0 4px 12px rgba(245,158,11,0.35)",
+                  }}
+                >
+                  ✏️ Buat Frame
+                </Link>
+              ) : null}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Certificate Claim Modal */}
+      {showCertModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+          onClick={() => setShowCertModal(false)}>
+          <div style={{ background: "#fff", borderRadius: "20px", padding: "32px 28px", maxWidth: "420px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}
+            onClick={(e) => e.stopPropagation()}>
+            <div style={{ textAlign: "center", marginBottom: "20px" }}>
+              <div style={{ fontSize: "48px", marginBottom: "8px" }}>🎖️</div>
+              <h2 style={{ margin: "0 0 6px", fontSize: "20px", fontWeight: "800", color: "#92400e" }}>{certStatus?.certificate_name ? "Edit Nama Sertifikat" : "Ambil Sertifikat"}</h2>
+              <p style={{ margin: 0, fontSize: "13px", color: "#b45309" }}>Masukkan nama lengkapmu seperti yang ingin tercantum di sertifikat</p>
+            </div>
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: "700", color: "#4b3621", marginBottom: "8px" }}>Nama Lengkap *</label>
+              <input
+                type="text"
+                value={certName}
+                onChange={(e) => { setCertName(e.target.value); setCertError(""); }}
+                placeholder="Nama lengkap untuk sertifikat"
+                style={{
+                  width: "100%", padding: "12px 14px", borderRadius: "10px",
+                  border: certError ? "2px solid #ef4444" : "2px solid #e0c8c0",
+                  fontSize: "15px", color: "#1a1a2e", outline: "none", boxSizing: "border-box",
+                }}
+              />
+              {certError && <div style={{ fontSize: "12px", color: "#ef4444", marginTop: "6px" }}>{certError}</div>}
+            </div>
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                onClick={() => setShowCertModal(false)}
+                style={{ flex: 1, padding: "11px", borderRadius: "10px", border: "2px solid #e0c8c0", background: "#fff", color: "#7a5a52", fontWeight: "700", fontSize: "14px", cursor: "pointer" }}
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleCertClaim}
+                disabled={certLoading}
+                style={{
+                  flex: 2, padding: "11px", borderRadius: "10px", border: "none",
+                  background: certLoading ? "#fde68a" : "linear-gradient(135deg,#f59e0b,#d97706)",
+                  color: "#fff", fontWeight: "700", fontSize: "14px", cursor: certLoading ? "not-allowed" : "pointer",
+                  boxShadow: "0 4px 12px rgba(245,158,11,0.35)",
+                }}
+              >
+                {certLoading ? "Menyimpan..." : certStatus?.certificate_name ? "✏️ Simpan Perubahan" : "🎖️ Konfirmasi Nama"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Earnings Banner */}
+      <div style={{
+        background: "linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)",
+        border: "2px solid #10b981",
+        borderRadius: "16px",
+        padding: "18px 22px",
+        marginBottom: "16px",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1 }}>
+          <span style={{ fontSize: "28px", flexShrink: 0 }}>💸</span>
+          <div>
+            <div style={{ fontSize: "15px", fontWeight: "800", color: "#065f46", marginBottom: "3px" }}>
+              Tambahkan frame dengan assets original untuk mendapat penghasilan
+            </div>
+            <div style={{ fontSize: "12px", color: "#047857", fontWeight: "500" }}>
+              Setiap kali framemu dipakai pengguna, kamu dapat poin yang bisa dicairkan ke Wallet
+            </div>
+          </div>
+        </div>
+        <Link
+          to="/designer/wallet"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: "6px",
+            padding: "9px 18px", borderRadius: "10px", border: "none",
+            background: "linear-gradient(135deg,#10b981,#059669)",
+            color: "#fff", fontWeight: "700", fontSize: "13px",
+            textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0,
+            boxShadow: "0 4px 12px rgba(16,185,129,0.35)",
+          }}
+        >
+          💰 Lihat Wallet
+        </Link>
       </div>
 
       {/* Feedback Banner */}
@@ -613,6 +913,88 @@ export default function DesignerDashboard() {
           )}
         </div>
       )}
+
+      {/* Tutorial Overlay */}
+      {showTutorial && (() => {
+        const step = TUTORIAL_STEPS[tutorialStep];
+        const isLast = tutorialStep === TUTORIAL_STEPS.length - 1;
+        const closeTutorial = () => {
+          localStorage.setItem(TUTORIAL_KEY, "seen");
+          setShowTutorial(false);
+        };
+        return (
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(74,48,43,0.55)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
+            onClick={closeTutorial}
+          >
+            <div
+              style={{ background: "#fff", borderRadius: "20px", padding: "36px 32px 28px", maxWidth: "480px", width: "100%", boxShadow: "0 20px 60px rgba(74,48,43,0.25)", position: "relative" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Close */}
+              <button onClick={closeTutorial} style={{ position: "absolute", top: "14px", right: "14px", background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: "#9b7b73", lineHeight: 1 }}>✕</button>
+
+              {/* Step indicator dots */}
+              <div style={{ display: "flex", gap: "6px", justifyContent: "center", marginBottom: "24px" }}>
+                {TUTORIAL_STEPS.map((_, i) => (
+                  <div key={i} style={{ width: i === tutorialStep ? "20px" : "8px", height: "8px", borderRadius: "4px", background: i === tutorialStep ? "#c89585" : "#e0b7a9", transition: "width 0.2s" }} />
+                ))}
+              </div>
+
+              {/* Icon */}
+              <div style={{ fontSize: "52px", textAlign: "center", marginBottom: "16px", lineHeight: 1 }}>{step.icon}</div>
+
+              {/* Content */}
+              <h2 style={{ textAlign: "center", fontSize: "20px", fontWeight: 800, color: "#4a302b", marginBottom: "12px", lineHeight: 1.3 }}>{step.title}</h2>
+              <p style={{ textAlign: "center", fontSize: "14px", color: "#7c5a53", lineHeight: 1.7, marginBottom: "24px" }}>{step.body}</p>
+
+              {/* Optional action link */}
+              {step.action && (
+                <div style={{ textAlign: "center", marginBottom: "16px" }}>
+                  <button
+                    onClick={() => { closeTutorial(); navigate(step.action); }}
+                    style={{ padding: "8px 20px", borderRadius: "999px", background: "#fdf0eb", color: "#c07055", border: "1.5px solid #e0b7a9", fontWeight: 700, fontSize: "13px", cursor: "pointer" }}
+                  >
+                    {step.actionLabel}
+                  </button>
+                </div>
+              )}
+
+              {/* Step {x}/{total} label */}
+              <p style={{ textAlign: "center", fontSize: "12px", color: "#c4a39b", marginBottom: "16px" }}>
+                {tutorialStep + 1} / {TUTORIAL_STEPS.length}
+              </p>
+
+              {/* Nav buttons */}
+              <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+                {tutorialStep > 0 && (
+                  <button
+                    onClick={() => setTutorialStep((s) => s - 1)}
+                    style={{ padding: "10px 22px", borderRadius: "999px", border: "1.5px solid #e0b7a9", background: "#fff", color: "#c07055", fontWeight: 700, fontSize: "14px", cursor: "pointer" }}
+                  >
+                    ← Kembali
+                  </button>
+                )}
+                {!isLast ? (
+                  <button
+                    onClick={() => setTutorialStep((s) => s + 1)}
+                    style={{ padding: "10px 22px", borderRadius: "999px", border: "none", background: "linear-gradient(to right, #e0b7a9, #c89585)", color: "#fff", fontWeight: 700, fontSize: "14px", cursor: "pointer" }}
+                  >
+                    Selanjutnya →
+                  </button>
+                ) : (
+                  <button
+                    onClick={closeTutorial}
+                    style={{ padding: "10px 22px", borderRadius: "999px", border: "none", background: "linear-gradient(to right, #e0b7a9, #c89585)", color: "#fff", fontWeight: 700, fontSize: "14px", cursor: "pointer" }}
+                  >
+                    Mulai Berkarya! 🎨
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -651,7 +1033,7 @@ const styles = {
     alignItems: "center",
     gap: "8px",
     padding: "10px 18px",
-    background: "linear-gradient(135deg, #667eea, #764ba2)",
+    background: "linear-gradient(135deg, #DCB4A0, #c07858)",
     color: "#fff",
     borderRadius: "8px",
     textDecoration: "none",

@@ -255,9 +255,10 @@ const getAccessDurationDays = () => {
 // Derive duration from amount — mirrors the same logic in payment.js
 const getDurationDaysByAmount = (amount) => {
   const a = Number(amount);
-  if (a === 5000) return 3;
+  if (a === 5000 || a === 6000) return 3;
   if (a === 7000) return 7;
-  if (a === 10000) return 30;
+  if (a === 15000) return 14;
+  if (a === 10000 || a === 19000 || a === 25000) return 30;
   return getAccessDurationDays(); // fallback to env/default (30)
 };
 
@@ -404,7 +405,7 @@ router.post("/sync-order", async (req, res) => {
       });
     }
 
-    // Derive duration from Midtrans amount (Rp 5000 → 3 days, Rp 7000 → 7 days, Rp 10000 → 30 days)
+    // Derive duration from Midtrans amount while preserving legacy price points.
     const txAmount = Number(st?.gross_amount || tx?.amount || 0);
     const durationDays = getDurationDaysByAmount(txAmount);
 

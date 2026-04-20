@@ -123,7 +123,7 @@ class DraftService {
     try {
       const API_URL = getApiUrl();
       const headers = await this.getHeaders();
-      const response = await fetch(`${API_URL}/drafts/${id}`, {
+      const response = await fetch(`${API_URL}/drafts/by-id/${id}`, {
         headers: headers
       });
 

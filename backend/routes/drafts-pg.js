@@ -134,7 +134,7 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Frame data is required' });
     }
 
-    // Check if updating existing draft
+    // Check if updating existing draft (by explicit draftId)
     if (draftId) {
       const existing = await pool.query(
         'SELECT * FROM user_drafts WHERE id = $1 AND user_id = $2',
@@ -151,6 +151,26 @@ router.post('/', authenticateToken, async (req, res) => {
           [title || 'Untitled', frameData, previewUrl, draftId, userId]
         );
         console.log('✅ [Drafts] Updated existing draft:', result.rows[0].id);
+        return res.json({ success: true, draft: result.rows[0] });
+      }
+    }
+
+    // No draftId (or draftId not found): check if a draft with the same title already
+    // exists for this user — if so, UPDATE it to avoid accumulating duplicates.
+    if (title) {
+      const sameTitle = await pool.query(
+        'SELECT * FROM user_drafts WHERE user_id = $1 AND title = $2 ORDER BY updated_at DESC LIMIT 1',
+        [userId, title]
+      );
+      if (sameTitle.rows.length > 0) {
+        const result = await pool.query(
+          `UPDATE user_drafts
+           SET frame_data = $1, preview_url = $2, updated_at = NOW()
+           WHERE id = $3 AND user_id = $4
+           RETURNING *`,
+          [frameData, previewUrl, sameTitle.rows[0].id, userId]
+        );
+        console.log('✅ [Drafts] Upserted draft by title:', result.rows[0].id, '→', title);
         return res.json({ success: true, draft: result.rows[0] });
       }
     }
@@ -172,20 +192,27 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Get user's drafts (requires auth)
+// Get user's drafts (requires auth) — frame_data excluded for bandwidth
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
     console.log('📋 [Drafts] Fetching drafts for user:', userId);
-    
+
     const result = await pool.query(
-      `SELECT id, share_id, title, frame_data, preview_url, is_public, created_at, updated_at
-       FROM user_drafts 
-       WHERE user_id = $1 
+      `SELECT id, share_id, title, preview_url, is_public, created_at, updated_at,
+              -- Extract canvas dimensions from frame_data JSON without loading full blob
+              CASE WHEN frame_data IS NOT NULL
+                THEN (regexp_match(frame_data, '"canvasWidth"\s*:\s*([0-9]+)'))[1]::int
+                ELSE NULL END AS canvas_width,
+              CASE WHEN frame_data IS NOT NULL
+                THEN (regexp_match(frame_data, '"canvasHeight"\s*:\s*([0-9]+)'))[1]::int
+                ELSE NULL END AS canvas_height
+       FROM user_drafts
+       WHERE user_id = $1
        ORDER BY updated_at DESC`,
       [userId]
     );
-    
+
     console.log('✅ [Drafts] Found', result.rows.length, 'drafts');
     res.json({ success: true, drafts: result.rows });
   } catch (error) {

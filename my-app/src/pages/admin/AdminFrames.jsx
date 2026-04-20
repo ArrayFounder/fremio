@@ -191,6 +191,7 @@ const AdminFrames = () => {
   
   const [frames, setFrames] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeSource, setActiveSource] = useState("fremio"); // 'fremio' | 'designer'
   const [activeCanvasCategory, setActiveCanvasCategory] = useState("story");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortOrder, setSortOrder] = useState("display-order"); // display-order, category-asc, category-desc, name-asc, name-desc, newest, oldest
@@ -200,6 +201,7 @@ const AdminFrames = () => {
   const [togglingPaidId, setTogglingPaidId] = useState(null);
   const [togglingHiddenId, setTogglingHiddenId] = useState(null);
   const [togglingFlowId, setTogglingFlowId] = useState(null);
+  const [movingSourceId, setMovingSourceId] = useState(null);
 
   const getFlowType = (frame) => {
     const raw = frame?.flowType ?? frame?.flow_type;
@@ -232,14 +234,17 @@ const AdminFrames = () => {
     const show4R = activeCanvasCategory === "4r";
     const show2R = activeCanvasCategory === "2r";
     return (frames || []).filter((frame) => {
+      // Source filter
+      if (activeSource === "fremio" && frame.source === "designer") return false;
+      if (activeSource === "designer" && frame.source !== "designer") return false;
+
       const is4RFrame = isPhotostripCanvas(frame);
       const is2RFrame = is2RCanvas(frame);
       if (show4R) return is4RFrame && !is2RFrame;
       if (show2R) return is2RFrame;
-      // story: neither 4R nor 2R
       return !is4RFrame && !is2RFrame;
     });
-  }, [frames, activeCanvasCategory]);
+  }, [frames, activeCanvasCategory, activeSource]);
 
   // Get unique categories (alphabetically sorted for filter dropdown)
   const categories = [...new Set(sizeFilteredFrames.map((f) => f.category || "Uncategorized"))].sort();
@@ -290,8 +295,17 @@ const AdminFrames = () => {
     // Sort
     result.sort((a, b) => {
       switch (sortOrder) {
-        case "display-order":
+        case "display-order": {
+          const aPaid = !!(a.isPremium ?? a.is_premium);
+          const bPaid = !!(b.isPremium ?? b.is_premium);
+          if (aPaid !== bPaid) return aPaid ? 1 : -1; // free first, paid last
+          if (!aPaid && !bPaid) {
+            // both free: newest first (highest createdAt)
+            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          }
+          // both paid: original display order
           return (a.displayOrder ?? 999) - (b.displayOrder ?? 999);
+        }
         case "category-asc":
           return (a.category || "Uncategorized").localeCompare(b.category || "Uncategorized");
         case "category-desc":
@@ -634,6 +648,30 @@ const AdminFrames = () => {
     }
   };
 
+  const handleMoveSource = async (frame) => {
+    const currentSource = frame.source || 'fremio';
+    const newSource = currentSource === 'fremio' ? 'designer' : 'fremio';
+    const label = newSource === 'designer' ? 'By Designer' : 'By Fremio';
+    if (!window.confirm(`Pindahkan frame "${frame.name}" ke ${label}?\n\n${newSource === 'designer' ? 'Frame akan menjadi template — saat digunakan user akan membuka editor/create.' : 'Frame akan menjadi frame siap pakai — saat digunakan user langsung ke take-moment.'}`)) return;
+
+    try {
+      setMovingSourceId(frame.id);
+      const result = await unifiedFrameService.updateFrame(frame.id, {
+        source: newSource,
+        is_template: newSource === 'designer',
+        flow_type: newSource === 'designer' ? 'personalized' : 'fixed',
+      });
+      if (result?.success === false) throw new Error(result?.message || 'Gagal memindahkan frame');
+      const freshData = await unifiedFrameService.getAllFrames({ includeHidden: true });
+      const sortedData = [...freshData].sort((a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999));
+      setFrames(sortedData);
+    } catch (err) {
+      alert('Gagal memindahkan frame: ' + (err?.message || String(err)));
+    } finally {
+      setMovingSourceId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ padding: "20px", textAlign: "center" }}>
@@ -739,9 +777,18 @@ const AdminFrames = () => {
         </div>
         <div style={{ padding: "12px" }}>
           <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{frame.name || "Untitled"}</h3>
-          <p style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#6b7280" }}>
+          <p style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#6b7280" }}>
             {frame.category || "No category"}
           </p>
+
+          {/* Click count */}
+          {!isReorderMode && (
+            <p style={{ margin: "0 0 8px 0", fontSize: "11px", color: "#9ca3af", display: "flex", alignItems: "center", gap: "4px" }}>
+              <span>👆</span>
+              <span style={{ fontWeight: 600, color: "#6b7280" }}>{frame.viewCount ?? frame.view_count ?? 0}</span>
+              <span>{activeSource === "designer" ? "klik di templates" : "klik di /frames"}</span>
+            </p>
+          )}
 
           {/* Flow Type Selector (always visible) */}
           {!isReorderMode && (
@@ -829,74 +876,87 @@ const AdminFrames = () => {
               </button>
             </div>
           ) : (
-            // Normal edit/delete controls
-            <div style={{ display: "flex", gap: "8px" }}>
+            // Normal edit/delete controls — 2×2 grid
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px" }}>
               <button
                 onClick={() => handleTogglePaid(frame)}
                 disabled={togglingPaidId === frame.id}
                 style={{
-                  flex: 1,
-                  padding: "6px",
+                  padding: "5px 4px",
                   background: isPaid ? "#ede9fe" : "#dcfce7",
                   color: isPaid ? "#6d28d9" : "#166534",
                   border: "none",
                   borderRadius: "4px",
                   cursor: togglingPaidId === frame.id ? "not-allowed" : "pointer",
-                  fontSize: "12px",
+                  fontSize: "11px",
                   fontWeight: 600,
                 }}
                 title="Toggle status paid/free"
               >
-                {togglingPaidId === frame.id
-                  ? "..."
-                  : isPaid
-                  ? "PAID"
-                  : "FREE"}
+                {togglingPaidId === frame.id ? "..." : isPaid ? "PAID" : "FREE"}
               </button>
               <button
                 onClick={() => handleToggleHidden(frame)}
                 disabled={togglingHiddenId === frame.id}
                 style={{
-                  flex: 1,
-                  padding: "6px",
+                  padding: "5px 4px",
                   background: isHidden ? "#f3f4f6" : "#e0f2fe",
                   color: isHidden ? "#374151" : "#0369a1",
                   border: "none",
                   borderRadius: "4px",
                   cursor: togglingHiddenId === frame.id ? "not-allowed" : "pointer",
-                  fontSize: "12px",
+                  fontSize: "11px",
                   fontWeight: 600,
                 }}
                 title="Hide/Show frame untuk user"
               >
                 {togglingHiddenId === frame.id ? "..." : isHidden ? "HIDDEN" : "SHOW"}
               </button>
-              <Link 
+              <Link
                 to={`/admin/upload-frame?edit=${frame.id}`}
                 style={{
-                  flex: 1,
-                  padding: "6px",
+                  padding: "5px 4px",
                   background: "#e0e7ff",
                   color: "#4f46e5",
                   borderRadius: "4px",
                   textAlign: "center",
                   textDecoration: "none",
-                  fontSize: "12px"
+                  fontSize: "11px",
+                  fontWeight: 600,
                 }}
               >
                 Edit
               </Link>
-              <button 
+              <button
+                onClick={() => handleMoveSource(frame)}
+                disabled={movingSourceId === frame.id}
+                style={{
+                  padding: "5px 4px",
+                  background: (frame.source || 'fremio') === 'fremio' ? "#fef9c3" : "#fce7f3",
+                  color: (frame.source || 'fremio') === 'fremio' ? "#854d0e" : "#9d174d",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: movingSourceId === frame.id ? "not-allowed" : "pointer",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                }}
+                title={(frame.source || 'fremio') === 'fremio' ? 'Pindahkan ke By Designer (jadi template)' : 'Pindahkan ke By Fremio (jadi frame siap pakai)'}
+              >
+                {movingSourceId === frame.id ? "..." : (frame.source || 'fremio') === 'fremio' ? "→ Designer" : "→ Fremio"}
+              </button>
+              <button
                 onClick={() => handleDelete(frame.id)}
                 style={{
-                  flex: 1,
-                  padding: "6px",
+                  gridColumn: "1 / -1",
+                  padding: "5px 4px",
                   background: "#fee2e2",
                   color: "#dc2626",
                   border: "none",
                   borderRadius: "4px",
                   cursor: "pointer",
-                  fontSize: "12px"
+                  fontSize: "11px",
+                  fontWeight: 600,
                 }}
               >
                 Hapus
@@ -911,6 +971,36 @@ const AdminFrames = () => {
   return (
     <div style={{ padding: "20px", backgroundColor: "#fff", minHeight: "200px" }}>
       <h1 style={{ color: "#111", marginBottom: "20px" }}>🖼️ Kelola Frame</h1>
+
+      {/* Source Master Toggle */}
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: "14px" }}>
+        <div style={{ display: "inline-flex", gap: "6px", padding: "5px", borderRadius: "999px", background: "#f3f4f6", border: "1px solid #e5e7eb" }}>
+          {[
+            { id: "fremio", label: "By Fremio 🎨" },
+            { id: "designer", label: "By Designer ✨" },
+          ].map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => { setActiveSource(s.id); setActiveCanvasCategory("story"); setSelectedCategory("all"); }}
+              style={{
+                border: "none",
+                cursor: "pointer",
+                padding: "9px 22px",
+                borderRadius: "999px",
+                fontWeight: 700,
+                fontSize: "13px",
+                transition: "all 0.18s",
+                background: activeSource === s.id ? "linear-gradient(135deg, #1f2937, #374151)" : "transparent",
+                color: activeSource === s.id ? "#fff" : "#6b7280",
+                boxShadow: activeSource === s.id ? "0 2px 8px rgba(0,0,0,0.15)" : "none",
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Canvas Size Category Tabs */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: "12px" }}>

@@ -25,6 +25,7 @@ import {
 import flipIcon from "../assets/flip.png";
 import fremioLogo from "../assets/logo.svg";
 import { useToast } from "../contexts/ToastContext";
+import { useHeaderBranding } from "../contexts/HeaderBrandingContext";
 import {
   requestCameraWithFallback,
   getCameraPermissionStatus,
@@ -511,6 +512,39 @@ export default function TakeMoment() {
   const [friendsRoomId, setFriendsRoomId] = useState(roomParam || null);
   const isMobile = useIsMobile();
   const { showToast } = useToast();
+  const { setBranding, clearBranding } = useHeaderBranding();
+
+  // Read group branding from sessionStorage (set by SharedGroup when user taps a frame)
+  const [groupBranding, setGroupBranding] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem("__fremio_group_branding__");
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (groupBranding) {
+      setBranding({
+        groupMode: true,
+        headerColor: groupBranding.takeMomentHeaderColor || groupBranding.headerColor || "#ffffff",
+        logoSrc: groupBranding.logoDataUrl || null,
+      });
+    }
+    return () => {
+      clearBranding();
+    };
+  }, [groupBranding, setBranding, clearBranding]);
+
+  const hideGroupShareHeading = Boolean(groupBranding);
+  const backToFramesPath = groupBranding?.groupPath || "/frames";
+  const navigateToFrames = useCallback(
+    (options) => {
+      navigate(backToFramesPath, options);
+    },
+    [backToFramesPath, navigate]
+  );
 
   // Keep friends mode in sync with URL
   useEffect(() => {
@@ -622,9 +656,9 @@ export default function TakeMoment() {
       });
 
       // Non-master users can just go back to frames.
-      navigate("/frames", { replace: true });
+      navigateToFrames({ replace: true });
     },
-    [navigate, showToast]
+    [navigateToFrames, showToast]
   );
 
   const [isLandscape, setIsLandscape] = useState(() => {
@@ -1297,7 +1331,20 @@ export default function TakeMoment() {
     const sharedFrameId = searchParams.get("frame"); // Legacy local ID
 
     // PRIORITY 1: VPS Share ID (from PostgreSQL)
+    // Skip if PRIORITY 0 sessionStorage already has a valid fully-built config
+    // (e.g. navigated from SharedGroup which pre-built multi-slot config).
     if (shareId) {
+      try {
+        const _p0Raw = sessionStorage.getItem("__fremio_shared_frame_temp__");
+        if (_p0Raw) {
+          const _p0 = JSON.parse(_p0Raw);
+          const _p0cfg = _p0?.frameConfig;
+          if (_p0cfg && (_p0cfg.isSharedFrame || _p0cfg.maxCaptures > 1 || (_p0cfg.slots?.length ?? 0) > 0)) {
+            console.log("⏭️ Skipping VPS fetch — valid PRIORITY 0 sessionStorage config found (", _p0cfg.maxCaptures, "captures,", _p0cfg.slots?.length || 0, "slots)");
+            return;
+          }
+        }
+      } catch (_) {}
       console.log("🔗 Loading shared frame from VPS:", shareId);
 
       (async () => {
@@ -1314,7 +1361,7 @@ export default function TakeMoment() {
 
           if (!cloudDraft) {
             showToast("error", "Frame tidak ditemukan atau tidak publik");
-            setTimeout(() => navigate("/frames"), 2000);
+            setTimeout(() => navigateToFrames(), 2000);
             return;
           }
 
@@ -1339,22 +1386,110 @@ export default function TakeMoment() {
           const canvasHeight = frameData.canvasHeight || 1920;
 
           // Filter photo elements for slots
-          const photoElements =
+          let photoElements =
             frameData.elements?.filter((el) => el.type === "photo") || [];
+
+          // FALLBACK: legacy cloud drafts were saved without photo-type elements.
+          // Check if SharedGroup pre-seeded slot data in sessionStorage.
+          if (photoElements.length === 0) {
+            try {
+              const slotHintRaw = sessionStorage.getItem("__fremio_group_slot_hint__");
+              if (slotHintRaw) {
+                const slotHint = JSON.parse(slotHintRaw);
+                // Only use the hint if it matches the currently-loading shareId
+                if (
+                  Array.isArray(slotHint?.slots) &&
+                  slotHint.slots.length > 0 &&
+                  (!slotHint.shareId || slotHint.shareId === shareId)
+                ) {
+                  const cw = frameData.canvasWidth || 1080;
+                  const ch = frameData.canvasHeight || 1920;
+                  photoElements = slotHint.slots.map((slot, idx) => ({
+                    id: slot.id || `slot_${idx + 1}`,
+                    type: "photo",
+                    x: slot.left * cw,
+                    y: slot.top * ch,
+                    width: slot.width * cw,
+                    height: slot.height * ch,
+                    zIndex: slot.zIndex || 1,
+                    rotation: slot.rotation || 0,
+                    data: {
+                      photoIndex: slot.photoIndex ?? idx,
+                      aspectRatio: slot.aspectRatio || "4:5",
+                      borderRadius: slot.borderRadius || 0,
+                    },
+                  }));
+                  console.log(
+                    "🔄 [TakeMoment] Reconstructed",
+                    photoElements.length,
+                    "photo slot(s) from sessionStorage slot hint"
+                  );
+                }
+              }
+            } catch (_) {}
+          }
+          // Clear hint after use regardless of outcome
+          try { sessionStorage.removeItem("__fremio_group_slot_hint__"); } catch (_) {}
+
+          // FINAL FALLBACK: search catalog by frame title when cloud draft has no photo slots.
+          // This recovers multi-slot frames whose cloud draft was saved before the slots-injection fix.
+          if (photoElements.length === 0 && cloudDraft.title) {
+            try {
+              const unifiedFrameService = (await import("../services/unifiedFrameService.js")).default;
+              const catalogFrames = await unifiedFrameService.getAllFrames();
+              const normalizedTitle = cloudDraft.title.toLowerCase().trim();
+              const catalogFrame = catalogFrames.find(
+                (f) => (f.name || f.title || "").toLowerCase().trim() === normalizedTitle
+              );
+              if (catalogFrame?.slots?.length > 0) {
+                photoElements = catalogFrame.slots.map((slot, idx) => ({
+                  id: String(slot.id || `slot_${idx + 1}`),
+                  type: "photo",
+                  x: slot.left * canvasWidth,
+                  y: slot.top * canvasHeight,
+                  width: slot.width * canvasWidth,
+                  height: slot.height * canvasHeight,
+                  zIndex: slot.zIndex || 2,
+                  rotation: slot.rotation || 0,
+                  data: {
+                    photoIndex: slot.photoIndex ?? idx,
+                    aspectRatio: slot.aspectRatio || "4:5",
+                    borderRadius: slot.borderRadius || 0,
+                  },
+                }));
+                console.log(
+                  "🔍 [TakeMoment] Recovered",
+                  photoElements.length,
+                  "slot(s) from catalog match:",
+                  cloudDraft.title
+                );
+              }
+            } catch (_) {}
+          }
+
+          // Build final elements array: decorative elements + recovered photo slots
+          const allElements =
+            photoElements.length > 0 && !(frameData.elements || []).some((e) => e.type === "photo")
+              ? [...(frameData.elements || []), ...photoElements]
+              : (frameData.elements || []);
 
           // Convert to frame config with FULL designer elements
           const frameConfig = {
             id: `shared-${shareId}`,
             title: cloudDraft.title || "Shared Frame",
             aspectRatio: frameData.aspectRatio || "9:16",
-            elements: frameData.elements || [],
+            elements: allElements,
             canvasBackground: frameData.canvasBackground || "#f7f1ed",
+            frameImage: cloudDraft.preview_url || null,
+            imagePath: cloudDraft.preview_url || null,
+            thumbnailUrl: cloudDraft.preview_url || null,
+            image_url: cloudDraft.preview_url || null,
             canvasWidth: canvasWidth,
             canvasHeight: canvasHeight,
             maxCaptures: photoElements.length || 1,
             slots: photoElements.map((el, idx) => ({
               id: el.id || `slot_${idx + 1}`,
-              left: el.x / canvasWidth, // Convert absolute to normalized (0-1)
+              left: el.x / canvasWidth,
               top: el.y / canvasHeight,
               width: el.width / canvasWidth,
               height: el.height / canvasHeight,
@@ -1365,7 +1500,7 @@ export default function TakeMoment() {
             // CRITICAL: Include designer object with ALL elements
             // This enables background-photo, upload overlays, text, etc.
             designer: {
-              elements: frameData.elements || [],
+              elements: allElements,
               canvasBackground: frameData.canvasBackground || "#f7f1ed",
               aspectRatio: frameData.aspectRatio || "9:16",
               canvasWidth: canvasWidth,
@@ -1447,7 +1582,7 @@ export default function TakeMoment() {
         } catch (error) {
           console.error("Error loading shared frame from VPS:", error);
           showToast("error", "Gagal memuat frame dari server");
-          setTimeout(() => navigate("/frames"), 2000);
+          setTimeout(() => navigateToFrames(), 2000);
         }
       })();
 
@@ -1467,7 +1602,7 @@ export default function TakeMoment() {
 
           if (!draft) {
             showToast("error", "Data frame rusak atau tidak valid");
-            setTimeout(() => navigate("/frames"), 2000);
+            setTimeout(() => navigateToFrames(), 2000);
             return;
           }
 
@@ -1602,7 +1737,7 @@ export default function TakeMoment() {
         } catch (error) {
           console.error("Error loading embedded frame:", error);
           showToast("error", "Gagal memuat frame");
-          setTimeout(() => navigate("/frames"), 2000);
+          setTimeout(() => navigateToFrames(), 2000);
         }
       })();
 
@@ -1674,7 +1809,7 @@ export default function TakeMoment() {
           );
           // Redirect to frames page after 2 seconds
           setTimeout(() => {
-            navigate("/frames");
+            navigateToFrames();
           }, 2000);
           return;
         }
@@ -7015,7 +7150,7 @@ export default function TakeMoment() {
       <main
         style={{
           minHeight: "100vh",
-          background: "#F4E6DA",
+          background: groupBranding?.takeMomentBgColor || groupBranding?.backgroundColor || "#F4E6DA",
           padding: "2rem",
           display: "flex",
           flexDirection: "column",
@@ -7054,7 +7189,7 @@ export default function TakeMoment() {
             >
               <button
                 type="button"
-                onClick={() => navigate("/frames")}
+                onClick={() => navigateToFrames()}
                 style={{
                   alignSelf: "flex-start",
                   display: "inline-flex",
@@ -7085,9 +7220,11 @@ export default function TakeMoment() {
                 <span style={{ fontSize: "1rem" }}>←</span>
                 <span>Kembali</span>
               </button>
-              <h1 style={headingStyles}>
-                Pilih momen berhargamu bersama fremio
-              </h1>
+              {!hideGroupShareHeading && (
+                <h1 style={headingStyles}>
+                  Pilih momen berhargamu bersama fremio
+                </h1>
+              )}
             </div>
 
             <div style={{ width: "100%", maxWidth: "640px" }}>
@@ -7149,7 +7286,7 @@ export default function TakeMoment() {
     <main
       style={{
         minHeight: "100dvh",
-        background: "#F4E6DA",
+        background: groupBranding?.takeMomentBgColor || groupBranding?.backgroundColor || "#F4E6DA",
         display: "flex",
         flexDirection: "column",
       }}
@@ -7174,7 +7311,7 @@ export default function TakeMoment() {
         >
           <button
             type="button"
-            onClick={() => navigate("/frames")}
+            onClick={() => navigateToFrames()}
             style={{
               alignSelf: "flex-start",
               display: "inline-flex",
@@ -7195,15 +7332,17 @@ export default function TakeMoment() {
             <span style={{ fontSize: "0.95rem" }}>←</span>
             <span>Kembali</span>
           </button>
-          <h1
-            ref={mobileContentRef}
-            style={{
-              ...headingStyles,
-              marginTop: "0.1rem",
-            }}
-          >
-            Pilih momen berhargamu bersama fremio
-          </h1>
+          {!hideGroupShareHeading && (
+            <h1
+              ref={mobileContentRef}
+              style={{
+                ...headingStyles,
+                marginTop: "0.1rem",
+              }}
+            >
+              Pilih momen berhargamu bersama fremio
+            </h1>
+          )}
         </div>
 
         <div
@@ -7318,15 +7457,17 @@ export default function TakeMoment() {
                 <span style={{ fontSize: "0.95rem" }}>←</span>
                 <span>Kembali</span>
               </button>
-              <h1
-                ref={mobileContentRef}
-                style={{
-                  ...headingStyles,
-                  marginTop: "0.1rem",
-                }}
-              >
-                Pilih momen berhargamu bersama fremio
-              </h1>
+              {!hideGroupShareHeading && (
+                <h1
+                  ref={mobileContentRef}
+                  style={{
+                    ...headingStyles,
+                    marginTop: "0.1rem",
+                  }}
+                >
+                  Pilih momen berhargamu bersama fremio
+                </h1>
+              )}
             </div>
 
             <div
@@ -7382,7 +7523,7 @@ export default function TakeMoment() {
       <main
         style={{
           minHeight: "100vh",
-          background: "#F4E6DA",
+          background: groupBranding?.takeMomentBgColor || groupBranding?.backgroundColor || "#F4E6DA",
           padding: "2rem",
           display: "flex",
           flexDirection: "column",
@@ -7450,7 +7591,9 @@ export default function TakeMoment() {
                 <span style={{ fontSize: "1rem" }}>←</span>
                 <span>Kembali</span>
               </button>
-              <h1 style={headingStyles}>Pilih momen berhargamu bersama fremio</h1>
+              {!hideGroupShareHeading && (
+                <h1 style={headingStyles}>Pilih momen berhargamu bersama fremio</h1>
+              )}
             </div>
 
             <div style={{ width: "100%", maxWidth: "820px" }}>

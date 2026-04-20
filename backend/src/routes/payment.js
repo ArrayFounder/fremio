@@ -299,6 +299,7 @@ router.get("/access", verifyToken, async (req, res) => {
         packageIds: access.package_ids,
         frameIds,
         totalFrames: frameIds.length,
+        packageAmount: access.gross_amount ? Number(access.gross_amount) : null,
       },
     });
   } catch (error) {

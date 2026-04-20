@@ -219,10 +219,14 @@ export default function AdminFrameCreator() {
             
             // Restore other elements (upload, text, shape) from layout.elements
             // These should have HIGHER zIndex than photo slots
+            // NOTE: layout.elements may include photo-type elements (reconstructed from slots).
+            // Skip them here — photo areas are already added from frame.slots above.
             if (frame.layout?.elements && Array.isArray(frame.layout.elements)) {
               console.log("📦 [EDIT] Restoring other elements:", frame.layout.elements.length);
               frame.layout.elements.forEach((el, index) => {
                 console.log(`📦 [EDIT] Element ${index}: type=${el.type}, id=${el.id}, hasImage=${!!el.data?.image}`);
+                // Skip photo-type elements — sourced from frame.slots (added above).
+                if (el.type === "photo") return;
                 
                 // Convert normalized positions back to absolute positions
                 let restoredWidth = el.widthNorm !== undefined ? el.widthNorm * CANVAS_WIDTH : el.width;

@@ -1,8 +1,15 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import paymentService from "../services/paymentService";
+import shareSubscriptionService from "../services/shareSubscriptionService";
+import membershipPlusLinkPage from "../assets/membership_plus_link_page.png";
+import membershipPlusMockup from "../assets/membership_plus_mockup.png";
+import membershipPlusTakephoto from "../assets/membership_plus_takephoto.png";
+import membershipPlusQrcode from "../assets/membership_plus_qrcode.png";
+import instagramLogo from "../assets/instagram.png";
 import unifiedFrameService from "../services/unifiedFrameService";
+import { useTranslation } from "react-i18next";
 import "./Pricing.css";
 
 // ── Frame size helpers ────────────────────────────────────────────────────────
@@ -31,10 +38,22 @@ const Pricing = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user: currentUser } = useAuth();
+  const { t, i18n } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [access, setAccess] = useState(null);
   const [canPurchase, setCanPurchase] = useState(false);
   const [checkingAccess, setCheckingAccess] = useState(true);
+
+  // ── Share Plus (Membership Plus) ──────────────────────────────────────────
+  const SHARE_PLUS_PLANS = {
+    starter: { label: "Starter", grossAmount: 35000, originalAmount: 45000, dailyQuota: 50,  tag: "Brand / event kecil" },
+    pro:     { label: "Pro",     grossAmount: 45000, originalAmount: 65000, dailyQuota: 100, tag: "Brand / event menengah" },
+    max:     { label: "Max",     grossAmount: 65000, originalAmount: 100000, dailyQuota: 200, tag: "Brand besar" },
+  };
+  const [sharePlusStatus, setSharePlusStatus] = useState(null);
+  const [selectedSharePlusTier, setSelectedSharePlusTier] = useState(null);
+  const [loadingSharePlus, setLoadingSharePlus] = useState(false);
+  const [lightboxImg, setLightboxImg] = useState(null);
 
   // Promo countdown — resets every midnight (purely decorative / urgency)
   const getSecondsUntilMidnight = () => {
@@ -80,11 +99,17 @@ const Pricing = () => {
   const [loadingPreviewFrames, setLoadingPreviewFrames] = useState(true);
   const [selectedPlan, setSelectedPlan] = useState(null);
 
+  const isInternational = i18n.language === 'en';
+
+  const BRAND = '#c89585';
+  const BRAND_LIGHT = '#fef5f1';
+  const BRAND_SHADOW = 'rgba(200,149,133,0.18)';
+
   const PLANS = {
-    '3days':  { label: '3 Hari', amount: 5000,  originalAmount: 10000, durationLabel: '/ 3 hari',  badge: null },
-    '7days':  { label: '1 Minggu', amount: 7000,  originalAmount: 15000, durationLabel: '/ 1 minggu', badge: 'Populer' },
-    '30days': { label: '1 Bulan', amount: 10000, originalAmount: 35000, durationLabel: '/ 1 bulan', badge: 'Terbaik' },
-  };
+        '1day':  { label: '1 Hari',   amount: 5000,  originalAmount: null, durationLabel: '/hari',   badge: null },
+        '7days': { label: '1 Minggu', amount: 15000, originalAmount: null, durationLabel: '/minggu', badge: null },
+        '30days': { label: '1 Bulan', amount: 25000, originalAmount: 45000, durationLabel: '/bulan', badge: null },
+      };
 
   useEffect(() => {
     // Set page title
@@ -94,6 +119,7 @@ const Pricing = () => {
     // Only purchase flow requires auth.
     if (currentUser) {
       loadAccessInfo();
+      loadSharePlusStatus();
     } else {
       setAccess(null);
       setCanPurchase(false);
@@ -281,9 +307,7 @@ const Pricing = () => {
         } catch {
           // ignore
         }
-        alert(
-          "✅ Access berhasil! Sekarang Anda bisa menggunakan semua frame premium."
-        );
+        alert(t("pricing.alert_access_granted"));
         navigate("/frames");
         return true;
       }
@@ -311,6 +335,43 @@ const Pricing = () => {
     }
   };
 
+  const loadSharePlusStatus = async () => {
+    try {
+      const res = await shareSubscriptionService.getStatus();
+      if (res?.success) setSharePlusStatus(res);
+    } catch {
+      // non-fatal
+    }
+  };
+
+  const handleBuySharePlus = async (tier) => {
+    if (!currentUser) {
+      const ok = confirm("Login atau daftar untuk berlangganan Membership Plus.");
+      navigate(ok ? "/register?redirect=/pricing" : "/login?redirect=/pricing");
+      return;
+    }
+    try {
+      setLoadingSharePlus(true);
+      await paymentService.loadSnapScript();
+      const response = await shareSubscriptionService.createSubscription({
+        tier,
+        name: currentUser.displayName || "Fremio User",
+        phone: currentUser.phoneNumber || "",
+      });
+      const data = response?.data || response;
+      if (!data?.token) throw new Error("Token pembayaran tidak diterima");
+      paymentService.openSnapPayment(data.token, {
+        onSuccess: () => { loadSharePlusStatus(); setLoadingSharePlus(false); },
+        onPending: () => { loadSharePlusStatus(); setLoadingSharePlus(false); },
+        onError: () => { alert("Pembayaran gagal. Silakan coba lagi."); setLoadingSharePlus(false); },
+        onClose: () => setLoadingSharePlus(false),
+      });
+    } catch (err) {
+      alert(`Gagal membuat pembayaran Membership Plus:\n${err?.message || err}`);
+      setLoadingSharePlus(false);
+    }
+  };
+
   const handleBuyPackage = async () => {
     console.log("🛒 Buy package clicked");
     console.log("👤 Current user:", currentUser);
@@ -320,12 +381,7 @@ const Pricing = () => {
     if (!currentUser) {
       console.warn("⚠️ User not logged in, redirecting to register");
 
-      // Show friendly message
-      const userChoice = confirm(
-        "Anda perlu login untuk melakukan pembelian.\n\n" +
-          "Klik OK untuk Register (akun baru)\n" +
-          "Klik Cancel untuk Login (sudah punya akun)"
-      );
+      const userChoice = confirm(t("pricing.alert_login_required_msg"));
 
       if (userChoice) {
         // User wants to register
@@ -338,7 +394,7 @@ const Pricing = () => {
     }
 
     if (!canPurchase && access) {
-      alert("Anda masih memiliki akses aktif. Tidak bisa membeli paket baru.");
+      alert(t("pricing.alert_already_has_access"));
       return;
     }
 
@@ -403,9 +459,7 @@ const Pricing = () => {
                 await handleBuyPackage();
               } catch (cancelError) {
                 console.error("Cancel pending error:", cancelError);
-                alert(
-                  "Gagal melanjutkan pembayaran. Silakan refresh halaman dan coba lagi."
-                );
+                alert(t("pricing.alert_resume_failed"));
                 setLoading(false);
               }
             },
@@ -609,209 +663,15 @@ const Pricing = () => {
 
   return (
     <div className="pricing-container">
-      {/* PREVIEW FRAME KOLEKSI FREMIO */}
-      <div className="pricing-preview">
-        {/* Header */}
-        <h3
-          style={{
-            fontSize: "24px",
-            fontWeight: "700",
-            textAlign: "center",
-            marginBottom: "6px",
-            color: "#333",
-          }}
-        >
-          Preview Frame Membership Fremio
-        </h3>
-        <p
-          style={{
-            textAlign: "center",
-            fontSize: "14px",
-            color: "#888",
-            marginBottom: "24px",
-          }}
-        >
-          Dapatkan akses ke <strong style={{ color: "#c89585" }}>100+ frame premium</strong> yang terus diperbarui setiap bulan — temukan koleksi yang sesuai dengan momenmu.
-        </p>
-
-        {/* ── Level 1: Size Toggle ── */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            marginBottom: "16px",
-          }}
-        >
-          <div
-            style={{
-              display: "inline-flex",
-              background: "#fef5f1",
-              borderRadius: "999px",
-              padding: "5px",
-              gap: "4px",
-              boxShadow: "inset 0 1px 4px rgba(200,149,133,0.15)",
-            }}
-          >
-            {[
-              { key: "story", label: "Story Instagram" },
-              { key: "4r",    label: "4R" },
-              { key: "2r",    label: "2R" },
-            ].map(({ key, label }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => handleSizeChange(key)}
-                style={{
-                  padding: "9px 20px",
-                  borderRadius: "999px",
-                  border: "none",
-                  fontWeight: "700",
-                  fontSize: "13px",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                  background:
-                    activeSizeTab === key
-                      ? "linear-gradient(135deg, #e0b7a9, #c89585)"
-                      : "transparent",
-                  color: activeSizeTab === key ? "#fff" : "#7a5248",
-                  boxShadow:
-                    activeSizeTab === key
-                      ? "0 3px 10px rgba(200,149,133,0.4)"
-                      : "none",
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Level 2: Category Toggle ── */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            flexWrap: "wrap",
-            gap: "8px",
-            marginBottom: "20px",
-            minHeight: "36px",
-          }}
-        >
-          {loadingPreviewFrames ? (
-            <span style={{ fontSize: "13px", color: "#bbb" }}>Memuat kategori...</span>
-          ) : availableCategories.length === 0 ? (
-            <span style={{ fontSize: "13px", color: "#bbb" }}>Belum ada frame untuk ukuran ini</span>
-          ) : (
-            availableCategories.map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => setActiveCategoryTab(cat)}
-                style={{
-                  padding: "6px 16px",
-                  borderRadius: "999px",
-                  border:
-                    activeCategoryTab === cat
-                      ? "none"
-                      : "1px solid rgba(200,149,133,0.45)",
-                  fontWeight: activeCategoryTab === cat ? "700" : "500",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                  transition: "all 0.18s",
-                  background:
-                    activeCategoryTab === cat
-                      ? "#c89585"
-                      : "transparent",
-                  color: activeCategoryTab === cat ? "#fff" : "#7a5248",
-                }}
-              >
-                {cat}
-              </button>
-            ))
-          )}
-        </div>
-
-        {/* ── Panel ── */}
-        <div className="preview-panel">
-          <div className="preview-quote">{previewQuote}</div>
-
-          {loadingPreviewFrames ? (
-            <div className="preview-loading">Memuat preview frames...</div>
-          ) : tabFrames.length === 0 ? (
-            <div className="preview-empty">
-              Belum ada frames untuk kategori ini.
-            </div>
-          ) : (
-            <div className="preview-grid">
-              {tabFrames.slice(0, 10).map((frame, idx) => (
-                <div key={frame.id || idx} className="preview-item">
-                  <div
-                    className="preview-thumb"
-                    style={{
-                      aspectRatio:
-                        activeSizeTab === "4r" ? "2 / 3"
-                        : activeSizeTab === "2r" ? "1 / 3"
-                        : "9 / 16",
-                    }}
-                  >
-                    <img
-                      src={
-                        frame.thumbnailUrl || frame.imageUrl || frame.imagePath
-                      }
-                      alt={frame.name || `Frame ${idx + 1}`}
-                      onError={(e) => (e.currentTarget.style.display = "none")}
-                    />
-                  </div>
-                  <div className="preview-name">Frame {idx + 1}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* PRICING PLANS SECTION */}
       <div
         className="pricing-plans-section"
         style={{
-          padding: '32px 20px',
+          padding: '8px 20px 16px',
           background: '#fff',
           marginBottom: '10px',
         }}
       >
-        <h2
-          style={{
-            fontSize: '26px',
-            fontWeight: '700',
-            textAlign: 'center',
-            marginBottom: '8px',
-            color: '#1a1a1a',
-          }}
-        >
-          Pilih Paket Keanggotaan
-        </h2>
-        <p
-          style={{
-            textAlign: 'center',
-            fontSize: '15px',
-            color: '#666',
-            marginBottom: '6px',
-          }}
-        >
-          Dapatkan akses ke <strong>100+ frame premium</strong> yang terus diperbarui tiap bulan —<br />
-          pilih durasi yang sesuai, mulai dari 3 hari hingga 1 bulan.
-        </p>
-        <p
-          style={{
-            textAlign: 'center',
-            fontSize: '13px',
-            color: '#aaa',
-            marginBottom: '20px',
-          }}
-        >
-          Coba dulu atau langsung hemat lebih banyak dengan paket bulanan.
-        </p>
-
         {/* PROMO COUNTDOWN BANNER */}
         {(() => {
           const h = String(Math.floor(promoSecondsLeft / 3600)).padStart(2, '0');
@@ -832,11 +692,11 @@ const Pricing = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ fontSize: '18px' }}>🔥</span>
                 <span style={{ color: '#fff', fontWeight: '700', fontSize: '14px', letterSpacing: '0.3px' }}>
-                  Harga promo hanya berlaku hari ini!
+                  {t('pricing.promo_text')}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {[['jam', h], ['menit', m], ['detik', s]].map(([label, val]) => (
+                {[[t('pricing.promo_hours'), h], [t('pricing.promo_minutes'), m], [t('pricing.promo_seconds'), s]].map(([label, val]) => (
                   <React.Fragment key={label}>
                     <div style={{
                       background: 'rgba(0,0,0,0.25)',
@@ -848,196 +708,327 @@ const Pricing = () => {
                       <div style={{ color: '#fff', fontSize: '26px', fontWeight: '800', lineHeight: 1, fontVariantNumeric: 'tabular-nums', fontFeatureSettings: '"tnum"' }}>{val}</div>
                       <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: '10px', marginTop: '3px', letterSpacing: '0.8px', textTransform: 'uppercase' }}>{label}</div>
                     </div>
-                    {label !== 'detik' && (
+                    {label !== t('pricing.promo_seconds') && (
                       <span style={{ color: '#fff', fontSize: '22px', fontWeight: '700', opacity: 0.8, marginBottom: '12px' }}>:</span>
                     )}
                   </React.Fragment>
                 ))}
               </div>
               <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12px' }}>
-                Harga kembali normal tengah malam — jangan sampai kehabisan! ✨
+                {t('pricing.promo_footer')}
               </div>
             </div>
           );
         })()}
 
-        {/* 3 Plan Cards */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-            gap: '16px',
-            maxWidth: '800px',
-            margin: '0 auto 28px',
-          }}
-        >
-          {Object.entries(PLANS).map(([key, plan]) => {
-            const isSelected = selectedPlan === key;
-            const isBadged = !!plan.badge;
-            const BRAND = '#c89585';
-            const BRAND_LIGHT = '#fef5f1';
-            const BRAND_SHADOW = 'rgba(200,149,133,0.18)';
-            return (
-              <div
-                key={key}
-                onClick={() => !isSelected && setSelectedPlan(key)}
-                style={{
-                  position: 'relative',
-                  border: isSelected ? `2px solid ${BRAND}` : '1px solid #e2e8f0',
-                  borderRadius: '16px',
-                  padding: isBadged ? '36px 20px 24px' : '24px 20px',
-                  background: isSelected ? BRAND_LIGHT : '#fff',
-                  cursor: isSelected ? 'default' : 'pointer',
-                  boxShadow: isSelected
-                    ? `0 4px 16px ${BRAND_SHADOW}`
-                    : '0 2px 8px rgba(0,0,0,0.06)',
-                  transition: 'all 0.2s',
-                  textAlign: 'center',
-                }}
-              >
-                {/* Badge */}
-                {plan.badge && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: '-13px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      background: BRAND,
-                      color: '#fff',
-                      fontSize: '12px',
-                      fontWeight: '700',
-                      padding: '3px 14px',
-                      borderRadius: '999px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {plan.badge === 'Terbaik' ? '🌟 Terbaik' : plan.badge}
-                  </div>
-                )}
+        {/* ── MEMBERSHIP WRAPPER (cards + frame preview + share section) ── */}
+        <div className="pricing-membership-shell" style={{
+          background: 'linear-gradient(135deg, #fdf8f6 0%, #fff 100%)',
+          border: '1px solid #ecdeda',
+          borderRadius: '20px',
+          padding: '32px 24px 24px',
+          maxWidth: '900px',
+          margin: '0 auto 36px',
+        }}>
 
-                {/* Plan label */}
-                <div
-                  style={{
-                    fontSize: '18px',
-                    fontWeight: '700',
-                    color: '#1a1a1a',
-                    marginBottom: '12px',
-                  }}
-                >
-                  {plan.label}
-                </div>
-
-                {/* Strikethrough original price */}
-                <div
-                  style={{
-                    fontSize: '14px',
-                    color: '#ef4444',
-                    textDecoration: 'line-through',
-                    marginBottom: '4px',
-                    fontWeight: '500',
-                  }}
-                >
-                  Rp {plan.originalAmount.toLocaleString('id-ID')}
-                </div>
-
-                {/* Real price */}
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'baseline',
-                    justifyContent: 'center',
-                    gap: '4px',
-                    marginBottom: '16px',
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: '30px',
-                      fontWeight: '800',
-                      color: isSelected ? BRAND : '#1a1a1a',
-                      lineHeight: '1',
-                    }}
-                  >
-                    Rp {plan.amount.toLocaleString('id-ID')}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: '13px',
-                      color: '#888',
-                      fontWeight: '400',
-                    }}
-                  >
-                    {plan.durationLabel}
-                  </span>
-                </div>
-
-                {/* Features */}
-                <ul
-                  style={{
-                    listStyle: 'none',
-                    padding: 0,
-                    margin: '0 0 16px',
-                    fontSize: '13px',
-                    color: '#555',
-                    textAlign: 'left',
-                  }}
-                >
-                  <li style={{ marginBottom: '6px' }}>✓ Akses semua frame premium</li>
-                  <li style={{ marginBottom: '6px' }}>✓ Semua koleksi Fremio</li>
-                  <li style={{ marginBottom: '6px' }}>✓ Akses ke frame terbaru</li>
-                </ul>
-
-                {/* Action button */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (isSelected) {
-                      handleBuyPackage();
-                    } else {
-                      setSelectedPlan(key);
-                    }
-                  }}
-                  disabled={isSelected && loading}
-                  style={{
-                    width: '100%',
-                    padding: '10px 0',
-                    borderRadius: '8px',
-                    border: 'none',
-                    background: isSelected ? BRAND : '#f3f4f6',
-                    color: isSelected ? '#fff' : '#666',
-                    fontSize: '14px',
-                    fontWeight: '700',
-                    cursor: isSelected && loading ? 'not-allowed' : 'pointer',
-                    transition: 'background 0.2s, transform 0.1s',
-                    boxShadow: isSelected ? `0 4px 12px ${BRAND_SHADOW}` : 'none',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (isSelected && !loading) e.currentTarget.style.background = '#b87d6a';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (isSelected) e.currentTarget.style.background = BRAND;
-                  }}
-                >
-                  {isSelected
-                    ? loading ? 'Memproses...' : 'Bayar Sekarang →'
-                    : 'Pilih'}
-                </button>
-              </div>
-            );
-          })}
+        {/* ── Section title: Membership ── */}
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+          <h1 style={{ fontSize: '32px', fontWeight: '900', color: '#1e293b', margin: '0', lineHeight: 1.15 }}>
+            Membership
+          </h1>
         </div>
 
-        <p
-          style={{
+        {/* Unified Plan Cards Grid: Free | 25k | 35k | 45k | 65k */}
+        {(() => {
+          const amountToPlanKey = { 5000: '1day', 15000: '7days', 19000: '30days', 10000: '30days', 25000: '30days' };
+          const frameActivePlanKey = access
+            ? (amountToPlanKey[access.packageAmount] || '30days')
+            : null;
+          const sharePlusTierActive = sharePlusStatus?.hasSubscription
+            ? sharePlusStatus?.subscription?.tier
+            : null;
+          const isFreeActive = !frameActivePlanKey && !sharePlusTierActive;
+
+          return (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(185px, 1fr))',
+              columnGap: '14px',
+              rowGap: '28px',
+              maxWidth: '860px',
+              margin: '0 auto 28px',
+            }}>
+              {/* FREE CARD */}
+              <div style={{
+                position: 'relative',
+                border: isFreeActive ? '2px solid #94a3b8' : '1px solid #e2e8f0',
+                borderRadius: '16px',
+                padding: isFreeActive ? '36px 16px 20px' : '36px 16px 20px',
+                background: isFreeActive ? '#f8fafc' : '#fff',
+                boxShadow: isFreeActive ? '0 4px 16px rgba(148,163,184,0.2)' : '0 2px 8px rgba(0,0,0,0.06)',
+                textAlign: 'center',
+                display: 'flex', flexDirection: 'column',
+              }}>
+                {isFreeActive && (
+                  <div style={{ position: 'absolute', top: '-13px', left: '50%', transform: 'translateX(-50%)', background: '#64748b', color: '#fff', fontSize: '11px', fontWeight: '700', padding: '3px 12px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                    ✓ {t('pricing.badge_active_plan')}
+                  </div>
+                )}
+                <div style={{ fontSize: '16px', fontWeight: '700', color: '#1a1a1a', marginBottom: '10px' }}>Gratis</div>
+                <div style={{ height: '18px', marginBottom: '3px' }} />
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '4px', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '20px', fontWeight: '800', color: '#64748b' }}>Rp 0</span>
+                  <span style={{ fontSize: '11px', color: '#888', fontWeight: '400' }}>/ selamanya</span>
+                </div>
+                <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px', fontSize: '12px', color: '#555', textAlign: 'left', flexGrow: 1 }}>
+                  <li style={{ marginBottom: '4px' }}>✓ Akses basic frames</li>
+                  <li style={{ marginBottom: '4px' }}>✓ Akses basic templates</li>
+                  <li style={{ marginBottom: '4px' }}>✓ Simpan hingga 5 draft</li>
+                </ul>
+                <button type="button" disabled style={{ width: '100%', padding: '9px 0', borderRadius: '8px', border: 'none', background: '#f1f5f9', color: '#94a3b8', fontSize: '13px', fontWeight: '700', cursor: 'default', marginTop: 'auto' }}>
+                  {isFreeActive ? t('pricing.badge_active_plan') : 'Gratis'}
+                </button>
+              </div>
+
+              {/* LITE CARD — 5K/hari */}
+              {(() => {
+                const isPlanActive = frameActivePlanKey === '1day' && !sharePlusTierActive;
+                const isSelected = selectedPlan === '1day';
+                return (
+                  <div
+                    onClick={() => { if (!isPlanActive) { setSelectedPlan('1day'); setSelectedSharePlusTier(null); } }}
+                    style={{
+                      position: 'relative',
+                      border: isPlanActive ? '2px solid #16a34a' : isSelected ? `2px solid ${BRAND}` : '1px solid #e2e8f0',
+                      borderRadius: '16px',
+                      padding: '36px 16px 20px',
+                      background: isPlanActive ? '#f0fdf4' : isSelected ? BRAND_LIGHT : '#fff',
+                      cursor: isPlanActive ? 'default' : 'pointer',
+                      boxShadow: isPlanActive ? '0 4px 16px rgba(22,163,74,0.15)' : isSelected ? `0 4px 16px ${BRAND_SHADOW}` : '0 2px 8px rgba(0,0,0,0.06)',
+                      transition: 'all 0.2s', textAlign: 'center',
+                      display: 'flex', flexDirection: 'column',
+                    }}
+                  >
+                    {isPlanActive ? (
+                      <div style={{ position: 'absolute', top: '-13px', left: '50%', transform: 'translateX(-50%)', background: '#16a34a', color: '#fff', fontSize: '11px', fontWeight: '700', padding: '3px 12px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                        ✓ {t('pricing.badge_active_plan')}
+                      </div>
+                    ) : (
+                      <div style={{ position: 'absolute', top: '-13px', left: '50%', transform: 'translateX(-50%)', background: '#94a3b8', color: '#fff', fontSize: '11px', fontWeight: '700', padding: '3px 12px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                        Coba Dulu
+                      </div>
+                    )}
+                    <div style={{ fontSize: '16px', fontWeight: '700', color: '#1a1a1a', marginBottom: '10px' }}>Lite</div>
+                    <div style={{ height: '18px', marginBottom: '3px' }} />
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '2px', marginBottom: '10px', flexWrap: 'nowrap' }}>
+                      <span style={{ fontSize: '19px', fontWeight: '800', color: isPlanActive ? '#16a34a' : isSelected ? BRAND : '#1a1a1a', lineHeight: '1', whiteSpace: 'nowrap' }}>Rp 5.000</span>
+                      <span style={{ fontSize: '11px', color: '#888', fontWeight: '400' }}>/hari</span>
+                    </div>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px', fontSize: '12px', color: '#555', textAlign: 'left', flexGrow: 1 }}>
+                      <li style={{ marginBottom: '4px' }}>✓ Akses basic &amp; premium frames</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Akses basic &amp; premium templates</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Save draft sepuasnya</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Lebih lengkap</li>
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isPlanActive) return;
+                        if (!isSelected) { setSelectedPlan('1day'); setSelectedSharePlusTier(null); return; }
+                        handleBuyPackage();
+                      }}
+                      disabled={(isSelected && loading) || isPlanActive}
+                      style={{ width: '100%', padding: '9px 0', borderRadius: '8px', border: 'none', background: isPlanActive ? '#dcfce7' : isSelected ? BRAND : '#f3f4f6', color: isPlanActive ? '#16a34a' : isSelected ? '#fff' : '#666', fontSize: '13px', fontWeight: '700', cursor: isPlanActive ? 'default' : 'pointer', transition: 'background 0.2s', boxShadow: isSelected && !isPlanActive ? `0 4px 12px ${BRAND_SHADOW}` : 'none', marginTop: 'auto' }}
+                    >
+                      {isPlanActive ? t('pricing.badge_active_plan') : isSelected ? (loading ? t('pricing.btn_processing') : t('pricing.btn_pay_now')) : t('pricing.btn_select')}
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* MOON CARD — 15K/minggu */}
+              {(() => {
+                const isPlanActive = frameActivePlanKey === '7days' && !sharePlusTierActive;
+                const isSelected = selectedPlan === '7days';
+                return (
+                  <div
+                    onClick={() => { if (!isPlanActive) { setSelectedPlan('7days'); setSelectedSharePlusTier(null); } }}
+                    style={{
+                      position: 'relative',
+                      border: isPlanActive ? '2px solid #16a34a' : isSelected ? `2px solid ${BRAND}` : '1px solid #e2e8f0',
+                      borderRadius: '16px',
+                      padding: '36px 16px 20px',
+                      background: isPlanActive ? '#f0fdf4' : isSelected ? BRAND_LIGHT : '#fff',
+                      cursor: isPlanActive ? 'default' : 'pointer',
+                      boxShadow: isPlanActive ? '0 4px 16px rgba(22,163,74,0.15)' : isSelected ? `0 4px 16px ${BRAND_SHADOW}` : '0 2px 8px rgba(0,0,0,0.06)',
+                      transition: 'all 0.2s', textAlign: 'center',
+                      display: 'flex', flexDirection: 'column',
+                    }}
+                  >
+                    {isPlanActive ? (
+                      <div style={{ position: 'absolute', top: '-13px', left: '50%', transform: 'translateX(-50%)', background: '#16a34a', color: '#fff', fontSize: '11px', fontWeight: '700', padding: '3px 12px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                        ✓ {t('pricing.badge_active_plan')}
+                      </div>
+                    ) : (
+                      <div style={{ position: 'absolute', top: '-13px', left: '50%', transform: 'translateX(-50%)', background: '#7c6f9f', color: '#fff', fontSize: '11px', fontWeight: '700', padding: '3px 12px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                        Fleksibel
+                      </div>
+                    )}
+                    <div style={{ fontSize: '16px', fontWeight: '700', color: '#1a1a1a', marginBottom: '10px' }}>Moon</div>
+                    <div style={{ height: '18px', marginBottom: '3px' }} />
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '2px', marginBottom: '10px', flexWrap: 'nowrap' }}>
+                      <span style={{ fontSize: '19px', fontWeight: '800', color: isPlanActive ? '#16a34a' : isSelected ? BRAND : '#1a1a1a', lineHeight: '1', whiteSpace: 'nowrap' }}>Rp 15.000</span>
+                      <span style={{ fontSize: '11px', color: '#888', fontWeight: '400' }}>/minggu</span>
+                    </div>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px', fontSize: '12px', color: '#555', textAlign: 'left', flexGrow: 1 }}>
+                      <li style={{ marginBottom: '4px' }}>✓ Akses basic &amp; premium frames</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Akses basic &amp; premium templates</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Save draft sepuasnya</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Lebih lengkap</li>
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isPlanActive) return;
+                        if (!isSelected) { setSelectedPlan('7days'); setSelectedSharePlusTier(null); return; }
+                        handleBuyPackage();
+                      }}
+                      disabled={(isSelected && loading) || isPlanActive}
+                      style={{ width: '100%', padding: '9px 0', borderRadius: '8px', border: 'none', background: isPlanActive ? '#dcfce7' : isSelected ? BRAND : '#f3f4f6', color: isPlanActive ? '#16a34a' : isSelected ? '#fff' : '#666', fontSize: '13px', fontWeight: '700', cursor: isPlanActive ? 'default' : 'pointer', transition: 'background 0.2s', boxShadow: isSelected && !isPlanActive ? `0 4px 12px ${BRAND_SHADOW}` : 'none', marginTop: 'auto' }}
+                    >
+                      {isPlanActive ? t('pricing.badge_active_plan') : isSelected ? (loading ? t('pricing.btn_processing') : t('pricing.btn_pay_now')) : t('pricing.btn_select')}
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* 25K MEMBERSHIP CARD */}
+              {(() => {
+                const isPlanActive = frameActivePlanKey === '30days' && !sharePlusTierActive;
+                const isSelected = selectedPlan === '30days';
+                return (
+                  <div
+                    onClick={() => { if (!isPlanActive) { setSelectedPlan('30days'); setSelectedSharePlusTier(null); } }}
+                    style={{
+                      position: 'relative',
+                      border: isPlanActive ? '2px solid #16a34a' : isSelected ? `2px solid ${BRAND}` : '1px solid #e2e8f0',
+                      borderRadius: '16px',
+                      padding: '52px 16px 20px',
+                      background: isPlanActive ? '#f0fdf4' : isSelected ? BRAND_LIGHT : '#fff',
+                      cursor: isPlanActive ? 'default' : 'pointer',
+                      boxShadow: isPlanActive ? '0 4px 16px rgba(22,163,74,0.15)' : isSelected ? `0 4px 16px ${BRAND_SHADOW}` : '0 2px 8px rgba(0,0,0,0.06)',
+                      transition: 'all 0.2s', textAlign: 'center',
+                      display: 'flex', flexDirection: 'column',
+                    }}
+                  >
+                    {isPlanActive ? (
+                      <div style={{ position: 'absolute', top: '-13px', left: '50%', transform: 'translateX(-50%)', background: '#16a34a', color: '#fff', fontSize: '11px', fontWeight: '700', padding: '3px 12px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                        ✓ {t('pricing.badge_active_plan')}
+                      </div>
+                    ) : (
+                      <div style={{ position: 'absolute', top: '-13px', left: '50%', transform: 'translateX(-50%)', background: BRAND, color: '#fff', fontSize: '11px', fontWeight: '700', padding: '3px 12px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                        ★ Paling Populer
+                      </div>
+                    )}
+                    <div style={{ position: 'absolute', top: '18px', left: '50%', transform: 'translateX(-50%)', background: '#3b82f6', color: '#fff', fontSize: '11px', fontWeight: '600', padding: '3px 12px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                      Bebas, hemat &amp; lengkap
+                    </div>
+                    <div style={{ fontSize: '16px', fontWeight: '700', color: '#1a1a1a', marginBottom: '4px' }}>Stars</div>
+                    <div style={{ fontSize: '13px', color: '#ef4444', textDecoration: 'line-through', marginBottom: '3px', fontWeight: '500' }}>Rp 45.000</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '2px', marginBottom: '10px', flexWrap: 'nowrap' }}>
+                      <span style={{ fontSize: '19px', fontWeight: '800', color: isPlanActive ? '#16a34a' : isSelected ? BRAND : '#1a1a1a', lineHeight: '1', whiteSpace: 'nowrap' }}>Rp 25.000</span>
+                      <span style={{ fontSize: '11px', color: '#888', fontWeight: '400' }}>/bulan</span>
+                    </div>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px', fontSize: '12px', color: '#555', textAlign: 'left', flexGrow: 1 }}>
+                      <li style={{ marginBottom: '4px' }}>✓ Akses basic &amp; premium frames</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Akses basic &amp; premium templates</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Save draft sepuasnya</li>
+                      <li style={{ marginBottom: '4px' }}>✓ Lebih hemat, lengkap dan bebas</li>
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isPlanActive) return;
+                        if (!isSelected) { setSelectedPlan('30days'); setSelectedSharePlusTier(null); return; }
+                        handleBuyPackage();
+                      }}
+                      disabled={(isSelected && loading) || isPlanActive}
+                      style={{ width: '100%', padding: '9px 0', borderRadius: '8px', border: 'none', background: isPlanActive ? '#dcfce7' : isSelected ? BRAND : '#f3f4f6', color: isPlanActive ? '#16a34a' : isSelected ? '#fff' : '#666', fontSize: '13px', fontWeight: '700', cursor: isPlanActive ? 'default' : 'pointer', transition: 'background 0.2s', boxShadow: isSelected && !isPlanActive ? `0 4px 12px ${BRAND_SHADOW}` : 'none', marginTop: 'auto' }}
+                    >
+                      {isPlanActive ? t('pricing.badge_active_plan') : isSelected ? (loading ? t('pricing.btn_processing') : t('pricing.btn_pay_now')) : t('pricing.btn_select')}
+                    </button>
+                  </div>
+                );
+              })()}
+
+            </div>
+          );
+        })()}
+
+        {/* ── Frame Preview (compact) ── */}
+        <div style={{ marginTop: '12px', borderTop: '1px solid rgba(236,222,218,0.6)', paddingTop: '20px' }}>
+          {/* Title */}
+          <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#1a1a1a', margin: '0 0 12px', textAlign: 'center' }}>Preview Frame</h2>
+          {/* Size Toggle */}
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '8px' }}>
+            <div style={{ display: 'inline-flex', background: '#fef5f1', borderRadius: '999px', padding: '4px', gap: '3px', boxShadow: 'inset 0 1px 4px rgba(200,149,133,0.15)' }}>
+              {[{ key: 'story', label: 'Story' }, { key: '4r', label: '4R' }, { key: '2r', label: '2R' }].map(({ key, label }) => (
+                <button key={key} type="button" onClick={() => handleSizeChange(key)} style={{ padding: '6px 14px', borderRadius: '999px', border: 'none', fontWeight: '700', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s', background: activeSizeTab === key ? 'linear-gradient(135deg, #e0b7a9, #c89585)' : 'transparent', color: activeSizeTab === key ? '#fff' : '#7a5248', boxShadow: activeSizeTab === key ? '0 2px 8px rgba(200,149,133,0.4)' : 'none' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Category Toggle */}
+          <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '5px', marginBottom: '8px' }}>
+            {loadingPreviewFrames ? (
+              <span style={{ fontSize: '12px', color: '#bbb' }}>{t('pricing.loading_category')}</span>
+            ) : availableCategories.length === 0 ? (
+              <span style={{ fontSize: '12px', color: '#bbb' }}>{t('pricing.no_frames_size')}</span>
+            ) : availableCategories.map((cat) => (
+              <button key={cat} type="button" onClick={() => setActiveCategoryTab(cat)} style={{ padding: '4px 12px', borderRadius: '999px', border: activeCategoryTab === cat ? 'none' : '1px solid rgba(200,149,133,0.45)', fontWeight: activeCategoryTab === cat ? '700' : '500', fontSize: '11px', cursor: 'pointer', transition: 'all 0.18s', background: activeCategoryTab === cat ? '#c89585' : 'transparent', color: activeCategoryTab === cat ? '#fff' : '#7a5248' }}>
+                {cat}
+              </button>
+            ))}
+          </div>
+          {/* Grid */}
+          <div className="preview-panel">
+            {loadingPreviewFrames ? (
+              <div className="preview-loading">{t('pricing.loading_preview')}</div>
+            ) : tabFrames.length === 0 ? (
+              <div className="preview-empty">{t('pricing.no_frames_category')}</div>
+            ) : (
+              <div className="preview-grid">
+                {tabFrames.slice(0, 12).map((frame, idx) => (
+                  <div key={frame.id || idx} className="preview-item">
+                    <div className="preview-thumb" style={{ aspectRatio: activeSizeTab === '4r' ? '2 / 3' : activeSizeTab === '2r' ? '1 / 3' : '9 / 16' }}>
+                      <img src={frame.thumbnailUrl || frame.imageUrl || frame.imagePath} alt={frame.name || `Frame ${idx + 1}`} onError={(e) => (e.currentTarget.style.display = 'none')} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {isInternational && (
+          <div style={{
+            maxWidth: '800px',
+            margin: '12px auto 0',
+            padding: '12px 16px',
+            background: '#fff8f5',
+            border: '1px solid #e0b7a9',
+            borderRadius: '10px',
             textAlign: 'center',
             fontSize: '13px',
-            color: '#aaa',
-          }}
-        >
-          🔒 Pembayaran aman via Midtrans · Semua metode tersedia
-        </p>
+            color: '#7a5248',
+          }}>
+            🇮🇩 Payment is currently only available for users in Indonesia (via Midtrans). International billing coming soon!
+          </div>
+        )}
 
         {/* Status notes */}
         {access && (
@@ -1057,10 +1048,10 @@ const Pricing = () => {
             }}
           >
             <div>
-              <span style={{ fontWeight: '700', color: '#15803d' }}>✅ Keanggotaan aktif</span>
+              <span style={{ fontWeight: '700', color: '#15803d' }}>{t('pricing.access_active')}</span>
               <span style={{ fontSize: '13px', color: '#555', marginLeft: '8px' }}>
-                Berakhir{' '}
-                {new Date(access.accessEnd).toLocaleDateString('id-ID', {
+                {t('pricing.access_expires')}{' '}
+                {new Date(access.accessEnd).toLocaleDateString(i18n.language === 'id' ? 'id-ID' : 'en-US', {
                   day: 'numeric', month: 'long', year: 'numeric',
                 })}
               </span>
@@ -1074,83 +1065,45 @@ const Pricing = () => {
                 fontWeight: '700', fontSize: '13px', cursor: 'pointer',
               }}
             >
-              Gunakan Frame Premium →
+              {t('pricing.btn_use_frames')}
             </button>
           </div>
         )}
         {!currentUser && (
           <p style={{ textAlign: 'center', fontSize: '13px', color: '#999', marginTop: '4px' }}>
-            Login diperlukan untuk melanjutkan pembelian.
+            {t('pricing.login_required')}
           </p>
         )}
         {currentUser && !access && pendingPayment && (
           <p style={{ textAlign: 'center', fontSize: '13px', color: '#b45309', marginTop: '4px' }}>
-            ⏳ Ada transaksi yang belum selesai. Lanjutkan pembayaran atau pilih paket lain — paket lama akan otomatis dibatalkan.
+            {t('pricing.pending_payment_notice')}
           </p>
         )}
       </div>
 
-      <div className="pricing-hero">
-        <div
-          style={{
-            background: "linear-gradient(135deg, #fef5f1 0%, #fff 100%)",
-            padding: "40px 30px",
-            borderRadius: "16px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-            maxWidth: "800px",
-            margin: "0 auto 40px",
-          }}
-        >
-          <div className="pricing-tagline">
-            <span className="brand-soft">
-              Jadi bagian dari perjalanan cerita di Fremio
-            </span>
-          </div>
-          <div
-            className="pricing-subtitle"
-            style={{
-              fontSize: "16px",
-              lineHeight: "1.6",
-              color: "#666",
-              marginTop: "20px",
-              textAlign: "center",
-            }}
-          >
-            Setiap orang punya momen.
-            <br />
-            Fremio hadir untuk memberi ruang agar momen itu bisa diekspresikan,
-            dirasakan, dan diingat.
-            <br />
-            Bukan sekadar frame.
-            <br />
-            Ini tentang bagaimana kita memaknai cerita hidup.
-            <br />
-            <strong>
-              Mulai sebagai member, dan ikut menjaga ruang ini tetap hidup.
-            </strong>
-          </div>
-        </div>
       </div>
+
+
 
       {access && (
         <div className="current-access">
           <div className="access-card">
             <div className="access-header">
-              <span className="access-badge active">✅ Member Aktif</span>
+              <span className="access-badge active">{t('pricing.member_active_badge')}</span>
               <span className="days-remaining">
-                {access.daysRemaining} hari tersisa
+                {t('pricing.days_remaining', { count: access.daysRemaining })}
               </span>
             </div>
             <div className="access-info">
               <p>
-                <strong>Akses Frame:</strong> {access.totalFrames} frames
+                <strong>{t('pricing.access_frames_label')}</strong> {access.totalFrames} frames
               </p>
               <p>
-                <strong>Status:</strong> Member Fremio Aktif
+                <strong>{t('pricing.access_status_label')}</strong> {t('pricing.member_status')}
               </p>
               <p>
-                <strong>Berakhir:</strong>{" "}
-                {new Date(access.accessEnd).toLocaleDateString("id-ID", {
+                <strong>{t('pricing.access_ends_label')}</strong>{" "}
+                {new Date(access.accessEnd).toLocaleDateString(i18n.language === 'id' ? 'id-ID' : 'en-US', {
                   day: "numeric",
                   month: "long",
                   year: "numeric",
@@ -1161,195 +1114,29 @@ const Pricing = () => {
         </div>
       )}
 
-      {/* WHY FREMIO EXISTS SECTION */}
-      <div
-        className="why-fremio-section"
-        style={{
-          padding: "30px 20px",
-          background: "linear-gradient(135deg, #fef5f1 0%, #fff 100%)",
-          marginBottom: "30px",
-          borderRadius: "12px",
-        }}
-      >
-        <h2
-          style={{
-            fontSize: "24px",
-            fontWeight: "700",
-            textAlign: "center",
-            marginBottom: "15px",
-            color: "#333",
-          }}
-        >
-          Mengapa Fremio Ada?
-        </h2>
-        <div
-          style={{
-            maxWidth: "650px",
-            margin: "0 auto",
-            fontSize: "15px",
-            lineHeight: "1.6",
-            color: "#555",
-            textAlign: "center",
-          }}
-        >
-          <p style={{ marginBottom: "12px" }}>
-            Di tengah dunia yang serba cepat, banyak momen berlalu tanpa sempat
-            dirayakan.
-          </p>
-          <p style={{ marginBottom: "15px" }}>
-            Fremio diciptakan sebagai ruang kecil untuk berhenti sejenak —
-            menyimpan, membingkai, dan merayakan cerita yang berarti.
-          </p>
-          <div
-            style={{
-              marginTop: "15px",
-              padding: "20px",
-              background: "white",
-              borderRadius: "10px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.05)",
-            }}
-          >
-            <p
-              style={{
-                fontWeight: "600",
-                marginBottom: "10px",
-                fontSize: "14px",
-              }}
-            >
-              Kami percaya:
-            </p>
-            <ul
-              style={{
-                listStyle: "none",
-                padding: 0,
-                textAlign: "left",
-                maxWidth: "450px",
-                margin: "0 auto",
-                fontSize: "14px",
-              }}
-            >
-              <li style={{ marginBottom: "8px" }}>
-                ✓ Setiap momen layak punya tempat
-              </li>
-              <li style={{ marginBottom: "8px" }}>
-                ✓ Ekspresi tidak harus ramai untuk bermakna
-              </li>
-              <li style={{ marginBottom: "8px" }}>
-                ✓ Cerita personal juga penting
-              </li>
-            </ul>
-          </div>
-        </div>
-      </div>
 
-
-      <div className="payment-info">
-        <h3>🔒 Pembayaran Aman</h3>
-        <p>
-          Transaksi Anda dilindungi oleh Midtrans, payment gateway terpercaya di
-          Indonesia
-        </p>
-        <div
-          className="payment-methods"
-          style={{
-            display: "flex",
-            gap: "15px",
-            flexWrap: "wrap",
-            justifyContent: "center",
-            marginTop: "15px",
-          }}
-        >
-          <span
-            style={{
-              padding: "8px 16px",
-              background: "#f0f0f0",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: "600",
-              color: "#333",
-            }}
-          >
-            💳 Kartu Kredit/Debit
-          </span>
-          <span
-            style={{
-              padding: "8px 16px",
-              background: "#f0f0f0",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: "600",
-              color: "#333",
-            }}
-          >
-            🏪 Bank Transfer
-          </span>
-          <span
-            style={{
-              padding: "8px 16px",
-              background: "#f0f0f0",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: "600",
-              color: "#333",
-            }}
-          >
-            📱 E-Wallet
-          </span>
-          <span
-            style={{
-              padding: "8px 16px",
-              background: "#f0f0f0",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: "600",
-              color: "#333",
-            }}
-          >
-            🏬 Convenience Store
-          </span>
-        </div>
-      </div>
 
       <div className="faq-section">
-        <h3>❓ Pertanyaan Umum</h3>
+        <h3>{t('pricing.faq_title')}</h3>
         <div className="faq-item">
-          <h4>Berapa lama keanggotaan berlaku?</h4>
-          <p>
-            Tersedia 3 pilihan: <strong>3 hari</strong> (Rp 5.000),{' '}
-            <strong>1 minggu / 7 hari</strong> (Rp 7.000), dan{' '}
-            <strong>1 bulan / 30 hari</strong> (Rp 10.000). Pilih sesuai
-            kebutuhanmu sebelum melanjutkan pembayaran.
-          </p>
+          <h4>{t('pricing.faq_1_q')}</h4>
+          <p dangerouslySetInnerHTML={{ __html: t('pricing.faq_1_a') }} />
         </div>
         <div className="faq-item">
-          <h4>Apa yang didapat sebagai member?</h4>
-          <p>
-            Akses unlimited ke semua koleksi frame Fremio, termasuk frame baru
-            yang dirilis setiap bulan dan seri khusus (Holiday, Year-End, dll).
-          </p>
+          <h4>{t('pricing.faq_2_q')}</h4>
+          <p>{t('pricing.faq_2_a')}</p>
         </div>
         <div className="faq-item">
-          <h4>Bisakah saya perpanjang keanggotaan sebelum 30 hari berakhir?</h4>
-          <p>
-            Saat ini perpanjangan otomatis hanya bisa dilakukan setelah masa
-            aktif berakhir. Kami akan mengingatkan Anda mendekati tanggal
-            berakhir.
-          </p>
+          <h4>{t('pricing.faq_3_q')}</h4>
+          <p>{t('pricing.faq_3_a')}</p>
         </div>
         <div className="faq-item">
-          <h4>Apa yang terjadi setelah keanggotaan berakhir?</h4>
-          <p>
-            Frame premium akan terkunci kembali. Anda perlu memperpanjang
-            keanggotaan untuk mendapatkan akses lagi ke seluruh koleksi.
-          </p>
+          <h4>{t('pricing.faq_4_q')}</h4>
+          <p>{t('pricing.faq_4_a')}</p>
         </div>
         <div className="faq-item">
-          <h4>Bagaimana cara pembayaran?</h4>
-          <p>
-            Klik "Gabung sebagai Member Fremio", pilih metode pembayaran favorit
-            Anda (Kartu Kredit/Debit, Bank Transfer, E-Wallet, atau Convenience
-            Store), dan ikuti instruksi pembayaran dari Midtrans.
-          </p>
+          <h4>{t('pricing.faq_5_q')}</h4>
+          <p dangerouslySetInnerHTML={{ __html: t('pricing.faq_5_a') }} />
         </div>
       </div>
     </div>

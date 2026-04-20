@@ -6,12 +6,33 @@ import userStorage from "../utils/userStorage.js";
 import "../styles/drafts.css";
 import "../styles/profile.css";
 
+const API_URL = import.meta.env.VITE_API_URL || "/api";
+
+// Normalize a VPS draft row (from GET /api/drafts) to local draft shape
+function normalizeVpsDraft(d) {
+  return {
+    id: `vps-${d.id}`,
+    cloudId: d.id,
+    shareId: d.share_id,
+    title: d.title || "Draft",
+    preview: d.preview_url || null,
+    canvasWidth:  d.canvas_width  || 1080,
+    canvasHeight: d.canvas_height || 1920,
+    createdAt: d.created_at,
+    updatedAt: d.updated_at,
+    _isVps: true,
+  };
+}
+
 export default function Drafts() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
+  const [openingId, setOpeningId] = useState(null);
+  // Inline confirm state — replaces window.confirm (mobile-safe)
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
   const isMountedRef = useRef(true);
 
@@ -47,28 +68,43 @@ export default function Drafts() {
   }, []);
 
   const reloadDrafts = useCallback(async () => {
-    if (!isMountedRef.current) {
-      return;
-    }
-
+    if (!isMountedRef.current) return;
     setLoading(true);
     setErrorMessage("");
 
     try {
-      const loaded = await draftStorage.loadDrafts();
-      if (isMountedRef.current) {
-        setDrafts(Array.isArray(loaded) ? loaded : []);
+      // PRIMARY: load from VPS (cloud) for cross-device sync.
+      // Token alone is sufficient — server decodes userId from JWT.
+      // Do NOT gate on user?.email (auth context may still be loading on mobile).
+      const token = localStorage.getItem("fremio_token");
+      if (token) {
+        const res = await fetch(`${API_URL}/drafts`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const vpsDrafts = (data.drafts || []).map(normalizeVpsDraft);
+          if (isMountedRef.current) setDrafts(vpsDrafts);
+          return;
+        }
+        // If 401/403, token is invalid — fall through to IndexedDB
       }
+      // FALLBACK: local IndexedDB (no token or API unavailable)
+      const loaded = await draftStorage.loadDrafts();
+      if (isMountedRef.current) setDrafts(Array.isArray(loaded) ? loaded : []);
     } catch (error) {
       console.error("⚠️ Failed to load drafts", error);
-      if (isMountedRef.current) {
-        setErrorMessage("Gagal memuat draft. Coba lagi nanti.");
-        setDrafts([]);
+      try {
+        const loaded = await draftStorage.loadDrafts();
+        if (isMountedRef.current) setDrafts(Array.isArray(loaded) ? loaded : []);
+      } catch {
+        if (isMountedRef.current) {
+          setErrorMessage("Gagal memuat draft. Coba lagi nanti.");
+          setDrafts([]);
+        }
       }
     } finally {
-      if (isMountedRef.current) {
-        setLoading(false);
-      }
+      if (isMountedRef.current) setLoading(false);
     }
   }, []);
 
@@ -77,49 +113,102 @@ export default function Drafts() {
   }, [reloadDrafts]);
 
   const sortedDrafts = useMemo(() => {
-    return [...drafts].sort((a, b) => {
+    const sorted = [...drafts].sort((a, b) => {
       const left = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
       const right = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
       return right - left;
     });
+    // Deduplicate by title — keep only the most recent per title
+    const seen = new Set();
+    return sorted.filter((d) => {
+      const key = (d.title || "Draft").trim().toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }, [drafts]);
 
   const handleUseDraft = async (draft) => {
-    if (!draft) return;
+    if (!draft || openingId) return;
     setErrorMessage("");
+    setOpeningId(draft.id);
 
-    // Navigate to Create editor with draft ID
-    navigate("/create/editor", { state: { draftId: draft.id } });
+    try {
+      if (draft._isVps && draft.cloudId) {
+        // Fetch full VPS draft (with frame_data) and save to IndexedDB so Create.jsx can find it
+        const token = localStorage.getItem("fremio_token");
+        if (token) {
+          const res = await fetch(`${API_URL}/drafts/by-id/${draft.cloudId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const vps = data.draft;
+            let fd = {};
+            try { fd = JSON.parse(vps.frame_data || "{}"); } catch { /**/ }
+            // Save to IndexedDB with explicit userId = user.email
+            await draftStorage.saveDraft({
+              id: draft.id,
+              cloudId: vps.id,
+              shareId: vps.share_id,
+              title: vps.title || "Draft",
+              elements: fd.elements || [],
+              canvasWidth:  fd.canvasWidth  || 1080,
+              canvasHeight: fd.canvasHeight || 1920,
+              preview: vps.preview_url || null,
+              userId: user.email,  // explicit — prevents "guest" userId bug
+              createdAt: vps.created_at,
+              updatedAt: vps.updated_at,
+            });
+          }
+        }
+      }
 
-    // Set active draft in storage for Create page to load (use userStorage)
-    userStorage.setItem("activeDraftId", draft.id);
-    if (draft.signature) {
-      userStorage.setItem("activeDraftSignature", draft.signature);
-    } else {
+      userStorage.setItem("activeDraftId", draft.id);
       userStorage.removeItem("activeDraftSignature");
+      navigate("/create/editor", { state: { draftId: draft.id } });
+    } catch (err) {
+      console.error("❌ Failed to open draft", err);
+      if (isMountedRef.current) setErrorMessage("Gagal membuka draft. Coba lagi.");
+    } finally {
+      if (isMountedRef.current) setOpeningId(null);
     }
   };
 
-  const handleDeleteDraft = async (draftId) => {
-    if (!draftId) return;
-    const confirmDelete = window.confirm("Hapus draft ini?");
-    if (!confirmDelete) return;
+  // Show inline confirmation (replaces window.confirm for mobile compatibility)  
+  const handleDeleteRequest = (draftId) => {
+    setConfirmDeleteId(draftId);
+  };
 
-    if (isMountedRef.current) {
-      setDeletingId(draftId);
-    }
+  const handleDeleteCancel = () => {
+    setConfirmDeleteId(null);
+  };
+
+  const handleDeleteConfirm = async (draftId) => {
+    if (!draftId) return;
+    const draft = drafts.find((d) => d.id === draftId);
+    setConfirmDeleteId(null);
+    if (isMountedRef.current) setDeletingId(draftId);
     try {
-      await draftStorage.deleteDraft(draftId);
-      await reloadDrafts();
+      // PRIMARY: delete from VPS
+      const token = localStorage.getItem("fremio_token");
+      if (draft?.cloudId && token) {
+        await fetch(`${API_URL}/drafts/${draft.cloudId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+      // ALSO clean up local IndexedDB (best-effort)
+      await draftStorage.deleteDraft(draftId).catch(() => {});
+      // Remove from UI immediately
+      if (isMountedRef.current) setDrafts((prev) => prev.filter((d) => d.id !== draftId));
     } catch (error) {
       console.error("❌ Failed to delete draft", error);
-      if (isMountedRef.current) {
-        setErrorMessage("Draft tidak bisa dihapus. Coba lagi.");
-      }
+      if (isMountedRef.current) setErrorMessage("Draft tidak bisa dihapus. Coba lagi.");
+      // Re-fetch to show correct state
+      await reloadDrafts();
     } finally {
-      if (isMountedRef.current) {
-        setDeletingId(null);
-      }
+      if (isMountedRef.current) setDeletingId(null);
     }
   };
 
@@ -263,44 +352,89 @@ export default function Drafts() {
         </div>
         <div
           className="value"
-          style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}
+          style={{ display: "flex", gap: "8px", justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}
         >
-          <button
-            type="button"
-            onClick={() => handleUseDraft(draft)}
-            style={{
-              padding: "8px 16px",
-              background: "linear-gradient(to right, #e0b7a9, #c89585)",
-              color: "#fff",
-              border: "none",
-              borderRadius: "6px",
-              fontSize: "13px",
-              fontWeight: 600,
-              cursor: "pointer",
-              transition: "all 0.2s",
-            }}
-          >
-            Gunakan
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDeleteDraft(draft.id)}
-            disabled={deletingId === draft.id}
-            style={{
-              padding: "8px 16px",
-              background: "#fff",
-              color: "#dc2626",
-              border: "1px solid #fecaca",
-              borderRadius: "6px",
-              fontSize: "13px",
-              fontWeight: 600,
-              cursor: deletingId === draft.id ? "not-allowed" : "pointer",
-              opacity: deletingId === draft.id ? 0.6 : 1,
-              transition: "all 0.2s",
-            }}
-          >
-            {deletingId === draft.id ? "Menghapus..." : "Hapus"}
-          </button>
+          {confirmDeleteId === draft.id ? (
+            // Inline confirm — no window.confirm, works on all mobile browsers
+            <>
+              <span style={{ fontSize: "13px", color: "#dc2626", fontWeight: 600 }}>
+                Hapus draft ini?
+              </span>
+              <button
+                type="button"
+                onClick={() => handleDeleteConfirm(draft.id)}
+                style={{
+                  padding: "8px 16px",
+                  background: "#dc2626",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Ya, Hapus
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteCancel}
+                style={{
+                  padding: "8px 16px",
+                  background: "#fff",
+                  color: "#555",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Batal
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => handleUseDraft(draft)}
+                disabled={openingId === draft.id}
+                style={{
+                  padding: "8px 16px",
+                  background: "linear-gradient(to right, #e0b7a9, #c89585)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: openingId === draft.id ? "not-allowed" : "pointer",
+                  opacity: openingId === draft.id ? 0.6 : 1,
+                  transition: "all 0.2s",
+                }}
+              >
+                {openingId === draft.id ? "Membuka..." : "Gunakan"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteRequest(draft.id)}
+                disabled={deletingId === draft.id}
+                style={{
+                  padding: "8px 16px",
+                  background: "#fff",
+                  color: "#dc2626",
+                  border: "1px solid #fecaca",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: deletingId === draft.id ? "not-allowed" : "pointer",
+                  opacity: deletingId === draft.id ? 0.6 : 1,
+                  transition: "all 0.2s",
+                }}
+              >
+                {deletingId === draft.id ? "Menghapus..." : "Hapus"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     );

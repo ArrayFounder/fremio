@@ -184,7 +184,8 @@ router.get("/", optionalAuth, async (req, res) => {
         SELECT id, name, description, category, image_path, thumbnail_path, 
                slots, max_captures, is_premium, is_active, view_count, 
                download_count, created_by, created_at, updated_at,
-         layout, canvas_background, canvas_width, canvas_height, display_order, is_hidden, flow_type
+         layout, canvas_background, canvas_width, canvas_height, display_order, is_hidden, flow_type,
+         source, is_template
         FROM frames 
         WHERE is_active = true
       `;
@@ -433,6 +434,9 @@ router.get("/", optionalAuth, async (req, res) => {
         canvasBackground: frame.canvas_background || "#ffffff",
         canvasWidth: frame.canvas_width || 1080,
         canvasHeight: frame.canvas_height || 1920,
+        source: frame.source || null,
+        isTemplate: frame.is_template || false,
+        is_template: frame.is_template || false,
         isCustom: true,
       };
     });
@@ -453,6 +457,23 @@ router.get("/", optionalAuth, async (req, res) => {
       success: false,
       message: "Failed to get frames",
     });
+  }
+});
+
+/**
+ * POST /api/frames/:id/view
+ * Increment view/click count for a frame (lightweight, no auth required)
+ */
+router.post("/:id/view", async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE frames SET view_count = view_count + 1 WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Increment view_count error:", error);
+    res.status(500).json({ success: false });
   }
 });
 
@@ -1002,6 +1023,8 @@ router.put("/:id", verifyToken, requireAdmin, async (req, res) => {
       display_order,
       flowType,
       flow_type,
+      source,
+      is_template,
     } = req.body;
 
     const normalizeFlowType = (value) => {
@@ -1086,6 +1109,17 @@ router.put("/:id", verifyToken, requireAdmin, async (req, res) => {
       }
       updates.push(`flow_type = $${paramIndex++}`);
       values.push(nextFlowType);
+    }
+
+    if (source !== undefined) {
+      const safeSource = source === 'designer' ? 'designer' : 'fremio';
+      updates.push(`source = $${paramIndex++}`);
+      values.push(safeSource);
+    }
+
+    if (is_template !== undefined) {
+      updates.push(`is_template = $${paramIndex++}`);
+      values.push(!!is_template);
     }
 
     updates.push(`updated_at = NOW()`);

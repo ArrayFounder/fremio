@@ -62,6 +62,8 @@ const buildDraftSummary = (draft) => {
     thumbnail: draft.thumbnail,
     signature: draft.signature,
     aspectRatio: draft.aspectRatio,
+    cloudId: draft.cloudId ?? null,
+    shareId: draft.shareId ?? null,
   };
 };
 
@@ -115,21 +117,28 @@ export const loadDraftSummaries = async () => {
   const currentUserId = getCurrentUserId();
 
   // Fast path: local cache (instant)
+  // But invalidate if cache was built before cloudId was tracked (old format)
   const cached = getCachedDraftSummaries(currentUserId);
-  if (cached.length > 0) {
+  if (cached.length > 0 && Object.prototype.hasOwnProperty.call(cached[0], 'cloudId')) {
     return cached;
+  }
+  // If cache exists but is old format (missing cloudId), clear it so we rebuild below
+  if (cached.length > 0) {
+    setCachedDraftSummaries(currentUserId, []);
   }
 
   if (USE_INDEXEDDB) {
     try {
       if (DEBUG) console.log("📦 Loading draft summaries from IndexedDB for user:", currentUserId);
       const summaries = await indexedDBStorage.getDraftSummariesByUserId(currentUserId);
-      if (Array.isArray(summaries) && summaries.length > 0) {
+      // Only use IndexedDB summaries if they have the cloudId field (new format)
+      if (Array.isArray(summaries) && summaries.length > 0 && Object.prototype.hasOwnProperty.call(summaries[0], 'cloudId')) {
         setCachedDraftSummaries(currentUserId, summaries);
         return summaries;
       }
 
       // Backfill summaries from full drafts (one-time cost per browser)
+      // Also runs if IndexedDB summaries are in old format (missing cloudId)
       const userDrafts = await indexedDBStorage.getDraftsByUserId(currentUserId);
       const built = ensureArray(userDrafts)
         .map(buildDraftSummary)

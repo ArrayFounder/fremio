@@ -3,11 +3,13 @@ import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "../config/firebase.js";
+import { useTranslation } from "react-i18next";
 
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const { authenticateUser } = useAuth();
+  const { t } = useTranslation();
 
   const [formData, setFormData] = useState({
     email: "",
@@ -108,11 +110,7 @@ export default function Login() {
       };
 
       await sendPasswordResetEmail(auth, resetEmail, actionCodeSettings);
-      setResetSuccess(
-        "✅ Email reset password sudah dikirim!\n\n" +
-          "📧 Silakan cek email Anda (termasuk folder Spam/Junk).\n\n" +
-          "💡 Tips: Jika email masuk ke Spam, klik 'Bukan Spam' agar email selanjutnya masuk ke Inbox."
-      );
+      setResetSuccess(t("login.reset_sent"));
       setResetEmail("");
       setTimeout(() => {
         setShowForgotPassword(false);

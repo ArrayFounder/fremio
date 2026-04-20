@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   PlusSquare,
   Bell,
+  Wallet,
   LogOut,
   ChevronLeft,
   ChevronRight,
@@ -35,9 +36,17 @@ const C = {
 export default function DesignerLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  // Desktop: collapsed by default on all designer pages
-  const [collapsed, setCollapsed] = useState(true);
+  const isEditorPath = location.pathname.startsWith("/designer/editor");
+  // Desktop: collapsed by default on editor page, expanded elsewhere
+  const [collapsed, setCollapsed] = useState(isEditorPath);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Auto-collapse when navigating to editor
+  useEffect(() => {
+    if (location.pathname.startsWith("/designer/editor")) {
+      setCollapsed(true);
+    }
+  }, [location.pathname]);
 
   const user = (() => {
     try {
@@ -63,6 +72,7 @@ export default function DesignerLayout() {
     { path: "/designer/dashboard", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/designer/editor", icon: PlusSquare, label: "Buat Frame Baru" },
     { path: "/designer/notifications", icon: Bell, label: "Notifikasi" },
+    { path: "/designer/wallet", icon: Wallet, label: "Wallet" },
   ];
 
   const isActive = (path) =>
@@ -139,11 +149,17 @@ export default function DesignerLayout() {
 
       {/* User info */}
       {(!collapsed || isMobile) && (user.displayName || user.email) && (
-        <div
+        <Link
+          to="/designer/profile"
+          onClick={() => setMobileOpen(false)}
           style={{
             padding: "14px 18px",
             borderBottom: `1px solid ${C.border}`,
-            background: C.accentXLight,
+            background: location.pathname === "/designer/profile" ? C.accentLight : C.accentXLight,
+            textDecoration: "none",
+            display: "block",
+            cursor: "pointer",
+            transition: "background 0.15s",
           }}
         >
           <div
@@ -159,18 +175,28 @@ export default function DesignerLayout() {
               fontWeight: "700",
               fontSize: "15px",
               marginBottom: "8px",
+              overflow: "hidden",
+              flexShrink: 0,
             }}
           >
-            {(user.displayName || user.email || "D")[0].toUpperCase()}
+            {user.photoURL ? (
+              <img src={user.photoURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ) : (
+              (user.displayName || user.email || "D")[0].toUpperCase()
+            )}
           </div>
           <div style={{ fontSize: "13px", fontWeight: "600", color: C.text, lineHeight: 1.3 }}>
             {user.displayName || user.email?.split("@")[0]}
           </div>
           <div style={{ fontSize: "11px", color: C.textMuted, marginTop: "2px" }}>Designer</div>
-        </div>
+        </Link>
       )}
       {collapsed && !isMobile && (user.displayName || user.email) && (
-        <div style={{ padding: "14px 0", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "center" }}>
+        <Link
+          to="/designer/profile"
+          title="Profil"
+          style={{ padding: "14px 0", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "center", textDecoration: "none" }}
+        >
           <div
             style={{
               width: "32px",
@@ -183,11 +209,16 @@ export default function DesignerLayout() {
               color: "#fff",
               fontWeight: "700",
               fontSize: "13px",
+              overflow: "hidden",
             }}
           >
-            {(user.displayName || user.email || "D")[0].toUpperCase()}
+            {user.photoURL ? (
+              <img src={user.photoURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ) : (
+              (user.displayName || user.email || "D")[0].toUpperCase()
+            )}
           </div>
-        </div>
+        </Link>
       )}
 
       {/* Nav */}

@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, ChevronDown, Lock, Unlock } from "lucide-react";
+import { X, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, ChevronDown, ChevronLeft, ChevronRight, Lock, Unlock } from "lucide-react";
 import ColorPicker from "./ColorPicker.jsx";
 import { EDITOR_FONT_FAMILIES } from "../../config/editorFonts.js";
+import { THEMES, STICKERS, getIconUrl } from "../../config/stickerCatalog.js";
 import "./PropertiesPanel.css";
 
 const panelVariant = {
@@ -150,6 +151,10 @@ export default function PropertiesPanel({
   pendingPhotoTool = false,
   onConfirmAddPhoto = () => {},
   onCancelPhotoTool = () => {},
+  pendingPexelsTool = false,
+  onAddPexelsPhoto = () => {},
+  onCancelPexelsTool = () => {},
+  onAddOpenverseBackground = () => {},
 }) {
   // Local state for dimension inputs
   const [localWidth, setLocalWidth] = useState("");
@@ -157,6 +162,15 @@ export default function PropertiesPanel({
   
   // State to control which dropdown is open (only one at a time)
   const [openDropdown, setOpenDropdown] = useState(null);
+
+  // State to show full-panel font picker
+  const [showFontPicker, setShowFontPicker] = useState(false);
+
+  // Sticker catalog state
+  const [stickerQuery, setStickerQuery] = useState("");
+  const [stickerTheme, setStickerTheme] = useState("all");
+  const [shuffledStickers, setShuffledStickers] = useState([]);
+  const stickerInputRef = useRef(null);
 
   // Update local state when selectedElement changes
   useEffect(() => {
@@ -170,12 +184,27 @@ export default function PropertiesPanel({
   useEffect(() => {
     if (selectedElement?.type === 'background-photo') {
       setOpenDropdown('foto-background');
+    } else if (selectedElement?.type === 'text') {
+      setOpenDropdown('pengaturan-teks');
     } else if (selectedElement) {
       setOpenDropdown('dimensi');
     } else {
       setOpenDropdown('upload-background');
     }
+    setShowFontPicker(false);
   }, [selectedElement?.id]);
+
+  // Initialize sticker panel when it opens
+  useEffect(() => {
+    if (pendingPexelsTool) {
+      setStickerQuery("");
+      setStickerTheme("all");
+      setShuffledStickers([...STICKERS].sort(() => Math.random() - 0.5));
+      setTimeout(() => stickerInputRef.current?.focus(), 100);
+    }
+  }, [pendingPexelsTool]);
+
+
 
   const applyDimension = (dimension, value) => {
     if (!selectedElement) return;
@@ -234,6 +263,7 @@ export default function PropertiesPanel({
           <InputRow label="Lebar">
             <input
               type="number"
+              tabIndex="-1"
               className="rounded-2xl border-2 border-[#e0b7a9]/20 bg-white px-4 py-3 text-slate-700 shadow-[0_2px_8px_rgba(224,183,169,0.08)] transition-all focus:border-[#e0b7a9]/50 focus:shadow-[0_4px_12px_rgba(224,183,169,0.15)] focus:outline-none"
               value={localWidth}
               onChange={(e) => setLocalWidth(e.target.value)}
@@ -249,6 +279,7 @@ export default function PropertiesPanel({
           <InputRow label="Tinggi">
             <input
               type="number"
+              tabIndex="-1"
               className="rounded-2xl border-2 border-[#e0b7a9]/20 bg-white px-4 py-3 text-slate-700 shadow-[0_2px_8px_rgba(224,183,169,0.08)] transition-all focus:border-[#e0b7a9]/50 focus:shadow-[0_4px_12px_rgba(224,183,169,0.15)] focus:outline-none"
               value={localHeight}
               onChange={(e) => setLocalHeight(e.target.value)}
@@ -266,6 +297,52 @@ export default function PropertiesPanel({
     </>
   );
 
+  const renderFontPicker = () => (
+    <div className="flex h-full flex-col" style={{ gap: '12px' }}>
+      <div className="flex items-center gap-3 mb-1">
+        <button
+          type="button"
+          onClick={() => setShowFontPicker(false)}
+          className="flex items-center justify-center w-9 h-9 rounded-xl bg-[#fdf7f4] border border-[#e0b7a9]/30 text-[#4a302b] hover:bg-[#f7ede8] transition-all flex-shrink-0"
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <h3 className="text-sm font-bold text-[#4a302b]">Jenis Font</h3>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flex: 1, maxHeight: 'calc(100vh - 220px)' }}>
+        {EDITOR_FONT_FAMILIES.map((font) => {
+          const isSelected = (selectedElement?.data?.fontFamily ?? 'Inter') === font;
+          return (
+            <button
+              key={font}
+              type="button"
+              onClick={() => {
+                onUpdateElement(selectedElement.id, { data: { fontFamily: font } });
+              }}
+              style={{
+                width: '100%',
+                textAlign: 'center',
+                padding: '16px 20px',
+                borderRadius: '20px',
+                border: isSelected ? '1.5px solid #e0b7a9' : '1.5px solid #e8e8e8',
+                background: isSelected ? '#fdf7f4' : '#ffffff',
+                boxShadow: isSelected ? '0 4px 12px rgba(224,183,169,0.2)' : '0 1px 4px rgba(0,0,0,0.06)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                fontFamily: font,
+                fontSize: '22px',
+                color: '#1a1a1a',
+                display: 'block',
+              }}
+            >
+              {font}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   const renderTextControls = () => (
     <CollapsibleSection 
       title="Pengaturan Teks" 
@@ -275,6 +352,7 @@ export default function PropertiesPanel({
       <InputRow label="Isi Teks">
         <textarea
           rows={3}
+          tabIndex="-1"
           className="min-h-[100px] rounded-2xl border-2 border-[#e0b7a9]/20 bg-white px-4 py-3 text-sm text-slate-700 shadow-[0_2px_8px_rgba(224,183,169,0.08)] transition-all focus:border-[#e0b7a9]/50 focus:shadow-[0_4px_12px_rgba(224,183,169,0.15)] focus:outline-none"
           value={selectedElement.data?.text ?? ""}
           onChange={(event) =>
@@ -285,38 +363,43 @@ export default function PropertiesPanel({
         />
       </InputRow>
       <InputRow label="Font">
-        <select
-          className="w-full rounded-2xl border-2 border-[#e0b7a9]/35 bg-gradient-to-br from-white to-[#fdf7f4]/50 px-4 py-3 text-sm font-semibold text-[#4a302b] shadow-[0_4px_12px_rgba(224,183,169,0.15)] transition-all hover:border-[#d4a99a] hover:shadow-[0_6px_16px_rgba(224,183,169,0.25)] focus:border-[#d4a99a] focus:shadow-[0_6px_20px_rgba(224,183,169,0.3)] focus:outline-none cursor-pointer appearance-none bg-[url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23e0b7a9%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3e%3cpolyline points=%226 9 12 15 18 9%22%3e%3c/polyline%3e%3c/svg%3e')] bg-[length:20px] bg-[right_12px_center] bg-no-repeat pr-12"
-          value={selectedElement.data?.fontFamily ?? 'Inter'}
-          onChange={(event) =>
-            onUpdateElement(selectedElement.id, {
-              data: { fontFamily: event.target.value },
-            })
-          }
+        <button
+          type="button"
+          onClick={() => setShowFontPicker(true)}
+          className="w-full rounded-2xl border-2 border-[#e0b7a9]/35 bg-gradient-to-br from-white to-[#fdf7f4]/50 px-4 py-3 text-sm font-semibold text-[#4a302b] shadow-[0_4px_12px_rgba(224,183,169,0.15)] transition-all hover:border-[#d4a99a] hover:shadow-[0_6px_16px_rgba(224,183,169,0.25)] flex items-center justify-between"
+          style={{ fontFamily: selectedElement.data?.fontFamily ?? 'Inter' }}
         >
-          {EDITOR_FONT_FAMILIES.map((font) => (
-            <option key={font} value={font} style={{ fontFamily: font }}>
-              {font}
-            </option>
-          ))}
-        </select>
+          <span>{selectedElement.data?.fontFamily ?? 'Inter'}</span>
+          <ChevronRight size={16} className="text-[#e0b7a9] flex-shrink-0" />
+        </button>
       </InputRow>
       <div className="grid grid-cols-2 gap-3">
         <InputRow label="Ukuran">
           <input
+            type="number"
+            min={12}
+            max={140}
+            tabIndex="-1"
+            value={selectedElement.data?.fontSize ?? 24}
+            onChange={(event) => {
+              const val = Math.min(140, Math.max(12, Number(event.target.value)));
+              if (!isNaN(val)) onUpdateElement(selectedElement.id, { data: { fontSize: val } });
+            }}
+            className="w-full rounded-xl border-2 border-[#e0b7a9]/30 bg-white px-3 py-2 text-sm font-semibold text-[#4a302b] text-center focus:border-[#d4a99a] focus:outline-none mb-2"
+          />
+          <input
             type="range"
             min={12}
-            max={64}
+            max={140}
+            tabIndex="-1"
             value={selectedElement.data?.fontSize ?? 24}
             onChange={(event) =>
               onUpdateElement(selectedElement.id, {
                 data: { fontSize: Number(event.target.value) },
               })
             }
+            className="w-full"
           />
-          <div className="text-xs font-semibold text-slate-500">
-            {selectedElement.data?.fontSize ?? 24}px
-          </div>
         </InputRow>
         <InputRow label="Warna">
           <ColorPicker
@@ -422,6 +505,7 @@ export default function PropertiesPanel({
             type="range"
             min={0}
             max={120}
+            tabIndex="-1"
             value={selectedElement.data?.borderRadius ?? 24}
             onChange={(event) =>
               onUpdateElement(selectedElement.id, {
@@ -446,6 +530,7 @@ export default function PropertiesPanel({
           type="range"
           min={0}
           max={120}
+          tabIndex="-1"
           value={selectedElement.data?.borderRadius ?? 24}
           onChange={(event) =>
             onUpdateElement(selectedElement.id, {
@@ -478,6 +563,7 @@ export default function PropertiesPanel({
             type="range"
             min={0}
             max={maxWidth}
+            tabIndex="-1"
             value={currentWidth}
             onChange={(event) => {
               const nextWidth = Number(event.target.value);
@@ -519,6 +605,7 @@ export default function PropertiesPanel({
     >
       <InputRow label="Objek Fit">
         <select
+          tabIndex="-1"
           className="w-full rounded-2xl border-2 border-[#e0b7a9]/35 bg-gradient-to-br from-white to-[#fdf7f4]/50 px-4 py-3 text-sm font-semibold text-[#4a302b] shadow-[0_4px_12px_rgba(224,183,169,0.15)] transition-all hover:border-[#d4a99a] hover:shadow-[0_6px_16px_rgba(224,183,169,0.25)] focus:border-[#d4a99a] focus:shadow-[0_6px_20px_rgba(224,183,169,0.3)] focus:outline-none cursor-pointer appearance-none bg-[url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23e0b7a9%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3e%3cpolyline points=%226 9 12 15 18 9%22%3e%3c/polyline%3e%3c/svg%3e')] bg-[length:20px] bg-[right_12px_center] bg-no-repeat pr-12"
           value={selectedElement.data?.objectFit ?? "contain"}
           onChange={(event) =>
@@ -556,6 +643,7 @@ export default function PropertiesPanel({
     >
       <InputRow label="Mode Isi">
         <select
+          tabIndex="-1"
           className="w-full rounded-2xl border-2 border-[#e0b7a9]/35 bg-gradient-to-br from-white to-[#fdf7f4]/50 px-4 py-3 text-sm font-semibold text-[#4a302b] shadow-[0_4px_12px_rgba(224,183,169,0.15)] transition-all hover:border-[#d4a99a] hover:shadow-[0_6px_16px_rgba(224,183,169,0.25)] focus:border-[#d4a99a] focus:shadow-[0_6px_20px_rgba(224,183,169,0.3)] focus:outline-none cursor-pointer appearance-none bg-[url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23e0b7a9%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3e%3cpolyline points=%226 9 12 15 18 9%22%3e%3c/polyline%3e%3c/svg%3e')] bg-[length:20px] bg-[right_12px_center] bg-no-repeat pr-12"
           value={selectedElement.data?.objectFit ?? "contain"}
           onChange={(event) =>
@@ -622,6 +710,143 @@ export default function PropertiesPanel({
       </p>
     </motion.div>
   );
+
+  // Canvas Size Mode — must be checked BEFORE selectedElement === "background"
+  if (showCanvasSizeMode) {
+    return (
+      <motion.div
+        variants={panelVariant}
+        initial="hidden"
+        animate="visible"
+        className="flex h-full w-full flex-col gap-3"
+      >
+        {/* Ukuran Canvas Section */}
+        <CollapsibleSection 
+          title="Ukuran Canvas" 
+          isOpen={true}
+          onToggle={() => {}}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {[
+                { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱" },
+                { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "🎞️" },
+                { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️" },
+              ].map((preset) => {
+                const isSelected = canvasAspectRatio === preset.ratio;
+                return (
+                  <button
+                    key={preset.ratio}
+                    onClick={() => onCanvasAspectRatioChange?.(preset.ratio)}
+                    style={{
+                      padding: '14px 16px',
+                      borderRadius: '14px',
+                      border: isSelected 
+                        ? '2px solid #d4a99a' 
+                        : '1px solid rgba(224, 183, 169, 0.15)',
+                      background: isSelected 
+                        ? 'linear-gradient(135deg, #fdf7f4 0%, #f7ebe5 50%, #f1dfd6 100%)'
+                        : 'linear-gradient(135deg, #ffffff 0%, #fefcfb 100%)',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.25s ease',
+                      boxShadow: isSelected 
+                        ? '0 4px 16px rgba(212, 169, 154, 0.25), inset 0 1px 0 rgba(255,255,255,0.8)' 
+                        : '0 2px 8px rgba(224, 183, 169, 0.08)',
+                      transform: isSelected ? 'scale(1.02)' : 'scale(1)',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isSelected) {
+                        e.currentTarget.style.border = '1px solid rgba(224, 183, 169, 0.35)';
+                        e.currentTarget.style.background = 'linear-gradient(135deg, #fefcfb 0%, #fdf7f4 100%)';
+                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(224, 183, 169, 0.15)';
+                        e.currentTarget.style.transform = 'translateY(-1px)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isSelected) {
+                        e.currentTarget.style.border = '1px solid rgba(224, 183, 169, 0.15)';
+                        e.currentTarget.style.background = 'linear-gradient(135deg, #ffffff 0%, #fefcfb 100%)';
+                        e.currentTarget.style.boxShadow = '0 2px 8px rgba(224, 183, 169, 0.08)';
+                        e.currentTarget.style.transform = 'scale(1)';
+                      }
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ fontSize: '20px' }}>{preset.icon}</span>
+                        <div>
+                          <div style={{ 
+                            fontWeight: isSelected ? 700 : 600, 
+                            fontSize: '14px',
+                            color: isSelected ? '#4a302b' : '#5a3d38',
+                            marginBottom: '2px'
+                          }}>
+                            {preset.label}
+                          </div>
+                          <div style={{ 
+                            fontSize: '12px', 
+                            color: isSelected ? '#c89585' : '#9ca3af',
+                            fontWeight: 500
+                          }}>
+                            {preset.desc}
+                          </div>
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <div style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          background: 'linear-gradient(135deg, #e0b7a9 0%, #d4a99a 100%)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 2px 8px rgba(212, 169, 154, 0.4)'
+                        }}>
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                            <path d="M10 3L4.5 8.5L2 6" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            
+            {/* Current Ratio Display */}
+            <div style={{
+              background: 'linear-gradient(135deg, #fdf7f4 0%, #f7ebe5 50%, #f1dfd6 100%)',
+              borderRadius: '14px',
+              padding: '14px 16px',
+              border: '1px solid rgba(224, 183, 169, 0.2)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)'
+            }}>
+              <div style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                color: '#c89585',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                marginBottom: '4px'
+              }}>
+                Rasio Saat Ini
+              </div>
+              <div style={{
+                fontSize: '22px',
+                fontWeight: 800,
+                color: '#4a302b',
+                letterSpacing: '-0.02em'
+              }}>
+                {canvasAspectRatio}
+              </div>
+            </div>
+          </div>
+        </CollapsibleSection>
+      </motion.div>
+    );
+  }
 
   if (selectedElement === "background") {
     return (
@@ -864,8 +1089,7 @@ export default function PropertiesPanel({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {[
                 { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱" },
-                { label: "Instagram Feeds", ratio: "4:5", desc: "1080 × 1350", icon: "📷" },
-                { label: "Photostrip", ratio: "2:3", desc: "1200 × 1800", icon: "🎞️" },
+                { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "🎞️" },
                 { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️" },
               ].map((preset) => {
                 const isSelected = canvasAspectRatio === preset.ratio;
@@ -983,140 +1207,122 @@ export default function PropertiesPanel({
     );
   }
 
-  // Canvas Size Mode - Show when canvas size tool is active
-  if (showCanvasSizeMode) {
+  // Sticker Catalog Panel
+  if (pendingPexelsTool) {
+    const filteredStickers = shuffledStickers.filter(sticker => {
+      const matchesTheme = stickerTheme === 'all' || sticker.themes.includes(stickerTheme);
+      if (!matchesTheme) return false;
+      const q = stickerQuery.trim().toLowerCase();
+      if (!q) return true;
+      return sticker.id.replace(/-/g, ' ').includes(q) || sticker.kw.some(k => k.includes(q));
+    });
+
     return (
       <motion.div
         variants={panelVariant}
         initial="hidden"
         animate="visible"
-        className="flex h-full w-full flex-col gap-3"
+        className="flex h-full w-full flex-col"
+        style={{ gap: '10px' }}
       >
-        {/* Ukuran Canvas Section */}
-        <CollapsibleSection 
-          title="Ukuran Canvas" 
-          isOpen={true}
-          onToggle={() => {}}
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {[
-                { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱" },
-                { label: "Instagram Feeds", ratio: "4:5", desc: "1080 × 1350", icon: "📷" },
-                { label: "Photostrip", ratio: "2:3", desc: "1200 × 1800", icon: "🎞️" },
-                { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️" },
-              ].map((preset) => {
-                const isSelected = canvasAspectRatio === preset.ratio;
-                return (
-                  <button
-                    key={preset.ratio}
-                    onClick={() => onCanvasAspectRatioChange?.(preset.ratio)}
-                    style={{
-                      padding: '14px 16px',
-                      borderRadius: '14px',
-                      border: isSelected 
-                        ? '2px solid #d4a99a' 
-                        : '1px solid rgba(224, 183, 169, 0.15)',
-                      background: isSelected 
-                        ? 'linear-gradient(135deg, #fdf7f4 0%, #f7ebe5 50%, #f1dfd6 100%)'
-                        : 'linear-gradient(135deg, #ffffff 0%, #fefcfb 100%)',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      transition: 'all 0.25s ease',
-                      boxShadow: isSelected 
-                        ? '0 4px 16px rgba(212, 169, 154, 0.25), inset 0 1px 0 rgba(255,255,255,0.8)' 
-                        : '0 2px 8px rgba(224, 183, 169, 0.08)',
-                      transform: isSelected ? 'scale(1.02)' : 'scale(1)',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isSelected) {
-                        e.currentTarget.style.border = '1px solid rgba(224, 183, 169, 0.35)';
-                        e.currentTarget.style.background = 'linear-gradient(135deg, #fefcfb 0%, #fdf7f4 100%)';
-                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(224, 183, 169, 0.15)';
-                        e.currentTarget.style.transform = 'translateY(-1px)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isSelected) {
-                        e.currentTarget.style.border = '1px solid rgba(224, 183, 169, 0.15)';
-                        e.currentTarget.style.background = 'linear-gradient(135deg, #ffffff 0%, #fefcfb 100%)';
-                        e.currentTarget.style.boxShadow = '0 2px 8px rgba(224, 183, 169, 0.08)';
-                        e.currentTarget.style.transform = 'scale(1)';
-                      }
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontSize: '20px' }}>{preset.icon}</span>
-                        <div>
-                          <div style={{ 
-                            fontWeight: isSelected ? 700 : 600, 
-                            fontSize: '14px',
-                            color: isSelected ? '#4a302b' : '#5a3d38',
-                            marginBottom: '2px'
-                          }}>
-                            {preset.label}
-                          </div>
-                          <div style={{ 
-                            fontSize: '12px', 
-                            color: isSelected ? '#c89585' : '#9ca3af',
-                            fontWeight: 500
-                          }}>
-                            {preset.desc}
-                          </div>
-                        </div>
-                      </div>
-                      {isSelected && (
-                        <div style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '50%',
-                          background: 'linear-gradient(135deg, #e0b7a9 0%, #d4a99a 100%)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          boxShadow: '0 2px 8px rgba(212, 169, 154, 0.4)'
-                        }}>
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                            <path d="M10 3L4.5 8.5L2 6" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            
-            {/* Current Ratio Display */}
-            <div style={{
-              background: 'linear-gradient(135deg, #fdf7f4 0%, #f7ebe5 50%, #f1dfd6 100%)',
-              borderRadius: '14px',
-              padding: '14px 16px',
-              border: '1px solid rgba(224, 183, 169, 0.2)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)'
-            }}>
-              <div style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                color: '#c89585',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                marginBottom: '4px'
-              }}>
-                Rasio Saat Ini
-              </div>
-              <div style={{
-                fontSize: '22px',
-                fontWeight: 800,
-                color: '#4a302b',
-                letterSpacing: '-0.02em'
-              }}>
-                {canvasAspectRatio}
-              </div>
-            </div>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
+          <span style={{ fontSize: '15px', fontWeight: 800, color: '#4a302b' }}>Cari Stiker</span>
+          <button
+            type="button"
+            onClick={onCancelPexelsTool}
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '18px', lineHeight: 1, padding: '4px' }}
+            title="Tutup"
+          >✕</button>
+        </div>
+
+        {/* Search */}
+        <input
+          ref={stickerInputRef}
+          type="text"
+          value={stickerQuery}
+          onChange={(e) => setStickerQuery(e.target.value)}
+          placeholder="Cari stiker... (contoh: balon, hati, bunga)"
+          style={{
+            width: '100%', boxSizing: 'border-box',
+            padding: '10px 14px', fontSize: '13px',
+            border: '1.5px solid rgba(224, 183, 169, 0.4)',
+            borderRadius: '12px', outline: 'none',
+            color: '#374151', background: '#fff',
+            boxShadow: '0 2px 8px rgba(224, 183, 169, 0.08)',
+          }}
+          onFocus={(e) => { e.target.style.borderColor = '#d4a99a'; }}
+          onBlur={(e) => { e.target.style.borderColor = 'rgba(224, 183, 169, 0.4)'; }}
+        />
+
+        {/* Theme chips */}
+        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px', flexShrink: 0 }}>
+          {THEMES.map(theme => (
+            <button
+              key={theme.id}
+              type="button"
+              onClick={() => setStickerTheme(theme.id)}
+              style={{
+                padding: '5px 10px', borderRadius: '20px', flexShrink: 0,
+                border: stickerTheme === theme.id ? '2px solid #d4a99a' : '1.5px solid rgba(224,183,169,0.3)',
+                background: stickerTheme === theme.id ? 'linear-gradient(135deg, #f5e5df, #e8d4c9)' : '#fff',
+                fontSize: '12px', fontWeight: 600,
+                color: stickerTheme === theme.id ? '#4a302b' : '#6b7280',
+                cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              {theme.emoji} {theme.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Grid */}
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+          <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '8px' }}>
+            {filteredStickers.length} stiker — klik untuk menambahkan ke canvas
           </div>
-        </CollapsibleSection>
+          {filteredStickers.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '32px', color: '#9ca3af' }}>
+              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
+              <div style={{ fontSize: '13px' }}>Tidak ada stiker ditemukan</div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))', gap: '6px' }}>
+              {filteredStickers.map(sticker => (
+                <button
+                  key={sticker.id}
+                  type="button"
+                  onClick={() => onAddPexelsPhoto(getIconUrl(sticker.id))}
+                  title={sticker.id.replace(/-/g, ' ')}
+                  style={{
+                    aspectRatio: '1/1', border: '1.5px solid rgba(224,183,169,0.2)',
+                    borderRadius: '10px', padding: '4px', cursor: 'pointer',
+                    backgroundImage: 'linear-gradient(45deg, #f0f0f0 25%, transparent 25%), linear-gradient(-45deg, #f0f0f0 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #f0f0f0 75%), linear-gradient(-45deg, transparent 75%, #f0f0f0 75%)',
+                    backgroundSize: '12px 12px',
+                    backgroundPosition: '0 0, 0 6px, 6px -6px, -6px 0px',
+                    backgroundColor: '#ffffff',
+                    transition: 'transform 0.1s, border-color 0.1s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.borderColor = '#d4a99a'; e.currentTarget.style.backgroundImage = 'none'; e.currentTarget.style.background = 'linear-gradient(135deg, #fdf7f4, #f5e5df)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'rgba(224,183,169,0.2)'; e.currentTarget.style.background = ''; e.currentTarget.style.backgroundImage = 'linear-gradient(45deg, #f0f0f0 25%, transparent 25%), linear-gradient(-45deg, #f0f0f0 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #f0f0f0 75%), linear-gradient(-45deg, transparent 75%, #f0f0f0 75%)'; }}
+                >
+                  <img
+                    src={getIconUrl(sticker.id)}
+                    alt={sticker.id}
+                    loading="lazy"
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', pointerEvents: 'none' }}
+                    onError={(e) => { e.currentTarget.closest('button').style.display = 'none'; }}
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ textAlign: 'center', fontSize: '10px', color: '#9ca3af', paddingTop: '2px', flexShrink: 0 }}>
+          Fluent Emoji Flat · Microsoft · MIT License
+        </div>
       </motion.div>
     );
   }
@@ -1215,45 +1421,49 @@ export default function PropertiesPanel({
       animate="visible"
       className="flex h-full flex-col gap-3"
     >
-      {selectedElement.type === "text" && renderTextControls()}
-
-      {selectedElement.type === "shape" &&
+      {showFontPicker ? renderFontPicker() : (
         <>
-          {renderShapeTypeControls()}
-          {renderFillControls({ showBorderRadius: (selectedElement.data?.shapeType || 'rectangle') === 'rectangle' })}
-          {renderOutlineControls({ defaultColor: "#d9b9ab", maxWidth: 32 })}
-        </>}
+          {selectedElement.type === "text" && renderTextControls()}
 
-      {selectedElement.type === "photo" && (
-        <>
-          {renderBorderRadiusControls()}
+          {selectedElement.type === "shape" &&
+            <>
+              {renderShapeTypeControls()}
+              {renderFillControls({ showBorderRadius: (selectedElement.data?.shapeType || 'rectangle') === 'rectangle' })}
+              {renderOutlineControls({ defaultColor: "#d9b9ab", maxWidth: 32 })}
+            </>}
+
+          {selectedElement.type === "photo" && (
+            <>
+              {renderBorderRadiusControls()}
+            </>
+          )}
+
+          {selectedElement.type === "upload" && (
+            <>
+              {renderImageControls()}
+              {renderFillControls({ showBorderRadius: true })}
+              {renderOutlineControls({ defaultColor: "#f4f4f4", maxWidth: 24 })}
+            </>
+          )}
+
+          {selectedElement.type === "background-photo" &&
+            renderBackgroundPhotoControls()}
+
+          {/* Dimensi - dipindahkan ke bawah (tidak untuk teks) */}
+          {selectedElement.type !== "background-photo" && selectedElement.type !== "text" && renderSharedControls()}
+
+          <button
+            type="button"
+            onClick={() => {
+              onDeleteElement(selectedElement.id);
+              clearSelection();
+            }}
+            className="mt-auto flex items-center justify-center gap-3 rounded-2xl border-2 border-red-200/50 bg-gradient-to-r from-red-50 to-red-100/50 px-5 py-4 text-sm font-bold text-red-600 shadow-[0_4px_12px_rgba(239,68,68,0.15)] transition-all hover:border-red-300 hover:bg-gradient-to-r hover:from-red-100 hover:to-red-100 hover:shadow-[0_6px_16px_rgba(239,68,68,0.25)] active:scale-95"
+          >
+            <Trash2 size={18} strokeWidth={2.5} /> Hapus Element
+          </button>
         </>
       )}
-
-      {selectedElement.type === "upload" && (
-        <>
-          {renderImageControls()}
-          {renderFillControls({ showBorderRadius: true })}
-          {renderOutlineControls({ defaultColor: "#f4f4f4", maxWidth: 24 })}
-        </>
-      )}
-
-      {selectedElement.type === "background-photo" &&
-        renderBackgroundPhotoControls()}
-
-      {/* Dimensi - dipindahkan ke bawah */}
-      {selectedElement.type !== "background-photo" && renderSharedControls()}
-
-      <button
-        type="button"
-        onClick={() => {
-          onDeleteElement(selectedElement.id);
-          clearSelection();
-        }}
-        className="mt-auto flex items-center justify-center gap-3 rounded-2xl border-2 border-red-200/50 bg-gradient-to-r from-red-50 to-red-100/50 px-5 py-4 text-sm font-bold text-red-600 shadow-[0_4px_12px_rgba(239,68,68,0.15)] transition-all hover:border-red-300 hover:bg-gradient-to-r hover:from-red-100 hover:to-red-100 hover:shadow-[0_6px_16px_rgba(239,68,68,0.25)] active:scale-95"
-      >
-        <Trash2 size={18} strokeWidth={2.5} /> Hapus Element
-      </button>
     </motion.div>
   );
 }

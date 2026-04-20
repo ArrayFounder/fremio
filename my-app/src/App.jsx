@@ -1,4 +1,5 @@
-import { Routes, Route } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { Routes, Route, useLocation } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext.jsx";
 import { ToastProvider } from "./contexts/ToastContext.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
@@ -17,6 +18,7 @@ import FrameDebugSimple from "./pages/FrameDebugSimple.jsx";
 import FrameBuilder from "./pages/FrameBuilder.jsx";
 import Create from "./pages/Create.jsx";
 import CreateHub from "./pages/CreateHub.jsx";
+import Shares from "./pages/Shares.jsx";
 import SharedFrame from "./pages/SharedFrame.jsx";
 import SharedGroup from "./pages/SharedGroup.jsx";
 import NotFound from "./pages/NotFound.jsx";
@@ -41,6 +43,7 @@ import Affiliates from "./pages/Affiliates.jsx";
 
 // SEO Landing Pages
 import PhotoboxOnline from "./pages/PhotoboxOnline.jsx";
+import FremioStudio from "./pages/FremioStudio.jsx";
 
 // Admin Pages
 import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
@@ -57,6 +60,8 @@ import AdminPackages from "./pages/admin/AdminPackages.jsx";
 import AdminMaintenance from "./pages/admin/AdminMaintenance.jsx";
 import AdminSubscribers from "./pages/admin/AdminSubscribers.jsx";
 import AdminDesignerSubmissions from "./pages/admin/AdminDesignerSubmissions.jsx";
+import AdminDesignerWallet from "./pages/admin/AdminDesignerWallet.jsx";
+import AdminShareLinks from "./pages/admin/AdminShareLinks.jsx";
 
 // Designer Pages
 import DesignerLanding from "./pages/designer/DesignerLanding.jsx";
@@ -64,6 +69,11 @@ import DesignerLogin from "./pages/designer/DesignerLogin.jsx";
 import DesignerDashboard from "./pages/designer/DesignerDashboard.jsx";
 import DesignerEditor from "./pages/designer/DesignerEditor.jsx";
 import DesignerNotifications from "./pages/designer/DesignerNotifications.jsx";
+import DesignerWallet from "./pages/designer/DesignerWallet.jsx";
+import DesignerProfile from "./pages/designer/DesignerProfile.jsx";
+
+import VerifyCertificate from "./pages/VerifyCertificate.jsx";
+import { initAnalytics, trackPageView } from "./services/analyticsService.js";
 
 // Maintenance
 import Maintenance from "./pages/Maintenance.jsx";
@@ -74,11 +84,57 @@ import InAppBrowserDetector from "./components/InAppBrowserDetector.jsx";
 
 import "./App.css";
 
+function AnalyticsRouteTracker() {
+  const location = useLocation();
+  const lastTrackedPathRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const currentPath = `${location.pathname}${location.search}`;
+
+    if (!window.__fremioAnalyticsInitialized) {
+      window.__fremioAnalyticsInitialized = true;
+      lastTrackedPathRef.current = currentPath;
+      initAnalytics();
+      return;
+    }
+
+    if (!lastTrackedPathRef.current) {
+      lastTrackedPathRef.current = currentPath;
+    }
+  }, []);
+
+  useEffect(() => {
+    const currentPath = `${location.pathname}${location.search}`;
+
+    if (!window.__fremioAnalyticsInitialized) {
+      lastTrackedPathRef.current = currentPath;
+      return;
+    }
+
+    if (!lastTrackedPathRef.current) {
+      lastTrackedPathRef.current = currentPath;
+      return;
+    }
+
+    if (lastTrackedPathRef.current === currentPath) {
+      return;
+    }
+
+    lastTrackedPathRef.current = currentPath;
+    trackPageView(currentPath, document.title).catch(() => {});
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
         <MaintenanceGate>
+          <AnalyticsRouteTracker />
           {/* Detect and prompt if opened from Instagram/Facebook/TikTok */}
           <InAppBrowserDetector />
           <Routes>
@@ -113,6 +169,10 @@ export default function App() {
             <Route path="photobox" element={<PhotoboxOnline />} />
             <Route path="photobooth" element={<PhotoboxOnline />} />
             <Route path="frames" element={<Frames />} />
+            <Route path="shares" element={<Shares />} />
+
+            {/* Certificate verification — public, no auth required */}
+            <Route path="verify/:certId" element={<VerifyCertificate />} />
 
             {/* Pricing page (public) */}
             <Route path="pricing" element={<Pricing />} />
@@ -120,19 +180,11 @@ export default function App() {
             {/* Protected routes */}
             <Route
               path="create"
-              element={
-                <ProtectedRoute>
-                  <CreateHub />
-                </ProtectedRoute>
-              }
+              element={<CreateHub />}
             />
             <Route
               path="create/editor"
-              element={
-                <ProtectedRoute>
-                  <Create />
-                </ProtectedRoute>
-              }
+              element={<Create />}
             />
             <Route
               path="profile"
@@ -176,7 +228,6 @@ export default function App() {
             />
             <Route path="take-moment" element={<TakeMoment />} />
             <Route path="s/:shareId" element={<SharedFrame />} />
-            <Route path="g/:shareId" element={<SharedGroup />} />
             <Route path="editor" element={<Editor />} />
             <Route path="edit-photo" element={<EditPhoto />} />
             <Route
@@ -223,8 +274,17 @@ export default function App() {
             <Route path="subscribers" element={<AdminSubscribers />} />
             <Route path="maintenance" element={<AdminMaintenance />} />
             <Route path="designer-submissions" element={<AdminDesignerSubmissions />} />
+            <Route path="designer-wallets" element={<AdminDesignerWallet />} />
+            <Route path="share-links" element={<AdminShareLinks />} />
             <Route path="settings" element={<AdminSettings />} />
           </Route>
+
+          {/* Fremio Studio — standalone route, own navbar, hidden from public */}
+          <Route path="/studio" element={<FremioStudio />} />
+
+          {/* Shared Group — standalone, custom branded header, no Fremio nav */}
+          <Route path="/g/:shareId" element={<SharedGroup />} />
+          <Route path="/share/:shareId" element={<SharedGroup />} />
 
           {/* Designer Routes */}
           <Route path="/designer" element={<DesignerLanding />} />
@@ -240,6 +300,8 @@ export default function App() {
             <Route path="dashboard" element={<DesignerDashboard />} />
             <Route path="editor" element={<DesignerEditor />} />
             <Route path="notifications" element={<DesignerNotifications />} />
+            <Route path="wallet" element={<DesignerWallet />} />
+            <Route path="profile" element={<DesignerProfile />} />
           </Route>
 
           {/* Tablet Printer - Full Screen Route (No Layout) */}

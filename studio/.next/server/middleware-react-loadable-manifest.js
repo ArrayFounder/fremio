@@ -1,0 +1,1 @@
+self.__REACT_LOADABLE_MANIFEST='{"app/(booth)/b/[slug]/screens/FrameSelectScreen.tsx -> jsqr":{"id":69801,"files":["static/chunks/d0f5a89a.88baa57ade7f5e6b.js"]},"lib/frameEngine.ts -> qrcode":{"id":35819,"files":["static/chunks/819.6730592eb3ccf9c1.js"]}}';

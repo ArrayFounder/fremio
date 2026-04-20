@@ -156,9 +156,15 @@ export class FrameDataProvider {
         
         // Build designer elements: start with background-photo, then add photo slots
         const designerElements = [];
+
+        // Check if layout.elements already contains a background-photo.
+        // If so, we'll use that instead of synthesizing one from imagePath
+        // (the real background from layout.elements is always more accurate).
+        const layoutHasBgPhoto = Array.isArray(frameData.layout?.elements) &&
+          frameData.layout.elements.some((el) => el.type === "background-photo");
         
-        // Add background-photo element (the frame overlay image)
-        if (frameImageUrl) {
+        // Add background-photo element from imagePath ONLY when layout.elements has no bg
+        if (frameImageUrl && !layoutHasBgPhoto) {
           designerElements.push({
             id: "background-photo-1",
             type: "background-photo",
@@ -602,6 +608,15 @@ export class FrameDataProvider {
     userStorage.removeItem("activeDraftId");
     userStorage.removeItem("activeDraftSignature");
     console.log("🗑️ Frame data berhasil dihapus");
+  }
+
+  // Clear only in-memory state (currentFrame / currentConfig) without touching localStorage.
+  // Call this before navigating to TakeMoment with a freshly-activated user-created frame
+  // to prevent stale memory from a previous Frames-page selection taking priority.
+  clearMemory() {
+    this.currentFrame = null;
+    this.currentConfig = null;
+    console.log("🧹 [frameProvider] In-memory frame state cleared");
   }
 
   // Get all available frames metadata

@@ -25,14 +25,20 @@ export function ToastProvider({ children }) {
   }, []);
 
   const showToast = useCallback(
-    ({
-      type = "info",
-      title,
-      message,
-      duration = 4000,
-      action,
-      persistent = false,
-    }) => {
+    (typeOrOptions, messageArg) => {
+      // Support both showToast({type,message}) and showToast("success", "msg")
+      const opts =
+        typeof typeOrOptions === "string"
+          ? { type: typeOrOptions, message: messageArg }
+          : typeOrOptions || {};
+      const {
+        type = "info",
+        title,
+        message,
+        duration = 4000,
+        action,
+        persistent = false,
+      } = opts;
       const id = ++globalToastCounter;
 
       const toast = {

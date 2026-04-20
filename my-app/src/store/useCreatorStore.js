@@ -11,7 +11,7 @@ import {
   CAPTURED_OVERLAY_Z_OFFSET,
 } from '../constants/layers.js';
 
-const DEFAULT_BACKGROUND = '#f7f1ed';
+const DEFAULT_BACKGROUND = '#ffffff';
 
 const REFERENCE_CANVAS_WIDTH = 480;
 const REFERENCE_CANVAS_HEIGHT = 853;
@@ -165,6 +165,109 @@ const centerWithinCanvas = (width, height) => ({
 });
 
 const isCapturedPhotoOverlay = (element) => Boolean(element?.data?.__capturedOverlay);
+
+const PHOTO_DUPLICATE_TOLERANCE = 0.5;
+
+const areNumbersClose = (left, right, tolerance = PHOTO_DUPLICATE_TOLERANCE) => {
+  const leftValue = Number(left);
+  const rightValue = Number(right);
+
+  if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) {
+    return false;
+  }
+
+  return Math.abs(leftValue - rightValue) <= tolerance;
+};
+
+const getPhotoIndex = (element) => {
+  const value = element?.data?.photoIndex;
+  return Number.isFinite(value) ? value : null;
+};
+
+const getPhotoMetadataScore = (element) => {
+  if (!element || element.type !== 'photo') {
+    return 0;
+  }
+
+  let score = 0;
+
+  if (getPhotoIndex(element) !== null) {
+    score += 4;
+  }
+
+  if (element?.id) {
+    score += 2;
+  }
+
+  if (Number.isFinite(element?.data?.borderRadius)) {
+    score += 1;
+  }
+
+  return score;
+};
+
+const areEquivalentPhotoPlaceholders = (left, right) => {
+  if (left?.type !== 'photo' || right?.type !== 'photo') {
+    return false;
+  }
+
+  const leftPhotoIndex = getPhotoIndex(left);
+  const rightPhotoIndex = getPhotoIndex(right);
+
+  if (
+    leftPhotoIndex !== null &&
+    rightPhotoIndex !== null &&
+    leftPhotoIndex !== rightPhotoIndex
+  ) {
+    return false;
+  }
+
+  return (
+    areNumbersClose(left?.x, right?.x) &&
+    areNumbersClose(left?.y, right?.y) &&
+    areNumbersClose(left?.width, right?.width) &&
+    areNumbersClose(left?.height, right?.height) &&
+    areNumbersClose(left?.rotation ?? 0, right?.rotation ?? 0) &&
+    areNumbersClose(left?.data?.borderRadius ?? 0, right?.data?.borderRadius ?? 0)
+  );
+};
+
+const dedupePhotoPlaceholders = (elements = []) => {
+  if (!Array.isArray(elements) || elements.length <= 1) {
+    return elements;
+  }
+
+  const deduped = [];
+  let didMutate = false;
+
+  elements.forEach((element) => {
+    if (element?.type !== 'photo') {
+      deduped.push(element);
+      return;
+    }
+
+    const duplicateIndex = deduped.findIndex((candidate) =>
+      areEquivalentPhotoPlaceholders(candidate, element)
+    );
+
+    if (duplicateIndex === -1) {
+      deduped.push(element);
+      return;
+    }
+
+    didMutate = true;
+
+    const existing = deduped[duplicateIndex];
+    const existingScore = getPhotoMetadataScore(existing);
+    const nextScore = getPhotoMetadataScore(element);
+
+    if (nextScore > existingScore) {
+      deduped[duplicateIndex] = element;
+    }
+  });
+
+  return didMutate ? deduped : elements;
+};
 
 const deriveOverlayZIndex = (placeholder) => {
   const baseZ = Number.isFinite(placeholder?.zIndex)
@@ -456,11 +559,19 @@ const normalizeElementZOrder = (elements) => {
     }
 
     // Only elements WITHOUT z-index get assigned a new one
-    // Photo and upload elements default to PHOTO_SLOT_MIN_Z (0)
-    if (element.type === 'photo' || element.type === 'upload') {
+    // Photo slots default to PHOTO_SLOT_MIN_Z (0); upload/other elements start above NORMAL_ELEMENTS_MIN_Z
+    if (element.type === 'photo') {
       const PHOTO_SLOT_MIN_Z = 0;
       didMutate = true;
       return { ...element, zIndex: PHOTO_SLOT_MIN_Z };
+    }
+
+    if (element.type === 'upload') {
+      // Upload stickers/overlays must always be above photo slots
+      const nextZ = Math.max(runningMax + 1, NORMAL_ELEMENTS_MIN_Z + 100);
+      runningMax = nextZ;
+      didMutate = true;
+      return { ...element, zIndex: nextZ };
     }
 
     // Text/shapes without z-index get assigned incrementing values
@@ -474,7 +585,8 @@ const normalizeElementZOrder = (elements) => {
 };
 
 const syncCreatorElements = (elements) => {
-  const withSyncedOverlays = syncAllPhotoOverlays(elements);
+  const dedupedPhotos = dedupePhotoPlaceholders(elements);
+  const withSyncedOverlays = syncAllPhotoOverlays(dedupedPhotos);
   const withPhotoHierarchy = enforcePhotoPlaceholderLayering(withSyncedOverlays);
   const normalized = normalizeElementZOrder(withPhotoHierarchy);
   return syncAllPhotoOverlays(normalized);
@@ -979,10 +1091,24 @@ export const useCreatorStore = create((set, get) => ({
   removeElement: (id) => {
     set((state) => {
       const target = state.elements.find((el) => el.id === id);
-      let nextElements = state.elements.filter((el) => el.id !== id);
+      const duplicatePhotoIds =
+        target?.type === 'photo'
+          ? state.elements
+              .filter(
+                (element) =>
+                  element.id !== id &&
+                  areEquivalentPhotoPlaceholders(element, target)
+              )
+              .map((element) => element.id)
+          : [];
+
+      const idsToRemove = new Set([id, ...duplicatePhotoIds]);
+      let nextElements = state.elements.filter((el) => !idsToRemove.has(el.id));
 
       if (target?.type === 'photo') {
-        nextElements = removeCapturedOverlaysForPlaceholder(nextElements, id);
+        idsToRemove.forEach((photoId) => {
+          nextElements = removeCapturedOverlaysForPlaceholder(nextElements, photoId);
+        });
       }
 
       return {

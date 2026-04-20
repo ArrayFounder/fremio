@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle2, AlertTriangle, XCircle, Info, X } from "lucide-react";
+import { createPortal } from "react-dom";
 
 const TOAST_ICONS = {
   success: CheckCircle2,
@@ -169,13 +170,13 @@ export function Toast({ toast, onClose }) {
 }
 
 export function ToastContainer({ toasts, onClose }) {
-  return (
+  const content = (
     <div
       style={{
         position: "fixed",
         bottom: "24px",
         right: "24px",
-        zIndex: 10000,
+        zIndex: 14000,
         display: "flex",
         flexDirection: "column",
         gap: "12px",
@@ -191,18 +192,24 @@ export function ToastContainer({ toasts, onClose }) {
       </AnimatePresence>
     </div>
   );
+
+  if (typeof document === "undefined") {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 }
 
 // Mobile optimized position
 export function ToastContainerMobile({ toasts, onClose }) {
-  return (
+  const content = (
     <div
       style={{
         position: "fixed",
         bottom: "16px",
         left: "16px",
         right: "16px",
-        zIndex: 10000,
+        zIndex: 14000,
         display: "flex",
         flexDirection: "column",
         gap: "10px",
@@ -218,6 +225,12 @@ export function ToastContainerMobile({ toasts, onClose }) {
       </AnimatePresence>
     </div>
   );
+
+  if (typeof document === "undefined") {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 }
 
 export default ToastContainer;

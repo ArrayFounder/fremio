@@ -22,7 +22,7 @@ VPS_HOST="api.fremio.id"
 BACKEND_PATH=""
 
 echo -e "${BLUE}🔎 Detecting backend path from PM2...${NC}"
-BACKEND_PATH=$(ssh ${VPS_USER}@${VPS_HOST} 'node -e "const {execSync}=require(\"child_process\"); const list=JSON.parse(execSync(\"pm2 jlist\",{encoding:\"utf8\"})||\"[]\"); const p=list.find(x=>x.name===\"fremio-api\"); const cwd=p?.pm2_env?.pm_cwd||\"\"; console.log(cwd);"' | tr -d '\r')
+BACKEND_PATH=$(ssh ${VPS_USER}@${VPS_HOST} 'node -e "const {execSync}=require(\"child_process\"); const list=JSON.parse(execSync(\"pm2 jlist\",{encoding:\"utf8\"})||\"[]\"); const p=list.find(x=>x.name===\"fremio-backend\"||x.name===\"fremio-api\"); const cwd=p?.pm2_env?.pm_cwd||\"\"; console.log(cwd);"' | tr -d '\r')
 
 if [ -z "$BACKEND_PATH" ]; then
     echo -e "${YELLOW}⚠️  Could not detect PM2 cwd. Falling back to /var/www/fremio-backend${NC}"
@@ -53,13 +53,13 @@ echo ""
 echo -e "${BLUE}♻️  Restarting backend...${NC}"
 ssh ${VPS_USER}@${VPS_HOST} << 'ENDSSH'
         # Restart from the same folder PM2 runs in
-        BACKEND_CWD=$(node -e "const {execSync}=require('child_process'); const list=JSON.parse(execSync('pm2 jlist',{encoding:'utf8'})||'[]'); const p=list.find(x=>x.name==='fremio-api'); console.log(p?.pm2_env?.pm_cwd||'');")
+        BACKEND_CWD=$(node -e "const {execSync}=require('child_process'); const list=JSON.parse(execSync('pm2 jlist',{encoding:'utf8'})||'[]'); const p=list.find(x=>x.name==='fremio-backend'||x.name==='fremio-api'); console.log(p?.pm2_env?.pm_cwd||'');")
         if [ -z "$BACKEND_CWD" ]; then
             BACKEND_CWD="/var/www/fremio-backend"
         fi
         cd "$BACKEND_CWD"
     npm install --production --no-audit
-    pm2 restart fremio-api
+    pm2 restart fremio-backend 2>/dev/null || pm2 restart fremio-api 2>/dev/null || echo "PM2 restart failed"
     sleep 2
     pm2 status
 ENDSSH

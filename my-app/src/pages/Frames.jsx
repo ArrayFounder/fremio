@@ -279,23 +279,19 @@ function FrameCard({
         }}
       >
         {imageError || !getImageUrl(frame) ? (
-          frame?.layout?.elements?.length > 0 ? (
-            <LayoutPreview frame={frame} />
-          ) : (
-            <div
-              style={{
-                position: "absolute",
-                inset: "12px",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#9ca3af",
-              }}
-            >
-              <span style={{ fontSize: "12px" }}>Gambar tidak tersedia</span>
-            </div>
-          )
+          <div
+            style={{
+              position: "absolute",
+              inset: "12px",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#9ca3af",
+            }}
+          >
+            <span style={{ fontSize: "12px" }}>Gambar tidak tersedia</span>
+          </div>
         ) : (
           <img
             src={getImageUrl(frame)}
@@ -393,30 +389,18 @@ export default function Frames() {
   const [loading, setLoading] = useState(true);
   const [activeCanvasCategory, setActiveCanvasCategory] = useState("story");
 
-  // Promo countdown — resets every midnight (decorative urgency)
-  const getSecondsUntilMidnight = () => {
-    const now = new Date();
-    const midnight = new Date(now);
-    midnight.setHours(24, 0, 0, 0);
-    return Math.floor((midnight - now) / 1000);
-  };
-  const [promoSeconds, setPromoSeconds] = useState(getSecondsUntilMidnight);
-  useEffect(() => {
-    const t = setInterval(() => setPromoSeconds(getSecondsUntilMidnight()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  const headlineText =
-    activeCanvasCategory === "story"
-      ? "Kenangan yang pas untuk Story Instagram."
-      : activeCanvasCategory === "4r"
-      ? "Kenangan dalam ukuran foto klasik."
-      : "Kenangan kecil yang selalu dekat.";
+  const headlineText = activeCanvasCategory === "story"
+    ? "Kenangan yang pas untuk Story Instagram."
+    : activeCanvasCategory === "4r"
+    ? "Kenangan dalam ukuran foto klasik."
+    : "Kenangan kecil yang selalu dekat.";
 
   const sizeFilteredFrames = useMemo(() => {
     const show4R = activeCanvasCategory === "4r";
     const show2R = activeCanvasCategory === "2r";
     return (customFrames || []).filter((frame) => {
+      // Only show non-designer (Siap Pakai) frames
+      if (frame.source === "designer") return false;
       const is4RFrame = isPhotostripCanvas(frame);
       const is2RFrame = is2RCanvas(frame);
       if (show4R) return is4RFrame && !is2RFrame;
@@ -438,11 +422,15 @@ export default function Frames() {
       return acc;
     }, {});
 
-    // Sort frames within each category by displayOrder
+    // Sort frames within each category: free first (newest first), paid last (by displayOrder)
     Object.keys(groups).forEach((category) => {
-      groups[category].sort(
-        (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-      );
+      groups[category].sort((a, b) => {
+        const aPaid = !!(a.isPremium ?? a.is_premium);
+        const bPaid = !!(b.isPremium ?? b.is_premium);
+        if (aPaid !== bPaid) return aPaid ? 1 : -1;
+        if (!aPaid && !bPaid) return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+        return (a.displayOrder ?? 999) - (b.displayOrder ?? 999);
+      });
     });
 
     // Get category order based on minimum displayOrder of frames in each category
@@ -497,10 +485,14 @@ export default function Frames() {
           return !isHidden;
         });
 
-        // Sort by displayOrder globally first
-        visibleFrames.sort(
-          (a, b) => (a.displayOrder || 999) - (b.displayOrder || 999)
-        );
+        // Sort: free first (newest first), paid last (by displayOrder)
+        visibleFrames.sort((a, b) => {
+          const aPaid = !!(a.isPremium ?? a.is_premium);
+          const bPaid = !!(b.isPremium ?? b.is_premium);
+          if (aPaid !== bPaid) return aPaid ? 1 : -1;
+          if (!aPaid && !bPaid) return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          return (a.displayOrder || 999) - (b.displayOrder || 999);
+        });
 
         if (DEBUG_FRAMES) {
           if (visibleFrames.length > 0) {
@@ -657,6 +649,26 @@ export default function Frames() {
 
     await trackFrameView(frame.id, null, frame.name);
 
+    // Increment click count in DB (fire-and-forget)
+    const _API = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
+    fetch(`${_API}/frames/${frame.id}/view`, { method: "POST" }).catch(() => {});
+
+    // Designer frames → open in editor (same as template click in /create)
+    if (frame.source === "designer") {
+      navigate("/create/editor", {
+        state: {
+          prefillFromBaseFrame: true,
+          baseFrame: {
+            ...frame,
+            canvasWidth: frame.canvasWidth ?? frame.canvas_width,
+            canvasHeight: frame.canvasHeight ?? frame.canvas_height,
+            canvasBackground: frame.canvasBackground ?? frame.canvas_background,
+          },
+        },
+      });
+      return;
+    }
+
     const flowTypeRaw = frame?.flowType ?? frame?.flow_type;
     const flowType = String(flowTypeRaw || "fixed").toLowerCase().trim();
 
@@ -703,7 +715,7 @@ export default function Frames() {
         }
         @media (min-width: 768px) {
           .frames-grid {
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(6, 1fr);
             gap: 20px;
           }
           .frames-grid .frame-card {
@@ -727,80 +739,43 @@ export default function Frames() {
             padding: "0 16px",
           }}
         >
-          {/* PROMO MEMBERSHIP BANNER */}
-          {!hasAccess && (() => {
-            const h = String(Math.floor(promoSeconds / 3600)).padStart(2, '0');
-            const m = String(Math.floor((promoSeconds % 3600) / 60)).padStart(2, '0');
-            const s = String(promoSeconds % 60).padStart(2, '0');
-            return (
-              <div style={{
-                background: 'linear-gradient(135deg, #c89585 0%, #a06050 100%)',
-                borderRadius: '16px',
-                padding: '16px 20px',
-                marginBottom: '28px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: '14px',
-                boxShadow: '0 4px 20px rgba(200,149,133,0.4)',
-              }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '16px' }}>🔥</span>
-                    <span style={{ color: '#fff', fontWeight: '700', fontSize: '14px' }}>
-                      Harga promo hari ini — akses semua frame premium!
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: '12px' }}>Berakhir dalam</span>
-                    {[h, m, s].map((val, i) => (
-                      <span key={i} style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <span style={{
-                          background: 'rgba(0,0,0,0.25)',
-                          borderRadius: '6px',
-                          padding: '2px 8px',
-                          color: '#fff',
-                          fontWeight: '800',
-                          fontSize: '16px',
-                          fontVariantNumeric: 'tabular-nums',
-                          fontFeatureSettings: '"tnum"',
-                          lineHeight: 1.4,
-                          minWidth: '32px',
-                          textAlign: 'center',
-                        }}>{val}</span>
-                        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '9px', marginTop: '2px' }}>
-                          {['JAM','MIN','DET'][i]}
-                        </span>
-                      </span>
-                    )).reduce((acc, el, i) => [
-                      ...acc,
-                      el,
-                      i < 2 ? <span key={`sep${i}`} style={{ color: '#fff', fontWeight: '800', fontSize: '16px', marginBottom: '10px', opacity: 0.7 }}>:</span> : null
-                    ], [])}
-                  </div>
-                </div>
-                <button
-                  onClick={() => navigate('/pricing')}
-                  style={{
-                    background: '#fff',
-                    color: '#b07060',
-                    border: 'none',
-                    borderRadius: '10px',
-                    padding: '10px 22px',
-                    fontWeight: '800',
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-                    flexShrink: 0,
-                  }}
-                >
-                  Jadi Member Sekarang →
-                </button>
-              </div>
-            );
-          })()}
+          {/* PROMO BANNER */}
+          <div style={{
+            background: 'linear-gradient(135deg, #c89585 0%, #b07060 100%)',
+            borderRadius: '16px',
+            padding: '18px 24px',
+            marginBottom: '28px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '14px',
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ fontSize: '15px', fontWeight: '800', color: '#fff' }}>🎨 Akses Semua Frames & Templates Premium</span>
+              <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.85)' }}>Jadi member dan akses penuh ke ratusan frame dan template eksklusif — mulai Rp 5.000.</span>
+            </div>
+            <button
+              onClick={() => navigate('/pricing')}
+              style={{
+                background: '#fff',
+                color: '#c89585',
+                border: 'none',
+                borderRadius: '10px',
+                padding: '10px 22px',
+                fontWeight: '800',
+                fontSize: '13px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+                flexShrink: 0,
+                marginLeft: 'auto',
+                alignSelf: 'flex-end',
+              }}
+            >
+              Lihat Paket →
+            </button>
+          </div>
           {/* Canvas Size Category Tabs */}
           <div
             style={{
@@ -958,7 +933,7 @@ export default function Frames() {
                     {category} ({frames.length})
                   </h3>
 
-                  {/* Frames Grid - Responsive: 3 cols mobile, 5 cols desktop */}
+                  {/* Frames Grid - Responsive: 3 cols mobile, 6 cols desktop */}
                   <div className="frames-grid">
                     {frames.map((frame) => {
                       const isPremium = !!(
@@ -987,29 +962,9 @@ export default function Frames() {
                 </div>
               ))
             : !loading && (
-                <div
-                  style={{
-                    padding: "48px",
-                    background:
-                      "linear-gradient(to bottom right, #f8fafc, #f1f5f9)",
-                    border: "2px solid #e2e8f0",
-                    borderRadius: "16px",
-                    textAlign: "center",
-                  }}
-                >
-                  <h3
-                    style={{
-                      fontSize: "24px",
-                      fontWeight: "bold",
-                      color: "#1e293b",
-                      marginBottom: "12px",
-                    }}
-                  >
-                    Belum Ada Frame Tersedia
-                  </h3>
-                  <p style={{ color: "#64748b" }}>
-                    Frame sedang dalam proses penambahan oleh admin.
-                  </p>
+                <div style={{ padding: "48px", background: "linear-gradient(to bottom right, #f8fafc, #f1f5f9)", border: "2px solid #e2e8f0", borderRadius: "16px", textAlign: "center" }}>
+                  <h3 style={{ fontSize: "24px", fontWeight: "bold", color: "#1e293b", marginBottom: "12px" }}>Belum Ada Frame Tersedia</h3>
+                  <p style={{ color: "#64748b" }}>Frame sedang dalam proses penambahan oleh admin.</p>
                 </div>
               )}
         </div>

@@ -2,6 +2,7 @@ import {
   forwardRef,
   memo,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -64,6 +65,18 @@ const DEFAULT_RESIZE_CONFIG = {
   top: true,
   right: true,
   bottom: true,
+  left: true,
+  topRight: true,
+  bottomRight: true,
+  bottomLeft: true,
+  topLeft: true,
+};
+
+// Text elements: no top/bottom middle handles (they only reflow text, not scale font)
+const TEXT_RESIZE_CONFIG = {
+  top: false,
+  right: true,
+  bottom: false,
   left: true,
   topRight: true,
   bottomRight: true,
@@ -193,6 +206,40 @@ const buildResizeHandleStyles = (scale) => {
   };
 };
 
+// Measures the natural wrapped height of a text element at given font/width
+const TEXT_BOX_PADDING = 8;
+const measureTextHeight = (text, fontFamily, fontSize, containerWidth) => {
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = `500 ${fontSize}px "${fontFamily}"`;
+    const availableWidth = Math.max(10, containerWidth - TEXT_BOX_PADDING * 2);
+    const lineHeight = fontSize * 1.3;
+    const paragraphs = (text || '').split('\n');
+    let totalLines = 0;
+    for (const para of paragraphs) {
+      if (!para.trim()) { totalLines++; continue; }
+      const words = para.split(/\s+/);
+      let lineWidth = 0;
+      let lines = 1;
+      for (const word of words) {
+        const w = ctx.measureText(word).width;
+        const sw = ctx.measureText(' ').width;
+        if (lineWidth > 0 && lineWidth + sw + w > availableWidth) {
+          lines++;
+          lineWidth = w;
+        } else {
+          lineWidth = lineWidth > 0 ? lineWidth + sw + w : w;
+        }
+      }
+      totalLines += lines;
+    }
+    return Math.ceil(totalLines * lineHeight) + TEXT_BOX_PADDING * 2;
+  } catch {
+    return null;
+  }
+};
+
 const getElementStyle = (element, isSelected) => {
   switch (element.type) {
     case "text":
@@ -212,9 +259,12 @@ const getElementStyle = (element, isSelected) => {
             : element.data?.align === "right"
             ? "flex-end"
             : "center",
-        padding: "12px 18px",
+        padding: "8px 8px",
         borderRadius: "18px",
         backgroundColor: isSelected ? "rgba(255,255,255,0.65)" : "transparent",
+        cursor: "pointer",
+        userSelect: "none",
+        WebkitUserSelect: "none",
       };
     case "shape": {
       const strokeWidth = Number(element.data?.strokeWidth ?? 0);
@@ -269,8 +319,6 @@ const getElementStyle = (element, isSelected) => {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        transform: rotationDegrees ? `rotate(${rotationDegrees}deg)` : undefined,
-        transformOrigin: "50% 50%",
       };
     }
     default:
@@ -316,6 +364,45 @@ const resetRndPosition = (meta) => {
   }
 };
 
+// Applies element.rotation to the Rnd DOM node after react-draggable sets its
+// transform: translate(x, y), so we override it with translate(x,y) rotate(θ)
+// keeping the rotation centre at the element's visual centre.
+function useRndRotation(rndRef, rotation, x, y, width, height) {
+  useLayoutEffect(() => {
+    if (!rndRef.current) return;
+    const instance = rndRef.current;
+    // react-rnd stores the nodeRef it passes to react-draggable as
+    // instance.resizableElement.current — this is the actual DOM node on which
+    // react-draggable sets transform: translate(x, y).
+    // (instance.resizable is the re-resizable component instance, whose DOM
+    //  node is .resizable, not .element — so we must NOT use .resizable.element)
+    const dom = instance?.resizableElement?.current;
+    if (!dom) return;
+    const deg = Number.isFinite(rotation) ? rotation : 0;
+    dom.style.transformOrigin = `${width / 2}px ${height / 2}px`;
+    if (deg) {
+      dom.style.transform = `translate(${x}px, ${y}px) rotate(${deg}deg)`;
+    }
+    // when deg === 0, let react-draggable's own translate() be the sole transform
+  });
+}
+
+// Wrapper around Rnd that applies rotation correctly around the element's
+// visual centre by overriding react-draggable's transform after each render.
+const RotatableRnd = forwardRef(function RotatableRnd(
+  { rotation, elementX, elementY, elementWidth, elementHeight, rndRef: externalRef, ...rndProps },
+  _ref
+) {
+  const localRef = useRef(null);
+  const combinedRef = (instance) => {
+    localRef.current = instance;
+    if (typeof externalRef === "function") externalRef(instance);
+    else if (externalRef) externalRef.current = instance;
+  };
+  useRndRotation(localRef, rotation, elementX, elementY, elementWidth, elementHeight);
+  return <Rnd ref={combinedRef} {...rndProps} />;
+});
+
 const ElementContent = forwardRef(
   (
     {
@@ -358,6 +445,7 @@ const ElementContent = forwardRef(
             onChange={(e) => onTextChange(e.target.value)}
             onBlur={onTextBlur}
             autoFocus
+            className="canvas-text-editor"
             style={{
               ...style,
               resize: "none",
@@ -366,6 +454,12 @@ const ElementContent = forwardRef(
               background: "rgba(255,255,255,0.95)",
               cursor: "text",
               overflow: "hidden",
+              // Reset flex/selection props that don't apply to textarea and break iOS
+              display: "block",
+              alignItems: undefined,
+              justifyContent: undefined,
+              userSelect: "text",
+              WebkitUserSelect: "text",
             }}
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
@@ -576,8 +670,6 @@ const ElementContent = forwardRef(
             // Override: Set gradient background directly (not from getElementStyle)
             background: "linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)",
             position: "relative",
-            transform: rotationDegrees ? `rotate(${rotationDegrees}deg)` : undefined,
-            transformOrigin: "50% 50%",
           }}
           className="h-full w-full creator-photo-placeholder"
           data-photo-placeholder="true"
@@ -680,7 +772,12 @@ function CanvasPreviewComponent({
   const [editingTextId, setEditingTextId] = useState(null);
   const [editingTextValue, setEditingTextValue] = useState("");
   const [showBackgroundToolbar, setShowBackgroundToolbar] = useState(false);
+  const [hoveredElementId, setHoveredElementId] = useState(null);
   const textInputRef = useRef(null);
+  const editingTextIdRef = useRef(null);
+  const editingTextValueRef = useRef("");
+  // Lock previewScale while editing text to prevent iOS keyboard resize from shrinking canvas
+  const lockedScaleRef = useRef(null);
   const backgroundTouchRef = useRef(null);
   const interactionMetaRef = useRef(new Map());
   const backgroundInteractionRef = useRef(createInteractionState());
@@ -694,6 +791,8 @@ function CanvasPreviewComponent({
     rafId: null,
     pendingRotation: null,
     suppressClickUntil: 0,
+    // 1 when button is on the right (default), -1 when on the left
+    directionSign: 1,
   });
 
   // Vertical drag sensitivity: drag down => clockwise (positive degrees)
@@ -726,7 +825,7 @@ function CanvasPreviewComponent({
   );
 
   const beginRotateGesture = useCallback(
-    (event, element) => {
+    (event, element, placeLeft = false) => {
       if (!element?.id) {
         return;
       }
@@ -740,6 +839,8 @@ function CanvasPreviewComponent({
       meta.startY = Number(event.clientY) || 0;
       meta.startRotation = Number(element.rotation) || 0;
       meta.pendingRotation = null;
+      // When button is on the left, drag-down should rotate counter-clockwise
+      meta.directionSign = placeLeft ? -1 : 1;
 
       try {
         event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -763,8 +864,9 @@ function CanvasPreviewComponent({
       event.stopPropagation();
 
       const dy = (Number(event.clientY) || 0) - (Number(meta.startY) || 0);
+      const sign = meta.directionSign ?? 1;
       const nextRotation =
-        (Number(meta.startRotation) || 0) + dy * ROTATE_DEG_PER_PX;
+        (Number(meta.startRotation) || 0) + dy * sign * ROTATE_DEG_PER_PX;
       scheduleRotationUpdate(meta.elementId, nextRotation);
     },
     [scheduleRotationUpdate]
@@ -837,6 +939,10 @@ function CanvasPreviewComponent({
   // Handler untuk memulai edit teks (double-click)
   const handleDoubleClickText = (element) => {
     if (element.type === "text") {
+      // Lock scale SYNCHRONOUSLY before React re-renders and before iOS keyboard fires resize
+      lockedScaleRef.current = previewScale;
+      editingTextIdRef.current = element.id;
+      editingTextValueRef.current = element.data?.text ?? "";
       setEditingTextId(element.id);
       setEditingTextValue(element.data?.text ?? "");
       // Focus textarea after state update
@@ -851,27 +957,50 @@ function CanvasPreviewComponent({
 
   // Handler untuk mengubah teks
   const handleTextChange = useCallback((value) => {
+    editingTextValueRef.current = value;
     setEditingTextValue(value);
   }, []);
 
-  // Handler untuk selesai edit (blur)
-  const handleTextBlur = useCallback(() => {
-    if (editingTextId) {
-      onUpdate(editingTextId, {
-        data: { text: editingTextValue },
-      });
+  const finishTextEditing = useCallback(
+    ({ commit } = { commit: true }) => {
+      const currentEditingId = editingTextIdRef.current;
+
+      if (commit && currentEditingId) {
+        onUpdate(currentEditingId, {
+          data: { text: editingTextValueRef.current },
+        });
+      }
+
+      lockedScaleRef.current = null;
+      editingTextIdRef.current = null;
+      editingTextValueRef.current = "";
       setEditingTextId(null);
       setEditingTextValue("");
-    }
-  }, [editingTextId, editingTextValue, onUpdate]);
+    },
+    [onUpdate]
+  );
+
+  // Handler untuk selesai edit (blur)
+  const handleTextBlur = useCallback(() => {
+    finishTextEditing({ commit: true });
+  }, [finishTextEditing]);
+
+  const stopToolbarInteraction = useCallback((event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  const runToolbarAction = useCallback((event, action) => {
+    stopToolbarInteraction(event);
+    action?.();
+  }, [stopToolbarInteraction]);
 
   // Reset editing saat element berubah
   useEffect(() => {
     if (selectedElementId !== editingTextId) {
-      setEditingTextId(null);
-      setEditingTextValue("");
+      finishTextEditing({ commit: true });
     }
-  }, [selectedElementId, editingTextId]);
+  }, [selectedElementId, editingTextId, finishTextEditing]);
 
   const clearHoldTimer = (meta) => {
     if (meta?.holdTimer) {
@@ -991,12 +1120,22 @@ function CanvasPreviewComponent({
     return scale;
   }, [maxWidth, maxHeight, canvasDimensions.width, canvasDimensions.height]);
 
+  // Freeze the visual render scale while a text element is being edited,
+  // so that iOS keyboard resize does not cause the canvas to shrink mid-edit.
+  // Scale is locked SYNCHRONOUSLY in handleDoubleClickText (before any re-render)
+  // and released in handleTextBlur / selection-change effect.
+
+  const effectiveScale = lockedScaleRef.current !== null
+    ? lockedScaleRef.current
+    : previewScale;
+
   const scaledSize = useMemo(
     () => ({
-      width: canvasDimensions.width * previewScale,
-      height: canvasDimensions.height * previewScale,
+      width: canvasDimensions.width * effectiveScale,
+      height: canvasDimensions.height * effectiveScale,
     }),
-    [canvasDimensions.width, canvasDimensions.height, previewScale]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canvasDimensions.width, canvasDimensions.height, effectiveScale]
   );
 
   const clampBackgroundPosition = (width, height, x, y) => {
@@ -1417,7 +1556,7 @@ function CanvasPreviewComponent({
               background: isBackgroundLocked
                 ? "linear-gradient(135deg, #f7a998 0%, #e89985 100%)"
                 : "#ffffff",
-              border: "2px solid #f7a998",
+              border: "3px solid #f7a998",
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
@@ -1452,7 +1591,7 @@ function CanvasPreviewComponent({
               height: "48px",
               borderRadius: "12px",
               background: isBackgroundLocked ? "#e5e7eb" : "#ffffff",
-              border: "2px solid #f7a998",
+              border: "3px solid #f7a998",
               cursor: isBackgroundLocked ? "not-allowed" : "pointer",
               display: "flex",
               alignItems: "center",
@@ -1497,7 +1636,7 @@ function CanvasPreviewComponent({
           overflow: "hidden",
           touchAction: "none",
           userSelect: "none",
-          transform: `translate(-50%, -50%) scale(${previewScale})`,
+          transform: `translate(-50%, -50%) scale(${effectiveScale})`,
           transformOrigin: "50% 50%",
         }}
         onPointerDown={handleBackgroundPointerDown}
@@ -1524,6 +1663,7 @@ function CanvasPreviewComponent({
           });
           const isSelected = selectedElementId === element.id;
           const isBackgroundPhoto = element.type === "background-photo";
+          const isHovered = hoveredElementId === element.id;
           const backgroundAspectRatio = isBackgroundPhoto
             ? Number(element.data?.imageAspectRatio) > 0
               ? Number(element.data?.imageAspectRatio)
@@ -1590,13 +1730,20 @@ function CanvasPreviewComponent({
             }
 
             const targetClassList = event.target?.classList;
+            // Use closest() so we catch: our react-rnd-handle divs, the
+            // creator-resize-wrapper, AND re-resizable's own internal wrapper
+            // which sits BETWEEN them and is the actual event.target when
+            // clicking the visible handle dot/bar.
             const isHandle = Boolean(
-              targetClassList &&
+              event.target?.closest?.(
+                '[class*="react-rnd-handle"], [class*="creator-resize-wrapper"]'
+              ) ||
+              (targetClassList &&
                 Array.from(targetClassList).some(
                   (className) =>
                     className.includes("react-rnd-handle") ||
                     className.includes("creator-resize-wrapper")
-                )
+                ))
             );
 
             if (isHandle) {
@@ -1605,6 +1752,10 @@ function CanvasPreviewComponent({
             }
 
             event.stopPropagation();
+            // NOTE: do NOT call event.preventDefault() here — re-resizable uses
+            // mousedown/mousemove/mouseup events, and preventDefault() on pointerdown
+            // blocks the browser from synthesizing those mouse compatibility events,
+            // which breaks resize handle dragging entirely.
 
             // Background photo touch events handled by native listener
             // Skip React event handlers to avoid conflicts
@@ -1678,8 +1829,11 @@ function CanvasPreviewComponent({
               return;
             }
 
-            const deltaX = (clientX - meta.dragStartClientX) / previewScale;
-            const deltaY = (clientY - meta.dragStartClientY) / previewScale;
+            const rawDeltaX = (clientX - meta.dragStartClientX) / previewScale;
+            const rawDeltaY = (clientY - meta.dragStartClientY) / previewScale;
+
+            const deltaX = rawDeltaX;
+            const deltaY = rawDeltaY;
 
             const totalDelta = Math.abs(deltaX) + Math.abs(deltaY);
             meta.totalDistance = totalDelta;
@@ -1820,7 +1974,26 @@ function CanvasPreviewComponent({
             });
           };
 
-          const applyResizeUpdate = (ref, position) => {
+          // Compute text font size from both width and height ratios
+          const computeTextFontSize = (nextWidth, nextHeight) => {
+            // Left/right side handles: only reflow text, don't scale font
+            if (meta.resizeDirection === 'left' || meta.resizeDirection === 'right') return null;
+            if (
+              !Number.isFinite(meta.resizeStartWidth) ||
+              meta.resizeStartWidth <= 0 ||
+              !Number.isFinite(meta.resizeStartFontSize)
+            ) return null;
+            const widthRatio = nextWidth / meta.resizeStartWidth;
+            // Height ratio is linear: height 2x → font 2x (natural vertical feel)
+            // Width ratio is quadratic: width 2x → font 4x (aggressive horizontal scaling)
+            const heightScale = Number.isFinite(meta.resizeStartHeight) && meta.resizeStartHeight > 0
+              ? nextHeight / meta.resizeStartHeight
+              : 1;
+            const scale = Math.max(Math.pow(widthRatio, 2), heightScale);
+            return Math.round(Math.min(140, Math.max(8, meta.resizeStartFontSize * scale)));
+          };
+
+          const applyResizeUpdate = (ref, position, finalizeTextHeight = false) => {
             if (!ref) {
               return;
             }
@@ -1830,18 +2003,48 @@ function CanvasPreviewComponent({
               return;
             }
 
-            // All elements update freely
-            onUpdate(element.id, {
+            const update = {
               width: nextWidth,
               height: nextHeight,
               x: position.x,
               y: position.y,
-            });
+            };
+
+            if (element.type === 'text') {
+              const newFontSize = computeTextFontSize(nextWidth, nextHeight);
+              if (newFontSize !== null) {
+                update.data = { fontSize: newFontSize };
+                if (finalizeTextHeight) {
+                  // On release only: auto-fit height to measured text content
+                  const measuredHeight = measureTextHeight(
+                    element.data?.text || '',
+                    element.data?.fontFamily || 'Inter',
+                    newFontSize,
+                    nextWidth
+                  );
+                  if (measuredHeight) {
+                    update.height = measuredHeight;
+                  }
+                } else {
+                  // During drag: do NOT override height — react-rnd tracks it internally.
+                  // Overriding mid-drag resets rnd's baseline causing a huge jump on release.
+                  return onUpdate(element.id, { data: { fontSize: newFontSize } });
+                }
+              }
+            }
+
+            onUpdate(element.id, update);
           };
 
           return (
-            <Rnd
+            <RotatableRnd
               key={element.id}
+              rotation={element.rotation}
+              elementX={element.x}
+              elementY={element.y}
+              elementWidth={element.width}
+              elementHeight={element.height}
+              rndRef={(instance) => { meta.rndRef = instance; }}
               data-element-id={element.id}
               data-element-type={element.type}
               data-element-width={element.width}
@@ -1852,14 +2055,16 @@ function CanvasPreviewComponent({
               size={{ width: element.width, height: element.height }}
               position={{ x: element.x, y: element.y }}
               bounds="parent"
-              scale={previewScale}
+              scale={effectiveScale}
               enableResizing={
-                isSelected && !isBackgroundPhoto ? DEFAULT_RESIZE_CONFIG : false
+                isSelected && !isBackgroundPhoto
+                  ? (element.type === 'text' ? TEXT_RESIZE_CONFIG : DEFAULT_RESIZE_CONFIG)
+                  : false
               }
               disableDragging={true}
               resizeHandleStyles={
                 isSelected && !isBackgroundPhoto
-                  ? buildResizeHandleStyles(previewScale)
+                  ? buildResizeHandleStyles(effectiveScale)
                   : undefined
               }
               resizeHandleWrapperClassName="creator-resize-wrapper"
@@ -1887,7 +2092,7 @@ function CanvasPreviewComponent({
                   <div className="react-rnd-handle react-rnd-handle-topLeft" data-export-ignore="true" />
                 ),
               }}
-              onResizeStart={(e) => {
+              onResizeStart={(e, dir) => {
                 if (e?.nativeEvent) {
                   e.nativeEvent.stopPropagation();
                   e.nativeEvent.preventDefault();
@@ -1895,12 +2100,18 @@ function CanvasPreviewComponent({
                 e?.stopPropagation?.();
                 e?.preventDefault?.();
                 meta.isResizing = true;
+                meta.resizeDirection = dir;
                 meta.pointerActive = false;
                 meta.hadDrag = false;
                 meta.isDragging = false;
                 meta.hadHold = false;
                 meta.didTriggerTap = false;
                 clearHoldTimer(meta);
+                if (element.type === 'text') {
+                  meta.resizeStartWidth = element.width;
+                  meta.resizeStartHeight = element.height;
+                  meta.resizeStartFontSize = element.data?.fontSize ?? 24;
+                }
                 if (!isSelected) {
                   onSelect(element.id, { interaction: "resize-start" });
                 }
@@ -1909,8 +2120,8 @@ function CanvasPreviewComponent({
                 if (!meta.isResizing) {
                   return;
                 }
-                applyResizeUpdate(ref, position);
-                // No real-time resize during drag - just visual feedback
+                // false = don't override height during drag (prevents snap jump on release)
+                applyResizeUpdate(ref, position, false);
               }}
               onDragStart={(event) => {
                 if (meta.isResizing) {
@@ -1987,7 +2198,8 @@ function CanvasPreviewComponent({
                   return;
                 }
 
-                applyResizeUpdate(ref, position);
+                // true = apply measured height on release for text elements
+                applyResizeUpdate(ref, position, true);
 
                 // Resize upload image from original for quality (only once when done)
                 if (isUploadElement && onResizeUpload) {
@@ -2026,9 +2238,6 @@ function CanvasPreviewComponent({
                 borderRadius: elementBorderRadius,
                 backgroundColor: "transparent",
                 touchAction: isBackgroundPhoto ? "none" : "auto",
-                // Background photo should NOT block clicks on elements above it when not selected
-                // When selected, allow interaction for dragging/resizing
-                // Upload/overlay elements have higher zIndex and should always be clickable
                 pointerEvents: isCapturedOverlayElement 
                   ? "none" 
                   : (isBackgroundPhoto && !isSelected) 
@@ -2036,9 +2245,6 @@ function CanvasPreviewComponent({
                     : "auto",
               }}
               className={elementClassName}
-              ref={(instance) => {
-                meta.rndRef = instance;
-              }}
               onPointerDown={isBackgroundPhoto ? undefined : handlePointerDown}
               onTouchStart={isBackgroundPhoto ? undefined : handlePointerDown}
               onPointerMove={isBackgroundPhoto ? undefined : handlePointerMove}
@@ -2057,23 +2263,51 @@ function CanvasPreviewComponent({
                 handleDoubleClickText(element);
               }}
               onWheel={handleWheel}
+              onMouseEnter={() => setHoveredElementId(element.id)}
+              onMouseLeave={() => setHoveredElementId(null)}
             >
+              {isHovered && !isSelected && (
+                <div
+                  data-export-ignore="true"
+                  style={{
+                    position: 'absolute',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    border: '10px solid #e0b7a9',
+                    borderRadius: 0,
+                    pointerEvents: 'none',
+                    zIndex: -1,
+                  }}
+                />
+              )}
+              {isSelected && !isBackgroundPhoto && (
+                <div
+                  data-export-ignore="true"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    border: "10px solid #f7a998",
+                    borderRadius: 0,
+                    pointerEvents: "none",
+                    zIndex: -1,
+                  }}
+                />
+              )}
+              <ElementContent
+                element={element}
+                isSelected={isSelected}
+                isEditing={editingTextId === element.id}
+                editingValue={editingTextValue}
+                onTextChange={handleTextChange}
+                onTextBlur={handleTextBlur}
+                textInputRef={textInputRef}
+                ref={isBackgroundPhoto ? backgroundTouchRef : null}
+              />
+              {/* Toolbar: outside rotating wrapper so buttons stay upright */}
               {isSelected && !isBackgroundPhoto && (
                 <>
-                  <div
-                    data-export-ignore="true"
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      border: "2px solid #f7a998",
-                      borderRadius: 0,
-                      pointerEvents: "none",
-                      zIndex: -1,
-                    }}
-                  />
                   <div
                     data-export-ignore="true"
                     style={{
@@ -2098,10 +2332,10 @@ function CanvasPreviewComponent({
                     }}
                   >
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleLock?.(element.id);
-                      }}
+                      onPointerDown={stopToolbarInteraction}
+                      onMouseDown={stopToolbarInteraction}
+                      onTouchStart={stopToolbarInteraction}
+                      onClick={(e) => runToolbarAction(e, () => onToggleLock?.(element.id))}
                       style={{
                         width: "64px",
                         height: "64px",
@@ -2135,16 +2369,16 @@ function CanvasPreviewComponent({
                       />
                     </button>
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDuplicate?.(element.id);
-                      }}
+                      onPointerDown={stopToolbarInteraction}
+                      onMouseDown={stopToolbarInteraction}
+                      onTouchStart={stopToolbarInteraction}
+                      onClick={(e) => runToolbarAction(e, () => onDuplicate?.(element.id))}
                       style={{
                         width: "64px",
                         height: "64px",
                         borderRadius: "14px",
                         background: "#ffffff",
-                        border: "2px solid #f7a998",
+                        border: "3px solid #f7a998",
                         cursor: "pointer",
                         display: "flex",
                         alignItems: "center",
@@ -2167,16 +2401,16 @@ function CanvasPreviewComponent({
                     </button>
 
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRemove?.(element.id);
-                      }}
+                      onPointerDown={stopToolbarInteraction}
+                      onMouseDown={stopToolbarInteraction}
+                      onTouchStart={stopToolbarInteraction}
+                      onClick={(e) => runToolbarAction(e, () => onRemove?.(element.id))}
                       style={{
                         width: "64px",
                         height: "64px",
                         borderRadius: "14px",
                         background: "#ffffff",
-                        border: "2px solid #f7a998",
+                        border: "3px solid #f7a998",
                         cursor: "pointer",
                         display: "flex",
                         alignItems: "center",
@@ -2199,7 +2433,7 @@ function CanvasPreviewComponent({
                     </button>
                   </div>
 
-                  {element.type === "photo" && (() => {
+                  {!isBackgroundPhoto && (() => {
                     const wouldOverflowRight =
                       Number(element.x) + Number(element.width) + ROTATE_BUTTON_OFFSET >
                       CANVAS_WIDTH;
@@ -2224,7 +2458,7 @@ function CanvasPreviewComponent({
                           height: `${ROTATE_BUTTON_SIZE}px`,
                           borderRadius: "14px",
                           background: "#ffffff",
-                          border: "2px solid #f7a998",
+                          border: "3px solid #f7a998",
                           cursor: "pointer",
                           display: "flex",
                           alignItems: "center",
@@ -2242,7 +2476,7 @@ function CanvasPreviewComponent({
                         onMouseLeave={(e) =>
                           (e.currentTarget.style.transform = "translateY(-50%)")
                         }
-                        onPointerDown={(e) => beginRotateGesture(e, element)}
+                        onPointerDown={(e) => beginRotateGesture(e, element, placeLeft)}
                         onPointerMove={updateRotateGesture}
                         onPointerUp={endRotateGesture}
                         onPointerCancel={endRotateGesture}
@@ -2271,24 +2505,14 @@ function CanvasPreviewComponent({
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    border: "2px solid #f7a998",
+                    border: "3px solid #f7a998",
                     borderRadius: 0,
                     pointerEvents: "none",
                     zIndex: -1,
                   }}
                 />
               )}
-              <ElementContent
-                element={element}
-                isSelected={isSelected}
-                isEditing={editingTextId === element.id}
-                editingValue={editingTextValue}
-                onTextChange={handleTextChange}
-                onTextBlur={handleTextBlur}
-                textInputRef={textInputRef}
-                ref={isBackgroundPhoto ? backgroundTouchRef : null}
-              />
-            </Rnd>
+            </RotatableRnd>
           );
         })}
       </Motion.div>

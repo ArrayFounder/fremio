@@ -6,6 +6,8 @@ import { verifyToken, requireAdmin } from "../middleware/auth.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import multer from "multer";
+import paymentDB from "../services/paymentDatabaseService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,11 +29,33 @@ const pool = new pg.Pool({
 
 // Ensure designer tables exist
 (async () => {
+  // Add is_template and source columns to frames if not present
   try {
+    await pool.query(`ALTER TABLE frames ADD COLUMN IF NOT EXISTS is_template BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE frames ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'fremio'`);
+    // Back-fill existing frames as fremio source
+    await pool.query(`UPDATE frames SET source = 'fremio' WHERE source IS NULL`);
+  } catch (_) {}
+
+  try {
+    // Migrate designer_feedback if designer_id column is INTEGER (must be UUID)
+    try {
+      const colType = await pool.query(`
+        SELECT data_type FROM information_schema.columns
+        WHERE table_name = 'designer_feedback' AND column_name = 'designer_id'
+      `);
+      if (colType.rows.length > 0 && colType.rows[0].data_type === 'integer') {
+        await pool.query(`DROP TABLE IF EXISTS designer_feedback`);
+        console.log("🔄 Dropped old designer_feedback (wrong INTEGER schema), recreating with UUID");
+      }
+    } catch (migErr) {
+      // ignore migration check
+    }
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS designer_feedback (
         id SERIAL PRIMARY KEY,
-        designer_id INTEGER NOT NULL,
+        designer_id UUID NOT NULL,
         type VARCHAR(50) NOT NULL DEFAULT 'general',
         message TEXT NOT NULL,
         is_read BOOLEAN DEFAULT false,
@@ -45,7 +69,7 @@ const pool = new pg.Pool({
     await pool.query(`
       CREATE TABLE IF NOT EXISTS designer_agreements (
         id SERIAL PRIMARY KEY,
-        designer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        designer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         tos_version VARCHAR(20) NOT NULL DEFAULT '1.0',
         agreed_at TIMESTAMPTZ DEFAULT NOW(),
         ip_address VARCHAR(64),
@@ -87,36 +111,65 @@ router.post("/register", async (req, res) => {
     }
 
     const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
+      "SELECT * FROM users WHERE email = $1",
       [email.toLowerCase()]
     );
+
+    let user;
+    let upgraded = false;
+
     if (existing.rows.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: "Email sudah terdaftar",
-      });
+      const existingUser = existing.rows[0];
+
+      // If already a designer or admin, block registration
+      if (existingUser.role === "designer" || existingUser.role === "admin") {
+        return res.status(409).json({
+          success: false,
+          message: "Email sudah terdaftar sebagai designer",
+        });
+      }
+
+      // Existing user account — verify password before upgrading to designer
+      const validPassword = await bcrypt.compare(password, existingUser.password_hash);
+      if (!validPassword) {
+        return res.status(401).json({
+          success: false,
+          message: "Password salah. Gunakan password akun user kamu yang sudah terdaftar.",
+        });
+      }
+
+      // Upgrade user role to designer
+      const upgradeResult = await pool.query(
+        `UPDATE users SET role = 'designer', updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, email, display_name, role`,
+        [existingUser.id]
+      );
+      user = upgradeResult.rows[0];
+      upgraded = true;
+      console.log(`⬆️  User upgraded to designer: ${user.email}`);
+    } else {
+      // New account — create as designer
+      const passwordHash = await bcrypt.hash(password, 12);
+      const result = await pool.query(
+        `INSERT INTO users (email, password_hash, display_name, role, is_active)
+         VALUES ($1, $2, $3, 'designer', true)
+         RETURNING id, email, display_name, role`,
+        [
+          email.toLowerCase(),
+          passwordHash,
+          displayName || email.split("@")[0],
+        ]
+      );
+      user = result.rows[0];
     }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    const result = await pool.query(
-      `INSERT INTO users (email, password_hash, display_name, role, is_active)
-       VALUES ($1, $2, $3, 'designer', true)
-       RETURNING id, email, display_name, role`,
-      [
-        email.toLowerCase(),
-        passwordHash,
-        displayName || email.split("@")[0],
-      ]
-    );
-
-    const user = result.rows[0];
 
     // Record TOS agreement as proof
     try {
       await pool.query(`
         CREATE TABLE IF NOT EXISTS designer_agreements (
           id SERIAL PRIMARY KEY,
-          designer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          designer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
           tos_version VARCHAR(20) NOT NULL DEFAULT '1.0',
           agreed_at TIMESTAMPTZ DEFAULT NOW(),
           ip_address VARCHAR(64),
@@ -145,11 +198,18 @@ router.post("/register", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    console.log(`✅ New designer registered: ${user.email}`);
+    if (upgraded) {
+      console.log(`⬆️  Designer upgrade complete: ${user.email}`);
+    } else {
+      console.log(`✅ New designer registered: ${user.email}`);
+    }
 
     res.status(201).json({
       success: true,
-      message: "Registrasi berhasil. Selamat datang di Fremio Designer!",
+      upgraded,
+      message: upgraded
+        ? "Akun kamu berhasil diupgrade menjadi designer. Selamat datang di Fremio Designer!"
+        : "Registrasi berhasil. Selamat datang di Fremio Designer!",
       user: {
         id: user.id,
         email: user.email,
@@ -485,7 +545,8 @@ router.get("/admin/submissions", verifyToken, requireAdmin, async (req, res) => 
         ds.id, ds.frame_name, ds.frame_description, ds.status,
         ds.admin_notes, ds.submitted_at, ds.reviewed_at, ds.thumbnail_data_url,
         u.email AS designer_email, u.display_name AS designer_name,
-        f.id AS published_frame_id, f.name AS published_frame_name
+        f.id AS published_frame_id, f.name AS published_frame_name,
+        f.is_active AS frame_is_active
       FROM designer_submissions ds
       JOIN users u ON u.id = ds.designer_id
       LEFT JOIN frames f ON f.id = ds.published_frame_id
@@ -539,7 +600,7 @@ router.patch(
       await client.query("BEGIN");
 
       const { id } = req.params;
-      const { action, adminNotes, category } = req.body;
+      const { action, adminNotes, category, source } = req.body;
 
       if (!["approved", "rejected"].includes(action)) {
         await client.query("ROLLBACK");
@@ -586,7 +647,7 @@ router.patch(
         // 1. Normalized photo slots (already in the correct format for frameProvider)
         const normalizedSlots = Array.isArray(frameData.slots) ? frameData.slots : [];
 
-        // 2. Reconstruct photo elements (type:"photo") from slots so they appear in layout.elements
+        // 2. Reconstruct photo elements (type:"photo") from slots — always zIndex 0
         const photoElements = normalizedSlots.map((slot, idx) => ({
           id: slot.id || `photo_${idx}`,
           type: "photo",
@@ -594,7 +655,7 @@ router.patch(
           y: (slot.top || 0) * canvasH,
           width: (slot.width || 0) * canvasW,
           height: (slot.height || 0) * canvasH,
-          zIndex: slot.zIndex || (idx + 1),
+          zIndex: 0,
           rotation: slot.rotation || 0,
           data: {
             label: "Foto",
@@ -605,15 +666,24 @@ router.patch(
         }));
 
         // 3. Non-photo overlay elements — strip any accidental base64
+        //    CRITICAL: ensure ALL overlay elements have zIndex >= 100 (always above photo slots at 0)
         const overlayElements = (frameData.elements || []).map((el) => {
+          let fixed = el;
           if (
             (el.type === "background-photo" || el.type === "upload") &&
             typeof el.data?.image === "string" &&
             el.data.image.startsWith("data:")
           ) {
-            return { ...el, data: { ...el.data, image: null } };
+            fixed = { ...el, data: { ...el.data, image: null } };
           }
-          return el;
+          // Guarantee non-background overlays sit above photo slots
+          if (fixed.type !== "background-photo") {
+            const safeZ = typeof fixed.zIndex === "number" && fixed.zIndex >= 100
+              ? fixed.zIndex
+              : Math.max((fixed.zIndex || 0) + 100, 100);
+            fixed = { ...fixed, zIndex: safeZ };
+          }
+          return fixed;
         });
 
         // 4. Background image element from frameData.backgroundImage
@@ -628,11 +698,12 @@ router.patch(
             }
           : null;
 
-        // 5. Build layout: bg → overlay elements → photo slots
+        // 5. Build layout: bg → photo slots → overlay elements
+        //    CRITICAL: overlays LAST in DOM so they render on top even with equal z-indices
         const layoutElements = [
           ...(bgEl ? [bgEl] : []),
-          ...overlayElements,
           ...photoElements,
+          ...overlayElements,
         ];
 
         const layout = {
@@ -643,7 +714,9 @@ router.patch(
           aspectRatio: frameData.aspectRatio || frameData.canvasAspectRatio || "9:16",
         };
 
-        const frameCategory = category || "Fremio Series";
+        const frameCategory = category || null;
+        const frameSource = source === 'fremio' ? 'fremio' : 'designer';
+        const isTemplate = frameSource === 'designer'; // By Designer = template, By Fremio = siap pakai
 
         // Save thumbnail_data_url (base64) as a real image file on disk
         let savedImagePath = "";
@@ -670,8 +743,9 @@ router.patch(
                SET name=$1, description=$2, category=$3, image_path=$4,
                    layout=$5, canvas_background=$6, canvas_width=$7, canvas_height=$8,
                    slots=$9, max_captures=$10, is_active=true,
+                   source=$11, is_template=$12,
                    updated_at=NOW()
-             WHERE id=$11`,
+             WHERE id=$13`,
             [
               submission.frame_name,
               submission.frame_description || "",
@@ -683,6 +757,8 @@ router.patch(
               canvasH,
               JSON.stringify(normalizedSlots),
               normalizedSlots.length || 1,
+              frameSource,
+              isTemplate,
               existingFrameId,
             ]
           );
@@ -695,8 +771,8 @@ router.patch(
             `INSERT INTO frames
                (id, name, description, category, image_path, layout, canvas_background,
                 canvas_width, canvas_height, slots, max_captures, is_premium,
-                is_active, is_hidden, created_by)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                is_active, is_hidden, source, is_template, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
              RETURNING id`,
             [
               frameId,
@@ -713,6 +789,8 @@ router.patch(
               false,
               true,
               false,
+              frameSource,
+              isTemplate,
               req.user.userId,
             ]
           );
@@ -775,6 +853,209 @@ router.patch(
 );
 
 // ─────────────────────────────────────────────────
+// ADMIN: Takedown a published designer frame (hides from public, keeps data)
+// ─────────────────────────────────────────────────
+router.patch(
+  "/admin/submissions/:id/takedown",
+  verifyToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const subResult = await pool.query(
+        `SELECT published_frame_id, frame_name FROM designer_submissions WHERE id = $1`,
+        [id]
+      );
+      if (subResult.rows.length === 0)
+        return res.status(404).json({ success: false, message: "Submission tidak ditemukan" });
+      const { published_frame_id, frame_name } = subResult.rows[0];
+      if (!published_frame_id)
+        return res.status(400).json({ success: false, message: "Submission belum dipublikasikan" });
+      await pool.query(`UPDATE frames SET is_active = false, updated_at = NOW() WHERE id = $1`, [published_frame_id]);
+      console.log(`🚫 Takedown frame ${published_frame_id} ("${frame_name}")`);
+      res.json({ success: true, message: `Frame "${frame_name}" berhasil di-takedown` });
+    } catch (error) {
+      console.error("Takedown error:", error);
+      res.status(500).json({ success: false, message: "Gagal melakukan takedown" });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────
+// ADMIN: Restore a taken-down designer frame
+// ─────────────────────────────────────────────────
+router.patch(
+  "/admin/submissions/:id/restore",
+  verifyToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const subResult = await pool.query(
+        `SELECT published_frame_id, frame_name FROM designer_submissions WHERE id = $1`,
+        [id]
+      );
+      if (subResult.rows.length === 0)
+        return res.status(404).json({ success: false, message: "Submission tidak ditemukan" });
+      const { published_frame_id, frame_name } = subResult.rows[0];
+      if (!published_frame_id)
+        return res.status(400).json({ success: false, message: "Submission belum dipublikasikan" });
+      await pool.query(`UPDATE frames SET is_active = true, updated_at = NOW() WHERE id = $1`, [published_frame_id]);
+      console.log(`✅ Restored frame ${published_frame_id} ("${frame_name}")`);
+      res.json({ success: true, message: `Frame "${frame_name}" berhasil dipulihkan` });
+    } catch (error) {
+      console.error("Restore error:", error);
+      res.status(500).json({ success: false, message: "Gagal memulihkan frame" });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────
+// ADMIN: Update (republish) frame data from submission without resetting click counts
+// ─────────────────────────────────────────────────
+router.patch(
+  "/admin/submissions/:id/update-frame",
+  verifyToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Load submission
+      const subResult = await pool.query(
+        `SELECT ds.*, u.email AS designer_email
+         FROM designer_submissions ds
+         JOIN users u ON u.id = ds.designer_id
+         WHERE ds.id = $1`,
+        [id]
+      );
+      if (subResult.rows.length === 0)
+        return res.status(404).json({ success: false, message: "Submission tidak ditemukan" });
+
+      const submission = subResult.rows[0];
+      if (!submission.published_frame_id)
+        return res.status(400).json({ success: false, message: "Submission belum dipublikasikan" });
+
+      // Parse frame_data (same logic as approval)
+      let frameData = submission.frame_data;
+      if (typeof frameData === "string") {
+        try { frameData = JSON.parse(frameData); } catch { frameData = {}; }
+      }
+
+      const canvasBg = frameData.canvasBackground || frameData.backgroundColor || "#ffffff";
+      const canvasW = frameData.canvasWidth || 1080;
+      const canvasH = frameData.canvasHeight || 1920;
+
+      const normalizedSlots = Array.isArray(frameData.slots) ? frameData.slots : [];
+
+      const photoElements = normalizedSlots.map((slot, idx) => ({
+        id: slot.id || `photo_${idx}`,
+        type: "photo",
+        x: (slot.left || 0) * canvasW,
+        y: (slot.top || 0) * canvasH,
+        width: (slot.width || 0) * canvasW,
+        height: (slot.height || 0) * canvasH,
+        zIndex: 0,
+        rotation: slot.rotation || 0,
+        data: {
+          label: "Foto",
+          borderRadius: slot.borderRadius || 0,
+          photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : idx,
+          objectFit: "cover",
+        },
+      }));
+
+      const overlayElements = (frameData.elements || []).map((el) => {
+        let fixed = el;
+        if (
+          (el.type === "background-photo" || el.type === "upload") &&
+          typeof el.data?.image === "string" &&
+          el.data.image.startsWith("data:")
+        ) {
+          fixed = { ...el, data: { ...el.data, image: null } };
+        }
+        if (fixed.type !== "background-photo") {
+          const safeZ = typeof fixed.zIndex === "number" && fixed.zIndex >= 100
+            ? fixed.zIndex
+            : Math.max((fixed.zIndex || 0) + 100, 100);
+          fixed = { ...fixed, zIndex: safeZ };
+        }
+        return fixed;
+      });
+
+      const bgEl = frameData.backgroundImage
+        ? {
+            id: "bg-photo-0",
+            type: "background-photo",
+            x: 0, y: 0,
+            width: canvasW, height: canvasH,
+            zIndex: 0,
+            data: { image: frameData.backgroundImage, objectFit: "cover", label: "Background" },
+          }
+        : null;
+
+      const layoutElements = [
+        ...(bgEl ? [bgEl] : []),
+        ...photoElements,
+        ...overlayElements,
+      ];
+
+      const layout = {
+        elements: layoutElements,
+        backgroundColor: canvasBg,
+        canvasWidth: canvasW,
+        canvasHeight: canvasH,
+        aspectRatio: frameData.aspectRatio || frameData.canvasAspectRatio || "9:16",
+      };
+
+      // Save new thumbnail if available
+      let savedImagePath = null;
+      if (submission.thumbnail_data_url && submission.thumbnail_data_url.startsWith("data:image/")) {
+        try {
+          const base64Data = submission.thumbnail_data_url.replace(/^data:image\/\w+;base64,/, "");
+          const uploadDir = path.join(__dirname, "../uploads/frames");
+          if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+          const filename = `designer_${Date.now()}_${Math.random().toString(36).substr(2, 6)}.png`;
+          fs.writeFileSync(path.join(uploadDir, filename), Buffer.from(base64Data, "base64"));
+          savedImagePath = `/uploads/frames/${filename}`;
+        } catch (imgErr) {
+          console.error("Failed to save thumbnail on update-frame:", imgErr.message);
+        }
+      }
+
+      // UPDATE frame — preserve view_count, download_count, is_active, is_hidden, category
+      // image_path: use new thumbnail if saved, otherwise keep existing value via COALESCE
+      await pool.query(
+        `UPDATE frames
+           SET name=$1, description=$2, layout=$3, canvas_background=$4,
+               canvas_width=$5, canvas_height=$6, slots=$7, max_captures=$8,
+               image_path=COALESCE($9, image_path),
+               is_template=true, updated_at=NOW()
+         WHERE id=$10`,
+        [
+          submission.frame_name,
+          submission.frame_description || "",
+          JSON.stringify(layout),
+          canvasBg,
+          canvasW,
+          canvasH,
+          JSON.stringify(normalizedSlots),
+          normalizedSlots.length || 1,
+          savedImagePath,
+          submission.published_frame_id,
+        ]
+      );
+
+      console.log(`🔄 Updated frame ${submission.published_frame_id} ("${submission.frame_name}") from submission ${id} — click counts preserved`);
+      res.json({ success: true, message: `Frame "${submission.frame_name}" berhasil diperbarui` });
+    } catch (error) {
+      console.error("Update-frame error:", error);
+      res.status(500).json({ success: false, message: "Gagal memperbarui frame" });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────
 // ADMIN: Repair broken designer-approved frames
 // Reads frame_data.slots from designer_submissions and rebuilds
 // the frames table with correct slots + layout.elements
@@ -825,6 +1106,7 @@ router.post("/admin/repair-frames", verifyToken, requireAdmin, async (req, res) 
         const canvasBg = frameData.canvasBackground || sub.canvas_background || "#ffffff";
 
         // Reconstruct photo elements from slots
+        // CRITICAL: photo slots always zIndex 0 so overlay elements stay in front
         const photoElements = normalizedSlots.map((slot, idx) => ({
           id: slot.id || `photo_${idx}`,
           type: "photo",
@@ -832,18 +1114,26 @@ router.post("/admin/repair-frames", verifyToken, requireAdmin, async (req, res) 
           y: (slot.top || 0) * canvasH,
           width: (slot.width || 0) * canvasW,
           height: (slot.height || 0) * canvasH,
-          zIndex: slot.zIndex || (idx + 1),
+          zIndex: 0,
           rotation: slot.rotation || 0,
           data: { label: "Foto", borderRadius: slot.borderRadius || 0,
                   photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : idx, objectFit: "cover" },
         }));
 
+        // CRITICAL: ALL overlay elements must have zIndex >= 100 (always above photo slots at 0)
         const overlayElements = (frameData.elements || []).map((el) => {
+          let fixed = el;
           if ((el.type === "background-photo" || el.type === "upload") &&
               typeof el.data?.image === "string" && el.data.image.startsWith("data:")) {
-            return { ...el, data: { ...el.data, image: null } };
+            fixed = { ...el, data: { ...el.data, image: null } };
           }
-          return el;
+          if (fixed.type !== "background-photo" && fixed.type !== "photo") {
+            const safeZ = typeof fixed.zIndex === "number" && fixed.zIndex >= 100
+              ? fixed.zIndex
+              : Math.max((fixed.zIndex || 0) + 100, 100);
+            fixed = { ...fixed, zIndex: safeZ };
+          }
+          return fixed;
         });
 
         const bgEl = frameData.backgroundImage
@@ -852,7 +1142,8 @@ router.post("/admin/repair-frames", verifyToken, requireAdmin, async (req, res) 
               data: { image: frameData.backgroundImage, objectFit: "cover", label: "Background" } }
           : null;
 
-        const layoutElements = [...(bgEl ? [bgEl] : []), ...overlayElements, ...photoElements];
+        // DOM order: bg → photos → overlays (overlays rendered last = always on top)
+        const layoutElements = [...(bgEl ? [bgEl] : []), ...photoElements, ...overlayElements];
 
         const layout = {
           elements: layoutElements,
@@ -909,6 +1200,66 @@ router.post("/admin/repair-frames", verifyToken, requireAdmin, async (req, res) 
 });
 
 // ─────────────────────────────────────────────────
+// CERTIFICATE CLAIM
+// ─────────────────────────────────────────────────
+
+// Ensure certificate column exists
+async function ensureCertificateColumns() {
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS certificate_name TEXT`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS certificate_claimed_at TIMESTAMPTZ`);
+  } catch (_) {}
+}
+ensureCertificateColumns();
+
+// POST /api/designer/certificate-claim — designer submits their full name for certificate
+router.post("/certificate-claim", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    const userId = req.user.userId || req.user.id;
+    const { fullName } = req.body;
+
+    if (!fullName || fullName.trim().length < 2) {
+      return res.status(400).json({ success: false, message: "Nama lengkap minimal 2 karakter" });
+    }
+
+    // Verify designer has >= 2 approved submissions
+    const countResult = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM designer_submissions WHERE designer_id = $1 AND status = 'approved'`,
+      [userId]
+    );
+    const approvedCount = parseInt(countResult.rows[0]?.cnt || 0, 10);
+    if (approvedCount < 2) {
+      return res.status(403).json({ success: false, message: "Kamu perlu minimal 2 frame yang disetujui untuk mengklaim sertifikat" });
+    }
+
+    await pool.query(
+      `UPDATE users SET certificate_name = $1, certificate_claimed_at = NOW() WHERE id = $2`,
+      [fullName.trim(), userId]
+    );
+
+    res.json({ success: true, message: "Nama sertifikat berhasil disimpan!" });
+  } catch (error) {
+    console.error("Certificate claim error:", error);
+    res.status(500).json({ success: false, message: "Gagal menyimpan nama sertifikat" });
+  }
+});
+
+// GET /api/designer/certificate-status — check if designer has already claimed
+router.get("/certificate-status", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    const userId = req.user.userId || req.user.id;
+    const result = await pool.query(
+      `SELECT certificate_name, certificate_claimed_at FROM users WHERE id = $1`,
+      [userId]
+    );
+    const row = result.rows[0] || {};
+    res.json({ success: true, certificate_name: row.certificate_name || null, certificate_claimed_at: row.certificate_claimed_at || null });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Gagal mengambil status sertifikat" });
+  }
+});
+
+// ─────────────────────────────────────────────────
 // FEEDBACK: Submit designer feedback / complaint
 // ─────────────────────────────────────────────────
 router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
@@ -922,9 +1273,9 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
     const allowedTypes = ["bug", "suggestion", "editor", "general"];
     const feedbackType = allowedTypes.includes(type) ? type : "general";
 
-    // Resolve to integer DB user ID (Firebase UIDs are strings, not integers)
-    let designerId = parseInt(req.user.userId, 10);
-    if (isNaN(designerId)) {
+    // Use UUID user ID directly (users.id is UUID, not integer)
+    let designerId = req.user.userId;
+    if (!designerId) {
       const lookup = await pool.query("SELECT id FROM users WHERE email = $1", [req.user.email]);
       if (lookup.rows.length === 0) {
         return res.status(404).json({ success: false, message: "User tidak ditemukan" });
@@ -932,11 +1283,11 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
       designerId = lookup.rows[0].id;
     }
 
-    // Ensure table exists (fallback if IIFE failed at startup)
+    // Ensure table exists with correct UUID schema (fallback if IIFE failed at startup)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS designer_feedback (
         id SERIAL PRIMARY KEY,
-        designer_id INTEGER NOT NULL,
+        designer_id UUID NOT NULL,
         type VARCHAR(50) NOT NULL DEFAULT 'general',
         message TEXT NOT NULL,
         is_read BOOLEAN DEFAULT false,
@@ -964,10 +1315,10 @@ router.post("/feedback", verifyToken, requireDesigner, async (req, res) => {
 router.get("/admin/feedback", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT df.id, df.designer_id, df.type, df.message, df.is_read, df.submitted_at,
+      `SELECT df.id, df.designer_id::text AS designer_id, df.type, df.message, df.is_read, df.submitted_at,
               u.email AS designer_email, u.display_name AS designer_name
        FROM designer_feedback df
-       LEFT JOIN users u ON u.id = df.designer_id
+       LEFT JOIN users u ON u.id::text = df.designer_id::text
        ORDER BY df.submitted_at DESC`
     );
     res.json({ success: true, feedback: result.rows });
@@ -996,6 +1347,7 @@ router.get("/admin/designers", verifyToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.email, u.display_name, u.created_at,
+         u.certificate_name, u.certificate_claimed_at,
          COUNT(ds.id) AS total_submissions,
          COUNT(ds.id) FILTER (WHERE ds.status = 'pending') AS pending,
          COUNT(ds.id) FILTER (WHERE ds.status = 'approved') AS approved,
@@ -1009,6 +1361,222 @@ router.get("/admin/designers", verifyToken, requireAdmin, async (req, res) => {
     res.json({ success: true, designers: result.rows });
   } catch (error) {
     res.status(500).json({ success: false, message: "Gagal mengambil data designer" });
+  }
+});
+
+// GET /api/designer/admin/designers-wallet — designer list with wallet info
+router.get("/admin/designers-wallet", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.email, u.display_name, u.dana_number, u.gopay_number, u.created_at,
+         COUNT(ds.id) AS total_submissions,
+         COUNT(ds.id) FILTER (WHERE ds.status = 'approved') AS approved_submissions
+       FROM users u
+       LEFT JOIN designer_submissions ds ON ds.designer_id = u.id
+       WHERE u.role = 'designer'
+       GROUP BY u.id
+       ORDER BY u.created_at DESC`
+    );
+    res.json({ success: true, designers: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Gagal mengambil data wallet designer" });
+  }
+});
+
+// ─── PROFILE ─────────────────────────────────────────────────────────────────
+
+// Multer for avatar uploads
+const avatarStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../uploads/avatars");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+    cb(null, `avatar_${req.user.userId || req.user.id}_${Date.now()}${ext}`);
+  },
+});
+const avatarUpload = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files allowed"));
+  },
+});
+
+// Ensure photo_url column exists
+async function ensurePhotoUrlColumn() {
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url TEXT`);
+  } catch (_) {}
+}
+ensurePhotoUrlColumn();
+
+// GET /api/designer/profile
+router.get("/profile", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    const userId = req.user.userId || req.user.id;
+    const result = await pool.query(
+      "SELECT id, email, display_name, photo_url, created_at FROM users WHERE id = $1",
+      [userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ success: false, message: "User not found" });
+    const u = result.rows[0];
+    res.json({
+      success: true,
+      displayName: u.display_name,
+      email: u.email,
+      photoURL: u.photo_url || null,
+      createdAt: u.created_at,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal mengambil profil" });
+  }
+});
+
+// PUT /api/designer/profile
+router.put("/profile", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    const userId = req.user.userId || req.user.id;
+    const { displayName } = req.body;
+    if (!displayName || !displayName.trim()) {
+      return res.status(400).json({ success: false, message: "Nama tidak boleh kosong" });
+    }
+    await pool.query(
+      "UPDATE users SET display_name = $1, updated_at = NOW() WHERE id = $2",
+      [displayName.trim(), userId]
+    );
+    res.json({ success: true, displayName: displayName.trim() });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal menyimpan nama" });
+  }
+});
+
+// POST /api/designer/profile/avatar
+router.post("/profile/avatar", verifyToken, requireDesigner, avatarUpload.single("avatar"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
+    const userId = req.user.userId || req.user.id;
+    const photoURL = `/uploads/avatars/${req.file.filename}`;
+
+    // Delete old avatar file if exists
+    const old = await pool.query("SELECT photo_url FROM users WHERE id = $1", [userId]);
+    if (old.rows[0]?.photo_url) {
+      const oldPath = path.join(__dirname, "..", old.rows[0].photo_url);
+      if (fs.existsSync(oldPath)) fs.unlink(oldPath, () => {});
+    }
+
+    await pool.query(
+      "UPDATE users SET photo_url = $1, updated_at = NOW() WHERE id = $2",
+      [photoURL, userId]
+    );
+    res.json({ success: true, photoURL });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal upload foto" });
+  }
+});
+
+// ─── PUBLIC TEMPLATES ────────────────────────────────────────────────────────
+
+// GET /api/designer/templates — public endpoint, returns is_template=true designer frames
+// Premium templates are returned with redacted slots/layout if user has no access.
+router.get("/templates", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, description, category, image_path, layout, canvas_background,
+              canvas_width, canvas_height, slots, max_captures, is_premium, source
+       FROM frames
+       WHERE is_active = true AND is_hidden = false AND is_template = true AND source = 'designer'
+       ORDER BY COALESCE(display_order, 999999) ASC, created_at DESC, id ASC`
+    );
+
+    // Resolve user access for premium redaction (optional auth — not required)
+    let accessibleSet = new Set();
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+        const userId = decoded.userId || decoded.id || decoded.uid;
+        if (userId) {
+          const frameIds = await paymentDB.getUserAccessibleFrames(String(userId));
+          accessibleSet = new Set((frameIds || []).map((id) => String(id)));
+        }
+      } catch (_) {
+        // Invalid or expired token — treat as unauthenticated
+      }
+    }
+
+    const templates = result.rows.map((tmpl) => {
+      const isPremium = !!tmpl.is_premium;
+      // getUserAccessibleFrames already returns all premium frame IDs for subscribed users
+      const canSeePremiumDetails = !isPremium || accessibleSet.has(String(tmpl.id));
+
+      let slots = tmpl.slots;
+      let layout = tmpl.layout;
+      if (!canSeePremiumDetails) {
+        slots = [];
+        try {
+          const layoutParsed = typeof layout === "string" ? JSON.parse(layout) : (layout || {});
+          layout = { ...layoutParsed, elements: [] };
+        } catch (_) {
+          layout = { elements: [] };
+        }
+      }
+
+      return {
+        ...tmpl,
+        slots,
+        layout,
+        isLocked: !canSeePremiumDetails,
+      };
+    });
+
+    res.json({ success: true, templates });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal mengambil templates" });
+  }
+});
+
+// ─── WALLET ──────────────────────────────────────────────────────────────────
+
+// Ensure wallet columns exist
+async function ensureWalletColumns() {
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS dana_number TEXT`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS gopay_number TEXT`);
+  } catch (_) {}
+}
+ensureWalletColumns();
+
+// GET /api/designer/wallet
+router.get("/wallet", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    const userId = req.user.userId || req.user.id;
+    const result = await pool.query(
+      "SELECT dana_number, gopay_number FROM users WHERE id = $1",
+      [userId]
+    );
+    const u = result.rows[0] || {};
+    res.json({ success: true, dana_number: u.dana_number || "", gopay_number: u.gopay_number || "" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal mengambil data wallet" });
+  }
+});
+
+// PUT /api/designer/wallet
+router.put("/wallet", verifyToken, requireDesigner, async (req, res) => {
+  try {
+    const userId = req.user.userId || req.user.id;
+    const { dana_number, gopay_number } = req.body;
+    await pool.query(
+      "UPDATE users SET dana_number = $1, gopay_number = $2, updated_at = NOW() WHERE id = $3",
+      [dana_number || null, gopay_number || null, userId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal menyimpan wallet" });
   }
 });
 

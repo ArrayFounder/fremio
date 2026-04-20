@@ -96,12 +96,19 @@ class MidtransService {
     grossAmount,
     customerDetails,
     itemDetails,
+    isInternational = false,
   }) {
     try {
       console.log("📤 Creating Midtrans transaction:");
       console.log("   Order ID:", orderId);
       console.log("   Amount:", grossAmount);
       console.log("   Customer:", customerDetails.email);
+      console.log("   International:", isInternational);
+
+      // International: credit card only. Indonesia: local methods only (no credit card fee).
+      const enabledPayments = isInternational
+        ? ["credit_card"]
+        : ["gopay", "shopeepay", "dana", "ovo", "bca_va", "bni_va", "bri_va", "permata_va", "other_va", "qris"];
 
       const parameter = {
         transaction_details: {
@@ -117,19 +124,7 @@ class MidtransService {
             name: "Fremio Premium Frame Collection",
           },
         ],
-        enabled_payments: [
-          "gopay",
-          "shopeepay",
-          "dana",
-          "ovo", // E-wallets
-          "bca_va",
-          "bni_va",
-          "bri_va",
-          "permata_va",
-          "other_va", // Virtual Account
-          "qris", // QRIS
-          "credit_card", // Credit card
-        ],
+        enabled_payments: enabledPayments,
         credit_card: {
           secure: true,
         },
