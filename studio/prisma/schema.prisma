@@ -1,0 +1,268 @@
+// Fremio Studio — Prisma Schema
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SubscriptionTier {
+  STARTER    // 1 booth · Rp 299.000/bulan
+  PRO        // 3 booth · Rp 699.000/bulan
+  ENTERPRISE // unlimited · custom pricing
+}
+
+enum SessionStatus {
+  PENDING    // sesi dibuat, belum ada transaksi sukses
+  ACTIVE     // transaksi sukses, booth sedang berjalan
+  COMPLETED  // sesi selesai dan foto terdeliver
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  QRIS
+  BANK_TRANSFER
+  GOPAY
+  OVO
+  DANA
+  CASH           // operator terima tunai manual
+}
+
+enum FrameCategory {
+  AESTHETIC
+  KOREAN
+  VINTAGE
+  MINIMALIST
+  BIRTHDAY
+  WEDDING
+  GRADUATION
+  SEASONAL
+  CUSTOM        // frame custom upload operator
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATOR — pemilik bisnis photobox
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Operator {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  password           String           // bcrypt hash — JANGAN store plaintext
+  businessName       String
+  /// Di-denorm di sini untuk query cepat; sumber kebenaran tetap di relasi subscription
+  subscriptionTier   SubscriptionTier @default(STARTER)
+  subscriptionExpiry DateTime?        // null = belum pernah berlangganan / trial
+  isActive           Boolean          @default(true)
+  /// Midtrans Server Key milik operator — null = pakai key Fremio global (fallback)
+  midtransServerKey  String?
+  /// Midtrans Client Key milik operator — dikirim ke booth UI untuk init Snap
+  midtransClientKey  String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  // Relations
+  boothConfigs BoothConfig[]
+  transactions Transaction[]
+
+  @@index([email])
+  @@map("operators")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOOTH CONFIG — konfigurasi satu unit mesin photobox milik operator
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BoothConfig {
+  id                     String   @id @default(cuid())
+  operatorId             String
+  boothName              String
+  /// Harga dasar photobox per sesi dalam IDR — sudah termasuk 1 lembar cetak
+  pricePerSession        Int      @default(25000)
+  /// Harga per lembar cetak tambahan (lembar ke-2 dst) dalam IDR
+  printPricePerSheet     Int      @default(10000)
+  /// Durasi sesi dalam detik (default 300 = 5 menit)
+  sessionDurationSeconds Int      @default(300)
+  /// ID frame yang diizinkan tampil di booth ini; kosong = semua frame publik
+  allowedFrameIds        String[] @default([])
+  printEnabled           Boolean  @default(false)
+  /// Slug unik untuk URL booth: studio.fremio.id/b/[slug]
+  slug                   String   @unique
+  primaryColor           String   @default("#0a1a4a")
+  accentColor            String   @default("#d4a017")
+  logoUrl                String?
+  /// Kustomisasi visual Welcome Screen dari editor
+  welcomeScreenPrefs          Json?
+  /// Timer per tahap booth (detik) — 0 = tidak ada timer
+  timerTutorialSeconds        Int      @default(180)
+  timerFrameSelectSeconds     Int      @default(300)
+  timerPrintCountSeconds      Int      @default(60)
+  timerPaymentSeconds         Int      @default(180)
+  timerCameraSeconds          Int      @default(420)
+  timerPreviewSeconds         Int      @default(120)
+  timerDeliverySeconds        Int      @default(150)
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  // Relations
+  operator Operator      @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  sessions BoothSession[]
+  vouchers Voucher[]
+
+  @@index([operatorId])
+  @@index([slug])
+  @@map("booth_configs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOOTH SESSION — satu sesi foto oleh satu customer
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BoothSession {
+  id            String        @id @default(cuid())
+  boothConfigId String
+  status        SessionStatus @default(PENDING)
+  /// Diisi setelah pembayaran sukses (one-to-one)
+  transactionId String?       @unique
+  /// URL foto final (frame ter-composite) di R2
+  photoUrl      String?
+  /// URL video Live Mode (WebM) di storage
+  videoUrl      String?
+  /// Frame yang dipilih customer pada sesi ini
+  frameId       String?
+  startedAt     DateTime      @default(now())
+  completedAt   DateTime?
+  /// QR code token untuk halaman download customer
+  qrCode        String?       @unique
+  expiresAt     DateTime?
+
+  // Relations
+  boothConfig BoothConfig  @relation(fields: [boothConfigId], references: [id], onDelete: Cascade)
+  frame       Frame?       @relation(fields: [frameId], references: [id], onDelete: SetNull)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([boothConfigId])
+  @@index([status])
+  @@index([qrCode])
+  @@map("booth_sessions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FRAME — template overlay frame foto
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Frame {
+  id           String        @id @default(cuid())
+  name         String
+  category     FrameCategory
+  thumbnailUrl String
+  assetUrl     String        // PNG transparan full-res di R2
+  isPremium    Boolean       @default(false)
+  /// ID designer di sistem Fremio.id — nullable (frame bawaan Fremio)
+  designerId   String?
+  aspectRatio  String        @default("2:3")
+  canvasWidth  Int           @default(1200)
+  canvasHeight Int           @default(1800)
+  /// Berapa kali foto harus diambil untuk frame ini (1–6)
+  maxCaptures  Int           @default(1)
+  /// Posisi slot foto dari fremio.id [{top,left,width,height,photoIndex,borderRadius,rotation}] (normalized 0-1)
+  slots        Json?
+  /// URL overlay PNG dekorasi (teks, stiker, watermark) — hanya ada pada frame webp background.
+  /// Digambar TERAKHIR setelah foto untuk mempertahankan layering yang benar.
+  overlayUrl   String?
+  /// Mode pengambilan foto: "single" (default) atau "duplicate" (tiap capture = 2 slot simetris)
+  captureMode  String        @default("single")
+  isActive     Boolean       @default(true)
+  sortOrder    Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Relations
+  sessions BoothSession[]
+
+  @@index([category])
+  @@index([isPremium])
+  @@index([designerId])
+  @@map("frames")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRANSACTION — pembayaran per sesi booth oleh customer
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Transaction {
+  id              String            @id @default(cuid())
+  /// sessionId one-to-one — satu transaksi untuk satu sesi
+  sessionId       String            @unique
+  amount          Int               // IDR, nilai penuh
+  method          PaymentMethod
+  midtransOrderId String?           @unique
+  /// transaction_id dari callback/webhook Midtrans
+  midtransId      String?
+  /// Token Snap untuk payment page; null jika method = CASH
+  snapToken       String?
+  status          TransactionStatus @default(PENDING)
+  paidAt          DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  /// Denorm operatorId untuk query revenue dashboard tanpa JOIN ke BoothSession→BoothConfig
+  operatorId String
+
+  // Relations
+  operator     Operator      @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  boothSession BoothSession?
+
+  @@index([operatorId])
+  @@index([status])
+  @@index([midtransOrderId])
+  @@map("transactions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VOUCHER — kode diskon yang bisa dipakai customer di booth
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum VoucherType {
+  FREE       // gratis 100% — langsung masuk tanpa bayar
+  FIXED      // potongan harga tetap (IDR)
+  PERCENT    // potongan persentase (%)
+}
+
+model Voucher {
+  id            String      @id @default(cuid())
+  boothConfigId String
+  /// Kode voucher — selalu uppercase di DB
+  code          String
+  type          VoucherType
+  /// Nilai potongan: IDR untuk FIXED, angka 1-100 untuk PERCENT, 0 untuk FREE
+  discountValue Int         @default(0)
+  /// Batas maksimum pemakaian; null = tidak terbatas
+  maxUses       Int?
+  /// Jumlah pemakaian saat ini
+  usedCount     Int         @default(0)
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  boothConfig BoothConfig @relation(fields: [boothConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([boothConfigId, code])
+  @@index([boothConfigId])
+  @@map("vouchers")
+}

@@ -246,12 +246,18 @@ class VPSFrameClient {
     try {
       const data = await this.request(`/frames/${id}`);
       const frame = data.frame || data;
+      const rawImagePath = frame.image_path || frame.imagePath || frame.frameImage || null;
+      const imageUrl = this.toPublicUrl(
+        frame.imageUrl
+        || frame.thumbnailUrl
+        || rawImagePath
+      );
       const normalized = {
         ...frame,
-        imageUrl: frame.image_path?.startsWith('http')
-          ? frame.image_path
-          : `${getUploadsBaseUrl()}${frame.image_path}`,
-        imagePath: frame.image_path
+        imageUrl,
+        imagePath: imageUrl || rawImagePath,
+        rawImagePath,
+        thumbnailUrl: this.toPublicUrl(frame.thumbnailUrl || imageUrl || rawImagePath),
       };
       return this.normalizeFrameMedia(normalized);
     } catch (error) {

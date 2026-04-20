@@ -11,7 +11,9 @@ import {
 } from "../utils/frameCacheCleaner.js";
 import { convertBlobToMp4 } from "../utils/videoTranscoder.js";
 import { useToast } from "../contexts/ToastContext";
+import { useHeaderBranding } from "../contexts/HeaderBrandingContext";
 import { trackFrameDownload } from "../services/analyticsService";
+import { trackGroupShareEvent } from "../services/groupService.js";
 import { imagePresets, getOriginalUrl } from "../utils/imageOptimizer";
 import { downloadPhotoToGallery, downloadVideoToGallery } from "../utils/downloadHelper";
 
@@ -50,6 +52,55 @@ export default function EditPhoto() {
 
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const { setBranding, clearBranding } = useHeaderBranding();
+
+  // Read group branding from sessionStorage (set by SharedGroup)
+  const [groupBranding] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem("__fremio_group_branding__");
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (groupBranding) {
+      setBranding({
+        groupMode: true,
+        headerColor: groupBranding.editPhotoHeaderColor || groupBranding.headerColor || "#ffffff",
+        logoSrc: groupBranding.logoDataUrl || null,
+      });
+    }
+    return () => {
+      clearBranding();
+    };
+  }, [groupBranding, setBranding, clearBranding]);
+  const backToGroupFramesPath = groupBranding?.groupPath || null;
+  const groupShareAnalyticsId =
+    typeof groupBranding?.groupShareId === "string" && groupBranding.groupShareId.trim()
+      ? groupBranding.groupShareId.trim()
+      : null;
+
+  const trackGroupDownloadClick = useCallback((eventType) => {
+    if (!groupShareAnalyticsId) return;
+    trackGroupShareEvent(groupShareAnalyticsId, eventType, {
+      source: "edit-photo",
+      pagePath: typeof window !== "undefined" ? window.location.pathname : null,
+    }).catch(() => {});
+  }, [groupShareAnalyticsId]);
+
+  const handleBackNavigation = useCallback(() => {
+    const confirmMessage = backToGroupFramesPath
+      ? "Kembali ke halaman frames group? Cache frame akan dibersihkan."
+      : "Kembali ke halaman utama? Cache frame akan dibersihkan.";
+
+    if (!window.confirm(confirmMessage)) return;
+
+    clearFrameCache();
+    navigate(backToGroupFramesPath || "/");
+  }, [backToGroupFramesPath, navigate]);
+
   const [photos, setPhotos] = useState([]);
   const [videos, setVideos] = useState([]);
   const [frameConfig, setFrameConfig] = useState(null);
@@ -1386,6 +1437,10 @@ export default function EditPhoto() {
                   aspectRatio: frameData.aspectRatio || "9:16",
                   elements: frameData.elements || [],
                   canvasBackground: frameData.canvasBackground || "#f7f1ed",
+                  frameImage: cloudDraft.preview_url || null,
+                  imagePath: cloudDraft.preview_url || null,
+                  thumbnailUrl: cloudDraft.preview_url || null,
+                  image_url: cloudDraft.preview_url || null,
                   canvasWidth,
                   canvasHeight,
                   maxCaptures: photoElements.length || 1,
@@ -2729,21 +2784,34 @@ export default function EditPhoto() {
               }))
             );
             
-            // FALLBACK: Only create background-photo from images for NON-CUSTOM frames.
-            // For custom frames, `frameImage/imagePath` is a flattened preview that already
-            // contains text/shapes, so using it as background would DUPLICATE those elements.
+            // FALLBACK: Create a background-photo from image URLs when the frame has no
+            // explicit background-photo element. For custom frames, only do this when there
+            // is no other renderable artwork left besides photo slots.
             const isCustomFrame = Boolean(config?.isCustom) || String(config?.id || "").startsWith("custom-");
-            if (isCustomFrame) {
+            const hasRenderableCustomArtwork = Array.isArray(config?.designer?.elements)
+              ? config.designer.elements.some((el) => {
+                  if (!el || el.type === "photo" || el.type === "background-photo") {
+                    return false;
+                  }
+                  if (el.type === "upload") {
+                    return Boolean(el.data?.image);
+                  }
+                  return true;
+                })
+              : false;
+            const fallbackImageUrl =
+              config.frameImage ||
+              config.imagePath ||
+              config.thumbnailUrl ||
+              config.image_url ||
+              config.preview;
+
+            if (isCustomFrame && hasRenderableCustomArtwork) {
               console.log(
                 "✅ Custom frame: skipping background-photo fallback from frameImage/imagePath to avoid duplicated elements"
               );
               setBackgroundPhotoElement(null);
             } else {
-              const fallbackImageUrl =
-                config.frameImage ||
-                config.imagePath ||
-                config.thumbnailUrl ||
-                config.image_url;
               if (fallbackImageUrl) {
                 console.log(
                   "🔄 Creating background-photo from fallback URL:",
@@ -2767,7 +2835,7 @@ export default function EditPhoto() {
                 console.log("✅ Created fallback background-photo element");
               } else {
                 console.warn(
-                  "⚠️ No fallback image URL available (frameImage, imagePath, thumbnailUrl, image_url)"
+                  "⚠️ No fallback image URL available (frameImage, imagePath, thumbnailUrl, image_url, preview)"
                 );
                 setBackgroundPhotoElement(null);
               }
@@ -3096,6 +3164,7 @@ export default function EditPhoto() {
     {
       name: "Original",
       icon: "📷",
+      color: "linear-gradient(135deg, #f0ebe4 0%, #c8bfb5 50%, #a09488 100%)",
       filters: {
         brightness: 100,
         contrast: 100,
@@ -3109,6 +3178,7 @@ export default function EditPhoto() {
     {
       name: "Instant Soft",
       icon: "🫧",
+      color: "linear-gradient(135deg, #e8eeff 0%, #c0c8f4 50%, #9aa8e8 100%)",
       filters: {
         brightness: 110,
         contrast: 88,
@@ -3122,6 +3192,7 @@ export default function EditPhoto() {
     {
       name: "Warm Film",
       icon: "🎞️",
+      color: "linear-gradient(135deg, #f8e4b0 0%, #e8b860 50%, #c07030 100%)",
       filters: {
         brightness: 106,
         contrast: 104,
@@ -3135,6 +3206,7 @@ export default function EditPhoto() {
     {
       name: "Muted Color",
       icon: "🪵",
+      color: "linear-gradient(135deg, #ddd8cc 0%, #b8b0a0 50%, #928878 100%)",
       filters: {
         brightness: 104,
         contrast: 98,
@@ -3148,6 +3220,7 @@ export default function EditPhoto() {
     {
       name: "Pastel Soft",
       icon: "🍬",
+      color: "linear-gradient(135deg, #fde8e8 0%, #f0c0d8 50%, #d898c0 100%)",
       filters: {
         brightness: 112,
         contrast: 86,
@@ -3161,6 +3234,7 @@ export default function EditPhoto() {
     {
       name: "Retro Matte",
       icon: "🧃",
+      color: "linear-gradient(135deg, #e8d8b0 0%, #c8a870 50%, #a07840 100%)",
       filters: {
         brightness: 104,
         contrast: 85,
@@ -3174,6 +3248,7 @@ export default function EditPhoto() {
     {
       name: "Soft Grain",
       icon: "✨",
+      color: "linear-gradient(135deg, #faf4e8 0%, #e4d8c0 50%, #c8bc9c 100%)",
       filters: {
         brightness: 104,
         contrast: 102,
@@ -3187,6 +3262,7 @@ export default function EditPhoto() {
     {
       name: "Soft Mono",
       icon: "🕊️",
+      color: "linear-gradient(135deg, #f0f0f0 0%, #909090 50%, #404040 100%)",
       filters: {
         brightness: 108,
         contrast: 92,
@@ -3200,6 +3276,7 @@ export default function EditPhoto() {
     {
       name: "Film Noir",
       icon: "🎬",
+      color: "linear-gradient(135deg, #484848 0%, #202020 50%, #080808 100%)",
       filters: {
         brightness: 98,
         contrast: 135,
@@ -3331,7 +3408,7 @@ export default function EditPhoto() {
     <div
       style={{
         minHeight: "100vh",
-        background: "#fdf7f4",
+        background: groupBranding?.editPhotoBgColor || groupBranding?.backgroundColor || "#fdf7f4",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -3758,9 +3835,7 @@ export default function EditPhoto() {
                       console.warn(
                         `⚠️ Photo slot ${element.data.photoIndex} missing image!`
                       );
-                    }
 
-                    if (!hasImage) {
                       // Render placeholder for empty photo slots
                       return (
                         <div
@@ -3796,6 +3871,16 @@ export default function EditPhoto() {
                           </span>
                         </div>
                       );
+                    }
+
+                    if (!hasImage) {
+                      console.warn("⚠️ Skipping non-photo element with missing image:", {
+                        id: element.id,
+                        type: element.type,
+                        zIndex: element.zIndex,
+                        isOverlay,
+                      });
+                      return null;
                     }
 
                     const photoId = element.id || `photo-${idx}`;
@@ -3986,72 +4071,101 @@ export default function EditPhoto() {
           <div
             style={{
               display: "flex",
-              gap: "0.5rem",
+              justifyContent: "center",
+              gap: "0.75rem",
               overflowX: "auto",
               overflowY: "hidden",
-              paddingBottom: "0.5rem",
-              paddingLeft: "0.5rem",
-              paddingRight: "0.5rem",
-              scrollbarWidth: "thin",
-              scrollbarColor: "#D1D5DB #F3F4F6",
+              paddingBottom: "0.75rem",
+              paddingTop: "0.5rem",
+              paddingLeft: "1rem",
+              paddingRight: "1rem",
+              scrollbarWidth: "none",
               WebkitOverflowScrolling: "touch",
               width: "100%",
               maxWidth: "100vw",
               boxSizing: "border-box",
-              msOverflowStyle: "none", /* IE and Edge */
+              msOverflowStyle: "none",
               scrollSnapType: "x mandatory",
             }}
           >
-            {filterPresets.map((preset) => (
-              <button
-                key={preset.name}
-                onClick={() => {
-                  if (activeFilter === preset.name) {
-                    resetFilters();
-                    return;
-                  }
-                  applyFilterPreset(preset);
-                }}
-                style={{
-                  padding: "0.35rem 0.5rem",
-                  background:
-                    activeFilter === preset.name ? "#4F46E5" : "white",
-                  color: activeFilter === preset.name ? "white" : "#333",
-                  border: `2px solid ${
-                    activeFilter === preset.name ? "#4F46E5" : "#E5E7EB"
-                  }`,
-                  borderRadius: "8px",
-                  fontSize: "0.7rem",
-                  fontWeight: "500",
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: "0.15rem",
-                  minWidth: "65px",
-                  flexShrink: 0,
-                  whiteSpace: "nowrap",
-                  scrollSnapAlign: "start",
-                  touchAction: "pan-x",
-                }}
-                onMouseEnter={(e) => {
-                  if (activeFilter !== preset.name) {
-                    e.target.style.borderColor = "#D1D5DB";
-                    e.target.style.background = "#F9FAFB";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (activeFilter !== preset.name) {
-                    e.target.style.borderColor = "#E5E7EB";
-                    e.target.style.background = "white";
-                  }
-                }}
-              >
-                <span style={{ fontSize: "1.1rem" }}>{preset.icon}</span>
-                <span style={{ fontSize: "0.65rem" }}>{preset.name}</span>
-              </button>
-            ))}
+            {filterPresets.map((preset) => {
+              const isActive = activeFilter === preset.name;
+              return (
+                <button
+                  key={preset.name}
+                  onClick={() => {
+                    if (isActive) {
+                      resetFilters();
+                      return;
+                    }
+                    applyFilterPreset(preset);
+                  }}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "0",
+                    flexShrink: 0,
+                    scrollSnapAlign: "start",
+                    touchAction: "pan-x",
+                    outline: "none",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "42px",
+                      height: "42px",
+                      borderRadius: "50%",
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.22'/%3E%3C/svg%3E"), ${preset.color}`,
+                      backgroundSize: "cover, cover",
+                      backgroundBlendMode: "overlay, normal",
+                      boxShadow: isActive
+                        ? "0 0 0 2.5px #fff, 0 0 0 4.5px #6366f1, 0 3px 10px rgba(99,102,241,0.32)"
+                        : "0 2px 6px rgba(0,0,0,0.18)",
+                      transition: "box-shadow 0.2s ease, transform 0.15s ease",
+                      transform: isActive ? "scale(1.13)" : "scale(1)",
+                      position: "relative",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {/* Gloss highlight */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "4px",
+                        left: "7px",
+                        width: "28px",
+                        height: "13px",
+                        borderRadius: "50%",
+                        background: "rgba(255,255,255,0.30)",
+                        filter: "blur(2.5px)",
+                        pointerEvents: "none",
+                      }}
+                    />
+                  </div>
+                  <span
+                    style={{
+                      fontSize: "0.58rem",
+                      fontWeight: isActive ? "700" : "500",
+                      color: isActive ? "#4338ca" : "#555",
+                      textAlign: "center",
+                      lineHeight: 1.2,
+                      maxWidth: "52px",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      letterSpacing: "0.01em",
+                    }}
+                  >
+                    {preset.name}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           {/* Action Buttons */}
@@ -4107,6 +4221,8 @@ export default function EditPhoto() {
                   title: "Menyiapkan Download",
                   message: "Sedang menyiapkan file...",
                 });
+
+                trackGroupDownloadClick("photo_download_click");
 
                 try {
                   // Buat canvas baru
@@ -4914,6 +5030,7 @@ export default function EditPhoto() {
                 }
 
                 try {
+                  trackGroupDownloadClick("video_download_click");
                   setIsSaving(true);
                   setVideoProcessingMessage("🎬 Merender video dengan frame...");
 
@@ -6386,16 +6503,7 @@ export default function EditPhoto() {
             }}
           >
             <button
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Kembali ke halaman utama? Cache frame akan dibersihkan."
-                  )
-                ) {
-                  clearFrameCache();
-                  navigate("/");
-                }
-              }}
+              onClick={handleBackNavigation}
               style={{
                 padding: "0.75rem 1.5rem",
                 background: "transparent",
@@ -6418,7 +6526,7 @@ export default function EditPhoto() {
                 e.target.style.transform = "translateY(0)";
               }}
             >
-              🏠 Back to Home
+              {backToGroupFramesPath ? "← Back to Frames" : "🏠 Back to Home"}
             </button>
           </div>
         </div>

@@ -671,7 +671,7 @@ export default function DesignerLanding() {
           </div>
           <div className="dl-strip-item">
             <span className="dl-strip-num">1M+</span>
-            <span className="dl-strip-desc">Pengguna aktif dari berbagai negara</span>
+            <span className="dl-strip-desc">Pengguna dari berbagai negara</span>
             <span className="dl-strip-sub">🇮🇩 Indonesia &nbsp;·&nbsp; 🇲🇾 Malaysia &nbsp;·&nbsp; 🇸🇬 Singapura &nbsp;·&nbsp; 🇹🇭 Thailand &nbsp;·&nbsp; 🇵🇭 Filipina &nbsp;·&nbsp; 🇯🇵 Jepang &nbsp;·&nbsp; 🇸 Amerika Serikat &nbsp;·&nbsp; 🇬🇧 Inggris &nbsp;·&nbsp; 🇫🇷 Prancis</span>
           </div>
         </div>
@@ -708,12 +708,12 @@ export default function DesignerLanding() {
             </p>
           </div>
           <div className="dl-feat-card">
-            <div className="dl-feat-icon">🎨</div>
-            <h3 className="dl-feat-title">Kreativitas Tanpa Batas</h3>
+            <div className="dl-feat-icon">💰</div>
+            <h3 className="dl-feat-title">Penghasilan</h3>
             <p className="dl-feat-desc">
-              Editor frame Fremio dirancang khusus untuk desainer profesional.
-              Ekspresikan gaya visualmu sendiri, buat template yang mencerminkan
-              identitasmu sebagai seniman.
+              Setiap frame yang kamu buat berpeluang menghasilkan royalti nyata.
+              Semakin banyak frame-mu digunakan pengguna, semakin besar bagianmu
+              dari Royalty Pool bulanan Fremio.
             </p>
           </div>
         </div>

@@ -37,6 +37,8 @@ import {
   Grid3X3,
   Upload,
   ArrowLeft,
+  Search,
+  ChevronLeft,
 } from "lucide-react";
 import CanvasPreview from "../../components/creator/CanvasPreview.jsx";
 import PropertiesPanel from "../../components/creator/PropertiesPanel.jsx";
@@ -270,6 +272,7 @@ export default function UploadFrame() {
   const [canvasAspectRatio, setCanvasAspectRatio] = useState("9:16");
   const [isBackgroundLocked, setIsBackgroundLocked] = useState(false);
   const [pendingPhotoTool, setPendingPhotoTool] = useState(false);
+  const [pendingPexelsTool, setPendingPexelsTool] = useState(false);
   const [previewConstraints, setPreviewConstraints] = useState({
     maxWidth: 460,
     maxHeight: 480,
@@ -423,12 +426,17 @@ export default function UploadFrame() {
             }
 
             // Restore other elements (overlays, text, shapes, uploads)
+            // NOTE: Skip photo-type elements — they are already added from frame.slots above.
+            // layout.elements may contain reconstructed photo elements; adding them again
+            // would double the photo slot count.
             if (frame.layout?.elements && Array.isArray(frame.layout.elements)) {
               console.log("📦 [EDIT] Restoring layout elements:", frame.layout.elements.length);
               
-              // Validate overlay URLs first
+              // Validate overlay URLs first (exclude photo elements)
               const validatedElements = await Promise.all(
-                frame.layout.elements.map(async (el, idx) => {
+                frame.layout.elements
+                  .filter((el) => el && el.type !== "photo")
+                  .map(async (el, idx) => {
                   if (el.type === "upload" && el.data?.image && !el.data.image.startsWith('data:')) {
                     try {
                       const response = await fetch(el.data.image, { method: 'HEAD', cache: 'no-cache' });
@@ -777,8 +785,21 @@ export default function UploadFrame() {
           triggerUpload();
         },
       },
+      {
+        id: "pexels",
+        icon: Search,
+        label: "Cari Foto",
+        mobileLabel: "Cari Foto",
+        isActive: pendingPexelsTool,
+        onClick: () => {
+          setShowCanvasSizeInProperties(false);
+          setPendingPhotoTool(false);
+          setPendingPexelsTool(true);
+          clearSelection();
+        },
+      },
     ],
-    [showCanvasSizeInProperties, selectedElementId, addElement, selectElement, clearSelection, triggerUpload]
+    [showCanvasSizeInProperties, selectedElementId, pendingPexelsTool, addElement, selectElement, clearSelection, triggerUpload]
   );
 
   // Mobile property buttons
@@ -1162,31 +1183,33 @@ export default function UploadFrame() {
         console.log(`  Element ${i}: type=${el.type}, id=${el.id?.substring(0, 8)}, hasImage=${!!el.data?.image}, zIndex=${el.zIndex}`);
       });
       
-      const nonPhotoElements = elements.filter((e) => e.type !== "photo" && e.type !== "background-photo");
+      // Include background-photo elements so the background is preserved on save/update.
+      // Exclude only photo-slot elements (type === "photo") which are stored separately via `slots`.
+      const nonPhotoElements = elements.filter((e) => e.type !== "photo");
       console.log("📦 [SAVE] Non-photo elements to save:", nonPhotoElements.length);
       
       for (const el of nonPhotoElements) {
-        // IMPORTANT: Mark upload elements as overlays and ensure high zIndex
-        // So they render ABOVE photo slots in EditPhoto
         const isUploadOverlay = el.type === "upload";
+        const isBackgroundPhoto = el.type === "background-photo";
+        // Overlays sit above everything; background-photo sits at the bottom (zIndex 0 or negative)
         const overlayZIndex = isUploadOverlay ? Math.max(el.zIndex || 0, 500) : el.zIndex;
         
         const elementToSave = {
           ...el,
-          zIndex: overlayZIndex, // Ensure overlay has high zIndex
+          zIndex: overlayZIndex,
           xNorm: el.x / canvasWidth,
           yNorm: el.y / canvasHeight,
           widthNorm: el.width / canvasWidth,
           heightNorm: el.height / canvasHeight,
           data: {
             ...el.data,
-            __isOverlay: isUploadOverlay, // Mark as overlay for EditPhoto rendering
+            __isOverlay: isUploadOverlay,
           }
         };
 
-        // Upload overlay images to backend with retry and fallback
+        // Upload image to backend for both upload overlays and background-photo elements
         const imageToUpload = el.data?.originalImage || el.data?.image;
-        if (el.type === "upload" && imageToUpload && imageToUpload.startsWith("data:")) {
+        if ((isUploadOverlay || isBackgroundPhoto) && imageToUpload && imageToUpload.startsWith("data:")) {
           const token = localStorage.getItem('fremio_token') || localStorage.getItem('auth_token');
           const uploadResult = await uploadOverlayWithRetry(imageToUpload, el.id, token);
           
@@ -1195,33 +1218,41 @@ export default function UploadFrame() {
             elementToSave.data = {
               ...restData,
               image: uploadResult.url,
-              __isOverlay: true,
+              ...(isUploadOverlay && { __isOverlay: true }),
             };
-            console.log(`✅ Overlay ${el.id.substring(0, 8)} uploaded: ${uploadResult.url.substring(0, 60)}...`);
+            console.log(`✅ ${isBackgroundPhoto ? "Background" : "Overlay"} ${el.id.substring(0, 8)} uploaded: ${uploadResult.url.substring(0, 60)}...`);
           } else {
             // Fallback: compress and keep as data URL
-            console.warn(`⚠️ Overlay ${el.id.substring(0, 8)} upload failed after retries, using compressed fallback`);
+            console.warn(`⚠️ ${isBackgroundPhoto ? "Background" : "Overlay"} ${el.id.substring(0, 8)} upload failed after retries, using compressed fallback`);
             try {
-              const compressedDataUrl = await compressImageDataUrl(imageToUpload, 0.6, 800);
+              const compressQuality = isBackgroundPhoto ? 0.75 : 0.6;
+              const compressedDataUrl = await compressImageDataUrl(imageToUpload, compressQuality, 1080);
               const { originalImage, ...restData } = elementToSave.data || {};
               elementToSave.data = {
                 ...restData,
                 image: compressedDataUrl,
-                __isOverlay: true,
+                ...(isUploadOverlay && { __isOverlay: true }),
                 _uploadFailed: true,
                 _uploadError: uploadResult.error
               };
-              showToast(
-                "warning",
-                `Overlay ${el.id.substring(0, 8)} menggunakan fallback (upload gagal). Frame tetap tersimpan.`,
-                4000
-              );
+              if (isUploadOverlay) {
+                showToast(
+                  "warning",
+                  `Overlay ${el.id.substring(0, 8)} menggunakan fallback (upload gagal). Frame tetap tersimpan.`,
+                  4000
+                );
+              }
             } catch (compressError) {
-              console.error(`❌ Failed to compress overlay ${el.id}:`, compressError);
-              throw new Error(
-                `Upload overlay gagal dan fallback compression juga gagal: ${uploadResult.error}. ` +
-                "Coba gunakan gambar yang lebih kecil."
-              );
+              console.error(`❌ Failed to compress element ${el.id}:`, compressError);
+              if (isUploadOverlay) {
+                throw new Error(
+                  `Upload overlay gagal dan fallback compression juga gagal: ${uploadResult.error}. ` +
+                  "Coba gunakan gambar yang lebih kecil."
+                );
+              }
+              // For background-photo, skip silently rather than blocking the whole save
+              console.warn("⚠️ Skipping background-photo that could not be compressed/uploaded");
+              continue;
             }
           }
         }
@@ -1745,6 +1776,22 @@ export default function UploadFrame() {
                 isBackgroundLocked={isBackgroundLocked}
                 onToggleBackgroundLock={toggleBackgroundLock}
                 pendingPhotoTool={pendingPhotoTool}
+                pendingPexelsTool={pendingPexelsTool}
+                onAddPexelsPhoto={async (photoUrl) => {
+                  try {
+                    const response = await fetch(photoUrl);
+                    const blob = await response.blob();
+                    const dataUrl = await new Promise((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onload = () => resolve(reader.result);
+                      reader.onerror = reject;
+                      reader.readAsDataURL(blob);
+                    });
+                    addUploadElement(dataUrl);
+                    setPendingPexelsTool(false);
+                  } catch { showToast("error", "Gagal memuat aset. Coba lagi."); }
+                }}
+                onCancelPexelsTool={() => setPendingPexelsTool(false)}
                 onConfirmAddPhoto={(rows = 1, cols = 1) => {
                   setPendingPhotoTool(false);
                   const canvasW = CANVAS_WIDTH;
@@ -1780,6 +1827,82 @@ export default function UploadFrame() {
       {isMobileView && (
         <>
           {renderMobilePropertyPanel()}
+          {pendingPexelsTool && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 60 }}>
+              <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)" }} onClick={() => setPendingPexelsTool(false)} />
+              <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "#fff", borderRadius: "24px 24px 0 0", maxHeight: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 -8px 32px rgba(0,0,0,0.15)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px 10px", borderBottom: "1px solid #f0e6e0", borderRadius: "24px 24px 0 0", background: "#fff", flexShrink: 0 }}>
+                  <button type="button" onClick={() => setPendingPexelsTool(false)} style={{ border: "none", background: "rgba(244,63,94,0.08)", cursor: "pointer", color: "#e11d48", padding: "6px 10px", borderRadius: "10px", display: "flex", alignItems: "center", gap: "4px", fontSize: "13px", fontWeight: "600" }}>
+                    <ChevronLeft size={18} strokeWidth={2.5} />
+                    Kembali
+                  </button>
+                  <h2 style={{ margin: 0, fontSize: "16px", fontWeight: "700", color: "#1a1a2e" }}>Cari Foto</h2>
+                  <button type="button" onClick={() => setPendingPexelsTool(false)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", padding: "4px" }}><X size={20} /></button>
+                </div>
+                <div style={{ overflowY: "auto", padding: "12px 16px calc(24px + env(safe-area-inset-bottom,0px))" }}>
+                  <PropertiesPanel
+                    selectedElement={selectedElement}
+                    canvasBackground={canvasBackground}
+                    onBackgroundChange={setCanvasBackground}
+                    onUpdateElement={updateElement}
+                    onDeleteElement={(id) => { removeElement(id); clearSelection(); }}
+                    clearSelection={clearSelection}
+                    onBringToFront={bringToFront}
+                    onSendToBack={sendToBack}
+                    onBringForward={bringForward}
+                    onSendBackward={sendBackward}
+                    canvasAspectRatio={canvasAspectRatio}
+                    onCanvasAspectRatioChange={setCanvasAspectRatio}
+                    showCanvasSizeMode={showCanvasSizeInProperties}
+                    gradientColor1={gradientColor1}
+                    gradientColor2={gradientColor2}
+                    setGradientColor1={setGradientColor1}
+                    setGradientColor2={setGradientColor2}
+                    isBackgroundLocked={isBackgroundLocked}
+                    onToggleBackgroundLock={toggleBackgroundLock}
+                    pendingPhotoTool={pendingPhotoTool}
+                    pendingPexelsTool={pendingPexelsTool}
+                    onAddPexelsPhoto={async (photoUrl) => {
+                      try {
+                        const response = await fetch(photoUrl);
+                        const blob = await response.blob();
+                        const dataUrl = await new Promise((resolve, reject) => {
+                          const reader = new FileReader();
+                          reader.onload = () => resolve(reader.result);
+                          reader.onerror = reject;
+                          reader.readAsDataURL(blob);
+                        });
+                        addUploadElement(dataUrl);
+                        setPendingPexelsTool(false);
+                      } catch { showToast("error", "Gagal memuat aset. Coba lagi."); }
+                    }}
+                    onCancelPexelsTool={() => setPendingPexelsTool(false)}
+                    onConfirmAddPhoto={(rows = 1, cols = 1) => {
+                      setPendingPhotoTool(false);
+                      const canvasW = CANVAS_WIDTH; const canvasH = CANVAS_HEIGHT;
+                      const gapX = 30, gapY = 30, marginX = 65, marginY = 140;
+                      const photoWidth = Math.floor((canvasW - 2*marginX - (cols-1)*gapX) / cols);
+                      const photoHeight = Math.floor((canvasH - 2*marginY - (rows-1)*gapY) / rows);
+                      let lastId = null;
+                      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+                        const id = addElement("photo", { x: marginX+c*(photoWidth+gapX), y: marginY+r*(photoHeight+gapY), width: photoWidth, height: photoHeight });
+                        if (id) lastId = id;
+                      }
+                      if (lastId) selectElement(lastId);
+                    }}
+                    onCancelPhotoTool={() => setPendingPhotoTool(false)}
+                    onSelectBackgroundPhoto={() => {
+                      if (isBackgroundLocked) { showToast("info", "Background dikunci.", 2000); return; }
+                      if (backgroundPhotoElement) { selectElement(backgroundPhotoElement.id); }
+                      else { triggerBackgroundUpload(); }
+                    }}
+                    onFitBackgroundPhoto={fitBackgroundPhotoToCanvas}
+                    backgroundPhoto={backgroundPhotoElement}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           {pendingPhotoTool ? (
             <nav className="create-mobile-toolbar create-mobile-toolbar--grid">
               <button type="button" onClick={() => setPendingPhotoTool(false)} className="create-mobile-toolbar__button create-mobile-toolbar__button--back">

@@ -22,6 +22,8 @@ import {
   Shapes,
   Crown,
   Palette,
+  Wallet,
+  Link2,
 } from "lucide-react";
 
 export default function AdminLayout() {
@@ -89,6 +91,8 @@ export default function AdminLayout() {
     { path: "/admin/maintenance", icon: Shield, label: "Maintenance" },
     { path: "/admin/subscribers", icon: Crown, label: "Subscribers" },
     { path: "/admin/designer-submissions", icon: Palette, label: "Designer Submissions" },
+    { path: "/admin/designer-wallets", icon: Wallet, label: "Designer Wallets" },
+    { path: "/admin/share-links", icon: Link2, label: "Share Links" },
     { path: "/admin/settings", icon: Settings, label: "Settings" },
   ];
 

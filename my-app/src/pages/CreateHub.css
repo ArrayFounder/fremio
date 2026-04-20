@@ -7,7 +7,7 @@
   background: #fafafa;
 }
 
-/* Match Frames page card grid (3 cols mobile, 5 cols desktop) */
+/* Match Frames page card grid (3 cols mobile, 6 cols desktop) */
 .frames-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -21,7 +21,7 @@
 
 @media (min-width: 768px) {
   .frames-grid {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 20px;
   }
   .frames-grid .frame-card {
@@ -34,11 +34,71 @@
   margin-bottom: 2.5rem;
 }
 
+/* Top row: Create + Templates side-by-side on desktop, stacked on mobile */
+.create-hub-top-row {
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+
+.create-hub-top-row-divider {
+  width: 1px;
+  background: #ecdeda;
+  align-self: stretch;
+  min-height: 60px;
+  flex-shrink: 0;
+}
+
+/* Horizontal scroll strip for template cards */
+.create-hub-templates-scroll {
+  display: flex;
+  gap: 14px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  align-items: flex-end;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+}
+
+/* CRITICAL for iOS Safari: every descendant inside the scroll strip must
+   declare pan-x. Use !important to override any inline touch-action:none
+   that CanvasPreview or other interactive components set on their children */
+.create-hub-template-card,
+.create-hub-template-card *,
+.create-hub-templates-scroll * {
+  touch-action: pan-x !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+.create-hub-templates-scroll > * {
+  scroll-snap-align: start;
+}
+
+@media (max-width: 640px) {
+  .create-hub-top-row {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .create-hub-top-row-divider {
+    display: none;
+  }
+
+  /* Full-width template scroll on mobile */
+  .create-hub-templates-section {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 .create-hub-title {
   font-size: 1.25rem;
   font-weight: 600;
   color: #1a1a1a;
-  margin-bottom: 1rem;
+  margin-bottom: 0.4rem;
 }
 
 /* Tabs (All Frames + Groups) */
@@ -313,6 +373,11 @@
   margin-bottom: 12px;
 }
 
+.create-hub-group-pref-row--stack {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
 .create-hub-group-pref-label {
   font-weight: 800;
   color: #1e293b;
@@ -325,13 +390,37 @@
   gap: 10px;
 }
 
-.create-hub-group-pref-control input[type="text"] {
+.create-hub-group-pref-control--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.create-hub-group-pref-control--stretch {
+  width: 100%;
+}
+
+.create-hub-group-pref-control input[type="text"],
+.create-hub-group-pref-control select,
+.create-hub-group-pref-control textarea {
   width: 220px;
   max-width: 100%;
   padding: 10px 12px;
   border-radius: 999px;
   border: 2px solid rgba(224, 183, 169, 0.35);
   outline: none;
+}
+
+.create-hub-group-pref-control textarea {
+  width: 100%;
+  border-radius: 16px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.create-hub-group-pref-control--stretch input[type="text"],
+.create-hub-group-pref-control--stretch select,
+.create-hub-group-pref-control--stretch textarea {
+  width: 100%;
 }
 
 .create-hub-group-pref-control input[type="file"] {

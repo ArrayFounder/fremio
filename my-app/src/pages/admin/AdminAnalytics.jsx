@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { isVPSMode } from "../../config/backend";
-import { getLeanMetrics, getLeanMetricsFromFirebase, getDashboardOverview } from "../../services/analyticsService";
+import { getLeanMetrics, getLeanMetricsFromFirebase, getDashboardOverview, getAccessInsights } from "../../services/analyticsService";
 import { getAllUsers, getUserStats } from "../../services/userService";
 import "../../styles/admin.css";
 import {
@@ -28,13 +28,56 @@ import {
   UserCheck,
   Cloud,
   Database,
+  Share2,
 } from "lucide-react";
+
+const defaultAccessInsights = {
+  accessByDay: [],
+  accessByMonth: [],
+  pageAccess: [
+    { key: "membership", label: "Membership", uniqueVisitors: 0, totalViews: 0 },
+    { key: "create", label: "Create", uniqueVisitors: 0, totalViews: 0 },
+    { key: "share", label: "Share", uniqueVisitors: 0, totalViews: 0 },
+  ],
+  frameClicks: {
+    today: { label: "Hari Ini", uniqueVisitors: 0, totalClicks: 0 },
+    yesterday: { label: "Kemarin", uniqueVisitors: 0, totalClicks: 0 },
+    month: { label: "Bulan Ini", uniqueVisitors: 0, totalClicks: 0 },
+  },
+  generatedAt: null,
+};
+
+const accessDateFormatter = new Intl.DateTimeFormat("id-ID", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+});
+
+const accessMonthFormatter = new Intl.DateTimeFormat("id-ID", {
+  month: "long",
+  year: "numeric",
+});
+
+const formatAccessDate = (value) => {
+  if (!value) return "-";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return accessDateFormatter.format(date);
+};
+
+const formatAccessMonth = (value) => {
+  if (!value) return "-";
+  const date = new Date(`${value}-01T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return accessMonthFormatter.format(date);
+};
 
 export default function AdminAnalytics() {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
 
   const [loading, setLoading] = useState(false);
+  const [activeAnalyticsPage, setActiveAnalyticsPage] = useState("overview");
   const [timeRange, setTimeRange] = useState("7days"); // 7days, 30days, 90days, all
   
   // Default lean metrics structure to prevent undefined errors
@@ -98,6 +141,7 @@ export default function AdminAnalytics() {
     categoryStats: [],
     recentActivity: [],
   });
+  const [accessInsights, setAccessInsights] = useState(defaultAccessInsights);
 
   useEffect(() => {
     loadAnalytics();
@@ -105,71 +149,88 @@ export default function AdminAnalytics() {
 
   const loadAnalytics = async () => {
     setLoading(true);
-    
-    // Load Lean Startup Metrics from API/Firebase
+
     let metrics = null;
+
     try {
-      metrics = await getLeanMetricsFromFirebase();
-      // Merge with defaults to ensure all properties exist
-      setLeanMetrics({
-        ...defaultLeanMetrics,
-        ...metrics,
-        funnel: {
-          ...defaultLeanMetrics.funnel,
-          ...(metrics?.funnel || {}),
-        },
-        conversionRates: {
-          ...defaultLeanMetrics.conversionRates,
-          ...(metrics?.conversionRates || {}),
-        },
-      });
-      console.log("📊 Loaded metrics:", metrics);
-    } catch (error) {
-      console.error("Error loading metrics:", error);
-      // Use defaults on error
-      setLeanMetrics(defaultLeanMetrics);
-    }
-    
-    // In VPS mode, skip localStorage loading - we get data from API
-    if (isVPSMode()) {
-      // Fetch registration data from backend via /users/stats endpoint
       try {
-        const stats = await getUserStats();
-        if (stats && stats.success) {
-          const totalUsers = stats.total_users || 0;
-          const newUsersInPeriod = timeRange === '7days' ? stats.new_users_7d
-            : timeRange === '30days' ? stats.new_users_30d
-            : timeRange === '90days' ? stats.new_users_90d
-            : totalUsers;
-          setRegistrationData({
-            totalUsers,
-            newUsersInPeriod,
-            activeUsers: stats.active_users || 0,
-            newUsersToday: stats.new_users_today || 0,
-          });
-          setAnalytics(prev => ({
-            ...prev,
-            overview: { ...prev.overview, totalUsers },
-          }));
-        }
-      } catch (err) {
-        console.error("Failed to fetch user stats:", err);
+        const accessData = await getAccessInsights();
+        setAccessInsights({
+          ...defaultAccessInsights,
+          ...accessData,
+          pageAccess: Array.isArray(accessData?.pageAccess)
+            ? accessData.pageAccess
+            : defaultAccessInsights.pageAccess,
+          frameClicks: {
+            ...defaultAccessInsights.frameClicks,
+            ...(accessData?.frameClicks || {}),
+          },
+        });
+      } catch (error) {
+        console.error("Failed to fetch access insights:", error);
+        setAccessInsights(defaultAccessInsights);
       }
-      setLoading(false);
-      return;
-    }
-    
-    // Load REAL data from localStorage (non-VPS mode)
-    const customFrames = JSON.parse(
-        localStorage.getItem("custom_frames") || "[]"
-      );
-      const frameUsage = JSON.parse(
-        localStorage.getItem("frame_usage") || "[]"
-      );
-      const users = JSON.parse(localStorage.getItem("users") || "[]");
-      const activities = JSON.parse(
-        localStorage.getItem("recent_activities") || "[]"
-      );
+
+      if (isVPSMode()) {
+        setLeanMetrics(defaultLeanMetrics);
+
+        try {
+          const stats = await getUserStats();
+          if (stats && stats.success) {
+            const totalUsers = stats.total_users || 0;
+            const newUsersInPeriod = timeRange === '7days' ? stats.new_users_7d
+              : timeRange === '30days' ? stats.new_users_30d
+              : timeRange === '90days' ? stats.new_users_90d
+              : totalUsers;
+            setRegistrationData({
+              totalUsers,
+              newUsersInPeriod,
+              activeUsers: stats.active_users || 0,
+              newUsersToday: stats.new_users_today || 0,
+            });
+            setAnalytics(prev => ({
+              ...prev,
+              overview: { ...prev.overview, totalUsers },
+            }));
+          }
+        } catch (err) {
+          console.error("Failed to fetch user stats:", err);
+        }
+
+        return;
+      }
+
+      try {
+        metrics = await getLeanMetricsFromFirebase();
+        setLeanMetrics({
+          ...defaultLeanMetrics,
+          ...metrics,
+          funnel: {
+            ...defaultLeanMetrics.funnel,
+            ...(metrics?.funnel || {}),
+          },
+          conversionRates: {
+            ...defaultLeanMetrics.conversionRates,
+            ...(metrics?.conversionRates || {}),
+          },
+        });
+        console.log("📊 Loaded metrics:", metrics);
+      } catch (error) {
+        console.error("Error loading metrics:", error);
+        setLeanMetrics(defaultLeanMetrics);
+      }
+
+      // Load REAL data from localStorage (non-VPS mode)
+      const customFrames = JSON.parse(
+          localStorage.getItem("custom_frames") || "[]"
+        );
+        const frameUsage = JSON.parse(
+          localStorage.getItem("frame_usage") || "[]"
+        );
+        const users = JSON.parse(localStorage.getItem("users") || "[]");
+        const activities = JSON.parse(
+          localStorage.getItem("recent_activities") || "[]"
+        );
 
       // Calculate totals
       const totalViews = frameUsage.reduce(
@@ -273,26 +334,28 @@ export default function AdminAnalytics() {
       const uniqueUserIds = new Set(frameUsage.map(u => u.userId));
       const actualUserCount = metrics?.totalUsers || uniqueUserIds.size;
 
-      setAnalytics({
-        overview: {
-          totalViews,
-          totalDownloads,
-          totalLikes,
-          totalFrames: customFrames.length,
-          totalUsers: actualUserCount,
-        },
-        trends: {
-          viewsTrend: metrics?.userGrowthRate || 0,
-          downloadsTrend: 0,
-          likesTrend: 0,
-          usersTrend: metrics?.userGrowthRate || 0,
-        },
-        topFrames,
-        topUsers,
-        categoryStats: categoryStatsArray,
-        recentActivity,
-      });
+        setAnalytics({
+          overview: {
+            totalViews,
+            totalDownloads,
+            totalLikes,
+            totalFrames: customFrames.length,
+            totalUsers: actualUserCount,
+          },
+          trends: {
+            viewsTrend: metrics?.userGrowthRate || 0,
+            downloadsTrend: 0,
+            likesTrend: 0,
+            usersTrend: metrics?.userGrowthRate || 0,
+          },
+          topFrames,
+          topUsers,
+          categoryStats: categoryStatsArray,
+          recentActivity,
+        });
+    } finally {
       setLoading(false);
+    }
   };
 
   const formatNumber = (num) => {
@@ -440,6 +503,54 @@ export default function AdminAnalytics() {
             </div>
           </div>
         </div>
+
+        <div
+          style={{
+            display: "inline-flex",
+            gap: "8px",
+            padding: "6px",
+            background: "rgba(255,255,255,0.86)",
+            border: "1px solid var(--border)",
+            borderRadius: "14px",
+            marginBottom: "24px",
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
+          }}
+        >
+          {[
+            { key: "overview", label: "Dashboard Lama" },
+            { key: "access", label: "Traffic & Access" },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setActiveAnalyticsPage(item.key)}
+              style={{
+                border: "none",
+                borderRadius: "10px",
+                padding: "10px 16px",
+                fontSize: "13px",
+                fontWeight: "700",
+                cursor: "pointer",
+                background:
+                  activeAnalyticsPage === item.key
+                    ? "linear-gradient(135deg, var(--accent) 0%, #d4a193 100%)"
+                    : "transparent",
+                color: activeAnalyticsPage === item.key ? "white" : "#475569",
+                transition: "all 0.2s ease",
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {activeAnalyticsPage === "access" ? (
+          <AccessInsightsPanel
+            accessInsights={accessInsights}
+            formatNumber={formatNumber}
+          />
+        ) : (
+          <>
 
         {/* User Registration Stats Section */}
         <div
@@ -1302,7 +1413,292 @@ export default function AdminAnalytics() {
             </div>
           </div>
         </div>
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+function AccessInsightsPanel({ accessInsights, formatNumber }) {
+  const pageAccessMap = new Map(
+    (accessInsights?.pageAccess || []).map((item) => [item.key, item])
+  );
+  const membershipStats =
+    pageAccessMap.get("membership") || defaultAccessInsights.pageAccess[0];
+  const createStats =
+    pageAccessMap.get("create") || defaultAccessInsights.pageAccess[1];
+  const shareStats =
+    pageAccessMap.get("share") || defaultAccessInsights.pageAccess[2];
+  const frameClicks = accessInsights?.frameClicks || defaultAccessInsights.frameClicks;
+  const accessByDay = Array.isArray(accessInsights?.accessByDay)
+    ? accessInsights.accessByDay
+    : [];
+  const accessByMonth = Array.isArray(accessInsights?.accessByMonth)
+    ? accessInsights.accessByMonth
+    : [];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      <div
+        className="admin-card"
+        style={{
+          padding: "24px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <BarChart3 size={18} style={{ color: "var(--accent)" }} />
+          <h2 style={{ margin: 0, fontSize: "18px", fontWeight: "800", color: "#222" }}>
+            Traffic & Access Insights
+          </h2>
+        </div>
+        <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "14px", lineHeight: 1.6 }}>
+          Ringkasan akses user ke Fremio, kunjungan halaman Membership, Create, dan Share, serta total orang yang klik frame.
+        </p>
+        {accessInsights?.generatedAt ? (
+          <span style={{ fontSize: "12px", color: "#94a3b8" }}>
+            Data terakhir diambil: {new Date(accessInsights.generatedAt).toLocaleString("id-ID")}
+          </span>
+        ) : null}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "16px",
+        }}
+      >
+        {[
+          {
+            title: frameClicks.today?.label || "Hari Ini",
+            visitors: frameClicks.today?.uniqueVisitors || 0,
+            clicks: frameClicks.today?.totalClicks || 0,
+            color: "#3b82f6",
+          },
+          {
+            title: frameClicks.yesterday?.label || "Kemarin",
+            visitors: frameClicks.yesterday?.uniqueVisitors || 0,
+            clicks: frameClicks.yesterday?.totalClicks || 0,
+            color: "#8b5cf6",
+          },
+          {
+            title: frameClicks.month?.label || "Bulan Ini",
+            visitors: frameClicks.month?.uniqueVisitors || 0,
+            clicks: frameClicks.month?.totalClicks || 0,
+            color: "#f97316",
+          },
+        ].map((item) => (
+          <div key={item.title} className="admin-card" style={{ padding: "20px" }}>
+            <div
+              style={{
+                width: "44px",
+                height: "44px",
+                borderRadius: "12px",
+                background: `${item.color}15`,
+                color: item.color,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: "16px",
+              }}
+            >
+              <Eye size={20} />
+            </div>
+            <div style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "8px" }}>
+              Orang klik frame {item.title.toLowerCase()}
+            </div>
+            <div style={{ fontSize: "32px", fontWeight: "800", color: "#222", lineHeight: 1 }}>
+              {formatNumber(item.visitors)}
+            </div>
+            <div style={{ marginTop: "8px", fontSize: "12px", color: "#64748b" }}>
+              Total klik: {formatNumber(item.clicks)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: "16px",
+        }}
+      >
+        {[membershipStats, createStats, shareStats].map((item) => (
+          <div key={item.key} className="admin-card" style={{ padding: "22px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
+              <div
+                style={{
+                  width: "42px",
+                  height: "42px",
+                  borderRadius: "12px",
+                  background: "#fdf0eb",
+                  color: "var(--accent)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {item.key === "membership" ? (
+                  <Target size={18} />
+                ) : item.key === "create" ? (
+                  <FileImage size={18} />
+                ) : (
+                  <Share2 size={18} />
+                )}
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "#222" }}>
+                  Page {item.label}
+                </h3>
+                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "var(--text-secondary)" }}>
+                  Total user yang pernah akses page ini
+                </p>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+              <div style={{ padding: "14px", borderRadius: "12px", background: "#faf6f5" }}>
+                <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "4px" }}>Unique User</div>
+                <div style={{ fontSize: "24px", fontWeight: "800", color: "#222" }}>
+                  {formatNumber(item.uniqueVisitors || 0)}
+                </div>
+              </div>
+              <div style={{ padding: "14px", borderRadius: "12px", background: "#faf6f5" }}>
+                <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "4px" }}>Total View</div>
+                <div style={{ fontSize: "24px", fontWeight: "800", color: "#222" }}>
+                  {formatNumber(item.totalViews || 0)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          gap: "20px",
+        }}
+      >
+        <div className="admin-card" style={{ padding: "24px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "18px" }}>
+            <Calendar size={18} style={{ color: "var(--accent)" }} />
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "#222" }}>
+              Akses Harian Fremio
+            </h3>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "420px", overflowY: "auto" }}>
+            {accessByDay.length > 0 ? (
+              accessByDay.map((item) => (
+                <div
+                  key={item.date}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(0, 1.4fr) repeat(2, minmax(0, 1fr))",
+                    gap: "12px",
+                    alignItems: "center",
+                    padding: "12px 14px",
+                    borderRadius: "12px",
+                    background: "#faf6f5",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "#222" }}>
+                      {formatAccessDate(item.date)}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8" }}>{item.date}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "2px" }}>User</div>
+                    <div style={{ fontSize: "16px", fontWeight: "800", color: "#222" }}>
+                      {formatNumber(item.uniqueVisitors || 0)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "2px" }}>Views</div>
+                    <div style={{ fontSize: "16px", fontWeight: "800", color: "#222" }}>
+                      {formatNumber(item.totalPageViews || 0)}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyAccessState message="Belum ada data akses harian. Data akan muncul setelah pageview mulai terekam." />
+            )}
+          </div>
+        </div>
+
+        <div className="admin-card" style={{ padding: "24px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "18px" }}>
+            <TrendingUp size={18} style={{ color: "var(--accent)" }} />
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "#222" }}>
+              Akses Bulanan Fremio
+            </h3>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "420px", overflowY: "auto" }}>
+            {accessByMonth.length > 0 ? (
+              accessByMonth.map((item) => (
+                <div
+                  key={item.month}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(0, 1.4fr) repeat(2, minmax(0, 1fr))",
+                    gap: "12px",
+                    alignItems: "center",
+                    padding: "12px 14px",
+                    borderRadius: "12px",
+                    background: "#faf6f5",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "#222" }}>
+                      {formatAccessMonth(item.month)}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8" }}>{item.month}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "2px" }}>User</div>
+                    <div style={{ fontSize: "16px", fontWeight: "800", color: "#222" }}>
+                      {formatNumber(item.uniqueVisitors || 0)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "2px" }}>Views</div>
+                    <div style={{ fontSize: "16px", fontWeight: "800", color: "#222" }}>
+                      {formatNumber(item.totalPageViews || 0)}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyAccessState message="Belum ada data akses bulanan. Data akan muncul setelah pageview mulai terekam." />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmptyAccessState({ message }) {
+  return (
+    <div
+      style={{
+        padding: "28px 20px",
+        borderRadius: "14px",
+        background: "#faf6f5",
+        color: "var(--text-secondary)",
+        textAlign: "center",
+        fontSize: "13px",
+        lineHeight: 1.7,
+      }}
+    >
+      {message}
     </div>
   );
 }

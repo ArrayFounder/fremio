@@ -3,13 +3,14 @@ import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useHeaderBranding } from "../contexts/HeaderBrandingContext.jsx";
+import defaultLogotype from "../assets/logotype.png";
 import logoSalem from "../assets/logo-salem.png";
 import burgerBarIcon from "../assets/burger-bar.png";
 import homeIcon from "../assets/page-icon/page-home.png";
-import aboutIcon from "../assets/page-icon/page-about.png";
 import pricingIcon from "../assets/page-icon/pricing.png";
 import framesIcon from "../assets/page-icon/page-frames.png";
 import createIcon from "../assets/page-icon/page-create.png";
+import shareIcon from "../assets/page-icon/page-share.png";
 import profileIcon from "../assets/page-icon/page-profile.png";
 import settingsIcon from "../assets/page-icon/page-settings.png";
 import logoutIcon from "../assets/page-icon/logout.png";
@@ -65,7 +66,6 @@ export default function Header() {
 
   // Active state untuk section di homepage
   const isHomeActive = pathname === "/" && (hash === "" || hash === "#home");
-  const isAboutActive = pathname === "/" && hash === "#about";
 
   // Tutup panel saat route berubah / klik di luar
   useEffect(() => {
@@ -112,6 +112,33 @@ export default function Header() {
 
   const effectiveLogoSrc = branding?.logoSrc || logoSalem;
   const effectiveHeaderBg = branding?.headerColor || null;
+  const effectiveGroupLogoSrc = branding?.logoSrc || defaultLogotype;
+
+  // Group mode: standalone branded header — no Fremio logo, no nav
+  if (branding?.groupMode) {
+    return (
+      <header
+        ref={headerRef}
+        className="site-header"
+        style={{
+          background: effectiveHeaderBg || "#ffffff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 16px",
+          minHeight: "72px",
+        }}
+      >
+        {effectiveGroupLogoSrc ? (
+          <img
+            src={effectiveGroupLogoSrc}
+            alt="Logo"
+            style={{ maxHeight: "56px", maxWidth: "240px", objectFit: "contain" }}
+          />
+        ) : null}
+      </header>
+    );
+  }
 
   return (
     <>
@@ -139,13 +166,6 @@ export default function Header() {
             >
               <img src={homeIcon} alt="" className="nav-icon" />
               <span>Home</span>
-            </Link>
-            <Link
-              to="/#about"
-              className={"nav-link" + (isAboutActive ? " active" : "")}
-            >
-              <img src={aboutIcon} alt="" className="nav-icon" />
-              <span>Join the Journey</span>
             </Link>
 
             {/* Route pages */}
@@ -175,6 +195,15 @@ export default function Header() {
             >
               <img src={createIcon} alt="" className="nav-icon" />
               <span>Create</span>
+            </NavLink>
+            <NavLink
+              to="/shares"
+              className={({ isActive }) =>
+                "nav-link" + (isActive ? " active" : "")
+              }
+            >
+              <img src={shareIcon} alt="" className="nav-icon" />
+              <span>Share</span>
             </NavLink>
           </nav>
 
@@ -415,13 +444,6 @@ export default function Header() {
             <img src={homeIcon} alt="" className="nav-icon" />
             <span>Home</span>
           </Link>
-          <Link
-            to="/#about"
-            className={"nav-link" + (isAboutActive ? " active" : "")}
-          >
-            <img src={aboutIcon} alt="" className="nav-icon" />
-            <span>Join the Journey</span>
-          </Link>
           <NavLink
             to="/pricing"
             className={({ isActive }) =>
@@ -446,9 +468,20 @@ export default function Header() {
             className={({ isActive }) =>
               "nav-link" + (isActive ? " active" : "")
             }
+            onClick={() => setMenuOpen(false)}
           >
             <img src={createIcon} alt="" className="nav-icon" />
             <span>Create</span>
+          </NavLink>
+          <NavLink
+            to="/shares"
+            className={({ isActive }) =>
+              "nav-link" + (isActive ? " active" : "")
+            }
+            onClick={() => setMenuOpen(false)}
+          >
+            <img src={shareIcon} alt="" className="nav-icon" />
+            <span>Share</span>
           </NavLink>
         </nav>
 

@@ -10,6 +10,7 @@ import { isVPSMode, VPS_API_URL } from '../config/backend';
 const LOCAL_EVENTS_KEY = "fremio_local_events";
 const LOCAL_ACTIVITIES_KEY = "fremio_local_activities";
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+const ANALYTICS_FETCH_TIMEOUT = 8000;
 
 // Session state
 let sessionId = null;
@@ -138,6 +139,9 @@ const sendAnalytics = async (endpoint, data) => {
  * Fetch analytics data (GET request)
  */
 const fetchAnalytics = async (endpoint, params = {}) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ANALYTICS_FETCH_TIMEOUT);
+
   try {
     const apiUrl = getApiUrl();
     const token = getAuthToken();
@@ -155,7 +159,8 @@ const fetchAnalytics = async (endpoint, params = {}) => {
     
     const response = await fetch(url, {
       method: 'GET',
-      headers
+      headers,
+      signal: controller.signal,
     });
     
     if (!response.ok) {
@@ -164,8 +169,13 @@ const fetchAnalytics = async (endpoint, params = {}) => {
     
     return await response.json();
   } catch (error) {
-    console.error('Analytics fetch error:', error.message);
+    const message = error?.name === 'AbortError'
+      ? `Analytics fetch timeout after ${ANALYTICS_FETCH_TIMEOUT}ms`
+      : error?.message;
+    console.error('Analytics fetch error:', message);
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
@@ -372,7 +382,10 @@ export const trackEvent = async (eventName, eventCategory = 'general', eventData
     sessionId: sid,
     eventName,
     eventCategory,
-    eventData
+    eventData,
+    pagePath: window.location.pathname,
+    pageUrl: window.location.href,
+    pageTitle: document.title,
   });
   
   if (eventQueue.length >= BATCH_SIZE) {
@@ -392,7 +405,10 @@ export const trackEventImmediate = async (eventName, eventCategory = 'general', 
     sessionId: sid,
     eventName,
     eventCategory,
-    eventData
+    eventData,
+    pagePath: window.location.pathname,
+    pageUrl: window.location.href,
+    pageTitle: document.title,
   });
 };
 
@@ -671,6 +687,13 @@ export const getTopPages = async (days = 30, limit = 20) => {
 };
 
 /**
+ * Get access insights for admin analytics
+ */
+export const getAccessInsights = async () => {
+  return await fetchAnalytics('/dashboard/access-insights');
+};
+
+/**
  * Get device stats
  */
 export const getDeviceStats = async (days = 30) => {
@@ -835,6 +858,7 @@ const analytics = {
   getTrafficSources,
   getRevenueAnalytics,
   getTopPages,
+  getAccessInsights,
   getDeviceStats,
   getRealtimeStats,
   flush: flushEvents,

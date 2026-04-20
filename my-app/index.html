@@ -12,7 +12,8 @@
     />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>Fremio — Photobooth Online Terbaik di Indonesia</title>
+    <title>Fremio - Photobox Online Terbaik di Indonesia | fremio.id</title>
+    <meta name="application-name" content="Fremio" />
 
     <!-- SEO Meta Tags -->
     <meta
@@ -27,6 +28,7 @@
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <meta name="theme-color" content="#7c3aed" />
     <link rel="canonical" href="https://fremio.id/" />
+    <link rel="me" href="https://www.instagram.com/fremio.id" />
 
     <!-- Favicon & Site Icons - Google requires min 48x48, square -->
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
@@ -65,6 +67,7 @@
     {
       "@context": "https://schema.org",
       "@type": "WebApplication",
+      "@id": "https://fremio.id/#webapp",
       "name": "Fremio",
       "alternateName": ["Fremio Photobox", "Fremio Photo Booth Online", "Fotobox Online Fremio"],
       "url": "https://fremio.id",
@@ -100,28 +103,59 @@
         "ratingCount": "1200"
       },
       "author": {
-        "@type": "Organization",
-        "name": "Fremio",
-        "url": "https://fremio.id",
-        "sameAs": ["https://www.instagram.com/fremio.id"]
+        "@id": "https://fremio.id/#organization"
       }
     }
     </script>
 
-    <!-- JSON-LD: Organization -->
+    <!-- JSON-LD: Organization (Brand Entity) -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "Organization",
+      "@id": "https://fremio.id/#organization",
       "name": "Fremio",
+      "legalName": "Fremio",
+      "alternateName": ["Fremio.id", "Fremio Photo Booth", "Fremio Photobox"],
       "url": "https://fremio.id",
-      "logo": "https://fremio.id/favicon-512.png",
-      "description": "Platform photobox online dan photo booth virtual terbaik di Indonesia.",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://fremio.id/favicon-512.png",
+        "width": 512,
+        "height": 512
+      },
+      "image": "https://fremio.id/og-image-v6.png",
+      "description": "Fremio adalah platform photobox online dan photo booth virtual terbaik di Indonesia. Buat foto dengan frame aesthetic, ambil selfie via kamera HP atau laptop, dan download gratis tanpa watermark.",
+      "foundingDate": "2024",
+      "areaServed": {
+        "@type": "Country",
+        "name": "Indonesia"
+      },
+      "addressCountry": "ID",
+      "inLanguage": "id-ID",
+      "brand": {
+        "@type": "Brand",
+        "name": "Fremio",
+        "logo": "https://fremio.id/favicon-512.png"
+      },
+      "knowsAbout": [
+        "Photo booth online",
+        "Photobox digital",
+        "Virtual photobooth",
+        "Photography web application",
+        "Photobox online Indonesia"
+      ],
       "contactPoint": {
         "@type": "ContactPoint",
         "contactType": "customer support",
-        "availableLanguage": "Indonesian"
-      }
+        "availableLanguage": "Indonesian",
+        "url": "https://fremio.id/help-center"
+      },
+      "sameAs": [
+        "https://www.instagram.com/fremio.id",
+        "https://fremio.id",
+        "https://www.fremio.id"
+      ]
     }
     </script>
 
@@ -194,19 +228,41 @@
             "@type": "Answer",
             "text": "Cara pakai Fremio sangat mudah: (1) Buka fremio.id di browser, (2) Pilih frame atau template favorit, (3) Ambil foto dengan kamera atau upload dari galeri, (4) Tambahkan stiker dan efek jika mau, (5) Download hasilnya langsung. Tidak perlu daftar untuk mencoba!"
           }
+        },
+        {
+          "@type": "Question",
+          "name": "Apa itu Fremio?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Fremio (fremio.id) adalah aplikasi photo booth online dan photobox virtual asal Indonesia. Dengan Fremio, kamu bisa membuat foto aesthetic dengan ratusan frame keren langsung dari browser HP atau laptop, tanpa perlu download aplikasi apapun. Fremio gratis dan bisa diakses di fremio.id."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Fremio itu apa? Apakah Fremio sama dengan Gremio?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Fremio dan Gremio adalah dua hal yang sama sekali berbeda. Fremio (fremio.id) adalah aplikasi photobox online buatan Indonesia untuk membuat foto aesthetic dengan frame keren, bisa dipakai dari HP tanpa download. Gremio (Grêmio) adalah nama klub sepak bola Brasil. Jika kamu mencari layanan photo booth online, kamu sedang mencari Fremio di fremio.id."
+          }
         }
       ]
     }
     </script>
 
-    <!-- JSON-LD: SiteLinksSearchBox -->
+    <!-- JSON-LD: WebSite + SiteLinksSearchBox -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "WebSite",
+      "@id": "https://fremio.id/#website",
       "name": "Fremio",
+      "alternateName": "Fremio.id",
       "url": "https://fremio.id",
-      "description": "Photobox online dan photo booth virtual terbaik di Indonesia",
+      "description": "Fremio — Photobox online dan photo booth virtual terbaik di Indonesia",
+      "publisher": {
+        "@id": "https://fremio.id/#organization"
+      },
+      "inLanguage": "id-ID",
       "potentialAction": {
         "@type": "SearchAction",
         "target": {

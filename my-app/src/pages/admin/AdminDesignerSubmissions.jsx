@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Clock,
   CheckCircle,
@@ -8,7 +9,61 @@ import {
   Users,
   Send,
   X,
+  ExternalLink,
 } from "lucide-react";
+import CanvasPreview from "../../components/creator/CanvasPreview.jsx";
+
+// Build element list from raw submission frame_data for read-only preview
+function buildPreviewElements(rawFrameData) {
+  let fd = rawFrameData;
+  if (typeof fd === "string") {
+    try { fd = JSON.parse(fd); } catch { fd = {}; }
+  }
+  if (!fd || typeof fd !== "object") return { elements: [], aspectRatio: "9:16", canvasBackground: "#ffffff" };
+
+  const cw = fd.canvasWidth || 1080;
+  const ch = fd.canvasHeight || 1920;
+  const elements = [];
+
+  // Background image
+  if (fd.backgroundImage) {
+    elements.push({
+      id: "bg-0", type: "background-photo",
+      x: 0, y: 0, width: cw, height: ch, zIndex: -4000,
+      data: { image: fd.backgroundImage, objectFit: "cover", label: "Background" },
+    });
+  }
+
+  // Photo slots (stored as normalized 0..1)
+  if (Array.isArray(fd.slots)) {
+    fd.slots.forEach((slot, idx) => {
+      if (!slot) return;
+      elements.push({
+        id: slot.id || `photo_${idx}`,
+        type: "photo",
+        x: (slot.left || 0) * cw, y: (slot.top || 0) * ch,
+        width: (slot.width || 0) * cw, height: (slot.height || 0) * ch,
+        rotation: slot.rotation || 0, zIndex: 0,
+        data: { photoIndex: slot.photoIndex ?? idx, borderRadius: slot.borderRadius || 0, label: "Foto" },
+      });
+    });
+  }
+
+  // Overlay elements (absolute pixels, already in editor coordinate space)
+  if (Array.isArray(fd.elements)) {
+    fd.elements.forEach((el) => {
+      if (!el || el.type === "photo") return;
+      const zIndex = el.type === "background-photo" ? (el.zIndex ?? -4000) : Math.max(el.zIndex || 100, 100);
+      elements.push({ ...el, zIndex });
+    });
+  }
+
+  return {
+    elements,
+    aspectRatio: fd.aspectRatio || fd.canvasAspectRatio || "9:16",
+    canvasBackground: fd.canvasBackground || "#ffffff",
+  };
+}
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 const getToken = () => localStorage.getItem("fremio_token");
@@ -48,6 +103,7 @@ function loadAllCategories() {
 }
 
 export default function AdminDesignerSubmissions() {
+  const navigate = useNavigate();
   const [submissions, setSubmissions] = useState([]);
   const [designers, setDesigners] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -59,6 +115,8 @@ export default function AdminDesignerSubmissions() {
   const [reviewAction, setReviewAction] = useState("approved");
   const [reviewNotes, setReviewNotes] = useState("");
   const [reviewCategory, setReviewCategory] = useState("Fremio Series");
+  const [reviewIsTemplate, setReviewIsTemplate] = useState(false);
+  const [reviewSource, setReviewSource] = useState("designer");
   const [reviewLoading, setReviewLoading] = useState(false);
   const [allCategories, setAllCategories] = useState(loadAllCategories);
   const [repairLoading, setRepairLoading] = useState(false);
@@ -68,6 +126,25 @@ export default function AdminDesignerSubmissions() {
 
   // Preview modal
   const [previewSub, setPreviewSub] = useState(null);
+  const [previewSubDetail, setPreviewSubDetail] = useState(null);
+  const [previewSubLoading, setPreviewSubLoading] = useState(false);
+
+  // Takedown / restore / update
+  const [takedownLoading, setTakedownLoading] = useState(null); // submission id
+  const [updateFrameLoading, setUpdateFrameLoading] = useState(null); // submission id
+
+  // Fetch full submission detail (includes frame_data) when preview modal opens
+  useEffect(() => {
+    if (!previewSub) { setPreviewSubDetail(null); return; }
+    setPreviewSubLoading(true);
+    fetch(`${API_URL}/designer/admin/submissions/${previewSub.id}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => setPreviewSubDetail(d.submission || null))
+      .catch(() => setPreviewSubDetail(null))
+      .finally(() => setPreviewSubLoading(false));
+  }, [previewSub]);
 
   // Sync custom categories in real-time when UploadFrame updates localStorage
   useEffect(() => {
@@ -135,6 +212,8 @@ export default function AdminDesignerSubmissions() {
     setReviewAction("approved");
     setReviewNotes("");
     setReviewCategory("Fremio Series");
+    setReviewIsTemplate(false);
+    setReviewSource("designer");
   };
 
   const submitReview = async () => {
@@ -153,6 +232,7 @@ export default function AdminDesignerSubmissions() {
             action: reviewAction,
             adminNotes: reviewNotes,
             category: reviewCategory,
+            source: reviewSource,
           }),
         }
       );
@@ -186,6 +266,69 @@ export default function AdminDesignerSubmissions() {
       setRepairResult({ success: false, message: e.message });
     } finally {
       setRepairLoading(false);
+    }
+  };
+
+  const handleTakedown = async (sub) => {
+    if (!window.confirm(`Takedown frame "${sub.frame_name}"? Frame akan disembunyikan dari publik tapi data tetap tersimpan.`)) return;
+    setTakedownLoading(sub.id);
+    try {
+      const res = await fetch(`${API_URL}/designer/admin/submissions/${sub.id}/takedown`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSubmissions((prev) => prev.map((s) => s.id === sub.id ? { ...s, frame_is_active: false } : s));
+      } else {
+        alert(data.message || "Gagal melakukan takedown");
+      }
+    } catch {
+      alert("Terjadi kesalahan");
+    } finally {
+      setTakedownLoading(null);
+    }
+  };
+
+  const handleRestore = async (sub) => {
+    if (!window.confirm(`Pulihkan frame "${sub.frame_name}"? Frame akan ditampilkan kembali ke publik.`)) return;
+    setTakedownLoading(sub.id);
+    try {
+      const res = await fetch(`${API_URL}/designer/admin/submissions/${sub.id}/restore`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSubmissions((prev) => prev.map((s) => s.id === sub.id ? { ...s, frame_is_active: true } : s));
+      } else {
+        alert(data.message || "Gagal memulihkan frame");
+      }
+    } catch {
+      alert("Terjadi kesalahan");
+    } finally {
+      setTakedownLoading(null);
+    }
+  };
+
+  const handleUpdateFrame = async (sub) => {
+    if (!window.confirm(`Update frame "${sub.frame_name}"? Data layout dan slot akan diperbarui dari submission ini. View/download count tidak akan direset.`)) return;
+    setUpdateFrameLoading(sub.id);
+    try {
+      const res = await fetch(`${API_URL}/designer/admin/submissions/${sub.id}/update-frame`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message);
+      } else {
+        alert(data.message || "Gagal memperbarui frame");
+      }
+    } catch {
+      alert("Terjadi kesalahan");
+    } finally {
+      setUpdateFrameLoading(null);
     }
   };
 
@@ -351,8 +494,8 @@ export default function AdminDesignerSubmissions() {
                         </div>
                       )}
                       {sub.published_frame_name && (
-                        <div style={S.publishedNote}>
-                          ✅ Published: {sub.published_frame_name}
+                        <div style={sub.frame_is_active === false ? { ...S.publishedNote, background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b" } : S.publishedNote}>
+                          {sub.frame_is_active === false ? "🚫 Ditakedown" : "✅ Published"}: {sub.published_frame_name}
                         </div>
                       )}
                     </div>
@@ -388,6 +531,36 @@ export default function AdminDesignerSubmissions() {
                           Review
                         </button>
                       )}
+
+                      {sub.status === "approved" && sub.published_frame_id && (
+                        <button
+                          disabled={updateFrameLoading === sub.id}
+                          style={{ padding: "6px 12px", background: updateFrameLoading === sub.id ? "#9ca3af" : "#dbeafe", color: "#1d4ed8", border: "1px solid #93c5fd", borderRadius: "6px", fontSize: "12px", fontWeight: "600", cursor: updateFrameLoading === sub.id ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                          onClick={() => handleUpdateFrame(sub)}
+                        >
+                          {updateFrameLoading === sub.id ? "Updating..." : "🔄 Update"}
+                        </button>
+                      )}
+
+                      {sub.status === "approved" && sub.published_frame_id && sub.frame_is_active !== false && (
+                        <button
+                          disabled={takedownLoading === sub.id}
+                          style={{ padding: "6px 12px", background: takedownLoading === sub.id ? "#9ca3af" : "#fef3c7", color: "#92400e", border: "1px solid #f59e0b", borderRadius: "6px", fontSize: "12px", fontWeight: "600", cursor: takedownLoading === sub.id ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                          onClick={() => handleTakedown(sub)}
+                        >
+                          🚫 Takedown
+                        </button>
+                      )}
+
+                      {sub.status === "approved" && sub.published_frame_id && sub.frame_is_active === false && (
+                        <button
+                          disabled={takedownLoading === sub.id}
+                          style={{ padding: "6px 12px", background: takedownLoading === sub.id ? "#9ca3af" : "#d1fae5", color: "#065f46", border: "1px solid #10b981", borderRadius: "6px", fontSize: "12px", fontWeight: "600", cursor: takedownLoading === sub.id ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                          onClick={() => handleRestore(sub)}
+                        >
+                          ✅ Pulihkan
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -410,7 +583,7 @@ export default function AdminDesignerSubmissions() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "#f9fafb" }}>
-                    {["Designer", "Email", "Total", "Pending", "Approved", "Rejected", "Bergabung"].map(
+                    {["Designer", "Email", "Total", "Pending", "Approved", "Rejected", "Bergabung", "Sertifikat"].map(
                       (h) => (
                         <th
                           key={h}
@@ -443,6 +616,20 @@ export default function AdminDesignerSubmissions() {
                       <td style={{ ...S.td, color: "#ef4444" }}>{d.rejected}</td>
                       <td style={{ ...S.td, color: "#9ca3af" }}>
                         {new Date(d.created_at).toLocaleDateString("id-ID")}
+                      </td>
+                      <td style={S.td}>
+                        {d.certificate_name ? (
+                          <div>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b", borderRadius: "8px", padding: "3px 8px", fontSize: "12px", fontWeight: "700" }}>
+                              🎖️ {d.certificate_name}
+                            </span>
+                            <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: "3px" }}>
+                              {new Date(d.certificate_claimed_at).toLocaleDateString("id-ID")}
+                            </div>
+                          </div>
+                        ) : (
+                          <span style={{ color: "#d1d5db", fontSize: "12px" }}>—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -531,12 +718,59 @@ export default function AdminDesignerSubmissions() {
                 <X size={18} />
               </button>
             </div>
-            <div style={{ textAlign: "center", padding: "16px" }}>
-              <img
-                src={previewSub.thumbnail_data_url}
-                alt={previewSub.frame_name}
-                style={{ maxWidth: "100%", maxHeight: "60vh", borderRadius: "8px" }}
-              />
+            <div style={{ display: "flex", justifyContent: "center", padding: "16px", overflow: "hidden", minHeight: "100px", alignItems: "center" }}>
+              {previewSubLoading ? (
+                <div style={{ padding: "40px 0", color: "#9ca3af", fontSize: "13px" }}>Memuat preview...</div>
+              ) : previewSubDetail ? (() => {
+                const { elements, aspectRatio, canvasBackground } = buildPreviewElements(previewSubDetail.frame_data);
+                return (
+                  <div style={{ pointerEvents: "none", userSelect: "none" }}>
+                    <CanvasPreview
+                      elements={elements}
+                      selectedElementId={null}
+                      canvasBackground={canvasBackground}
+                      aspectRatio={aspectRatio}
+                      previewConstraints={{ maxWidth: 260, maxHeight: 480 }}
+                      onSelect={() => {}}
+                      onUpdate={() => {}}
+                      onBringToFront={() => {}}
+                      onRemove={() => {}}
+                      onDuplicate={() => {}}
+                      onToggleLock={() => {}}
+                      onResizeUpload={() => {}}
+                    />
+                  </div>
+                );
+              })() : (
+                <img
+                  src={previewSub.thumbnail_data_url}
+                  alt={previewSub.frame_name}
+                  style={{ maxWidth: "100%", maxHeight: "55vh", borderRadius: "8px" }}
+                />
+              )}
+            </div>
+            {/* Open in Editor button */}
+            <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <button
+                onClick={() => {
+                  setPreviewSub(null);
+                  navigate(`/designer/editor?adminPreview=${previewSub.id}`);
+                }}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+                  width: "100%", padding: "11px 16px",
+                  background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
+                  color: "#fff", border: "none", borderRadius: "10px",
+                  fontSize: "14px", fontWeight: "700", cursor: "pointer",
+                  boxShadow: "0 4px 12px rgba(99,102,241,0.35)",
+                }}
+              >
+                <ExternalLink size={16} />
+                Buka di Editor (Preview Admin)
+              </button>
+              <p style={{ margin: 0, fontSize: "11px", color: "#9ca3af", textAlign: "center" }}>
+                Mode simulasi — perubahan tidak akan disimpan
+              </p>
             </div>
           </div>
         </div>
@@ -604,22 +838,56 @@ export default function AdminDesignerSubmissions() {
                 </button>
               </div>
 
-              {/* Category (only for approve) */}
+              {/* Approve options (only for approve) */}
               {reviewAction === "approved" && (
-                <>
-                  <label style={S.mLabel}>Kategori Frame</label>
+                <div style={{ marginBottom: "14px" }}>
+                  {/* Category */}
+                  <label style={S.mLabel}>Kategori Frame *</label>
                   <select
                     value={reviewCategory}
                     onChange={(e) => setReviewCategory(e.target.value)}
-                    style={S.select}
+                    style={{ ...S.select, marginBottom: "12px" }}
                   >
-                    {allCategories.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
+                    {allCategories.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
                     ))}
                   </select>
-                </>
+
+                  {/* Source type */}
+                  <label style={S.mLabel}>Tipe Frame *</label>
+                  <div style={{ display: "flex", gap: "10px", marginBottom: "4px" }}>
+                    <button
+                      style={{
+                        flex: 1,
+                        padding: "10px",
+                        borderRadius: "8px",
+                        border: reviewSource === "designer" ? "2px solid #6366f1" : "2px solid #e5e7eb",
+                        background: reviewSource === "designer" ? "#eef2ff" : "#f9fafb",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                      onClick={() => setReviewSource("designer")}
+                    >
+                      <div style={{ fontWeight: "700", fontSize: "13px", color: reviewSource === "designer" ? "#4338ca" : "#374151" }}>🎨 By Designer</div>
+                      <div style={{ fontSize: "11px", color: "#6b7280", marginTop: "2px" }}>Bisa dikustom — muncul di /create → Templates</div>
+                    </button>
+                    <button
+                      style={{
+                        flex: 1,
+                        padding: "10px",
+                        borderRadius: "8px",
+                        border: reviewSource === "fremio" ? "2px solid #f59e0b" : "2px solid #e5e7eb",
+                        background: reviewSource === "fremio" ? "#fffbeb" : "#f9fafb",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                      onClick={() => setReviewSource("fremio")}
+                    >
+                      <div style={{ fontWeight: "700", fontSize: "13px", color: reviewSource === "fremio" ? "#92400e" : "#374151" }}>✨ By Fremio</div>
+                      <div style={{ fontSize: "11px", color: "#6b7280", marginTop: "2px" }}>Siap pakai — muncul di /admin/frames → By Fremio</div>
+                    </button>
+                  </div>
+                </div>
               )}
 
               {/* Notes */}

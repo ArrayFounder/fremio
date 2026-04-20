@@ -7,6 +7,14 @@
 /* stylelint-enable at-rule-no-unknown */
 
 /* Utility Classes */
+
+/* Prevent iOS Safari auto-zoom on input focus (triggered when font-size < 16px) */
+@media screen and (max-width: 768px) {
+  input:not(.canvas-text-editor), textarea:not(.canvas-text-editor), select {
+    font-size: 16px !important;
+  }
+}
+
 .hidden {
   position: absolute !important;
   left: -9999px !important;
@@ -462,7 +470,6 @@ html {
 }
 body {
   margin: 0;
-  overflow-x: hidden;
   font-family: "Poppins", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
   color: var(--text);

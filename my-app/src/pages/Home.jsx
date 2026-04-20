@@ -1,35 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { trackUserSession, trackFunnelEvent } from "../services/analyticsService";
 import { useSEO } from "../hooks/useSEO.js";
-import frame1 from "../assets/frame1_ramadan.png";
-import frame2 from "../assets/frame2_ramadan.png";
-import frame3 from "../assets/frame3_ramadan.png";
+import { useTranslation } from "react-i18next";
 
 export default function Home() {
   const { isAuthenticated } = useAuth();
-  const [heroVariant, setHeroVariant] = useState('A');
+  const { t } = useTranslation();
 
   useSEO({
-    title: "Fremio - Photo Booth Online & Photobox Virtual Indonesia",
-    description: "Fremio adalah photo booth online & photobox virtual terbaik di Indonesia. Ambil foto via kamera, pilih ratusan frame keren, tambahkan stiker & efek, lalu download gratis!",
+    title: t("home.seo_title"),
+    description: t("home.seo_description"),
     keywords: "fremio, photo booth online, photobox online, photobooth online, photobox virtual, frame foto online, bingkai foto online, selfie frame, foto dengan frame, photo booth indonesia, photo booth gratis",
     canonical: "https://fremio.id/",
   });
-
-  // A/B Test: Determine variant on first load
-  useEffect(() => {
-    const storedVariant = localStorage.getItem('heroVariant');
-    if (storedVariant) {
-      setHeroVariant(storedVariant);
-    } else {
-      // Random 50/50 split
-      const variant = Math.random() < 0.5 ? 'A' : 'B';
-      setHeroVariant(variant);
-      localStorage.setItem('heroVariant', variant);
-    }
-  }, []);
 
   // Track user visit on Home page
   useEffect(() => {
@@ -47,17 +32,6 @@ export default function Home() {
     trackVisit();
   }, []);
 
-  const currentHero = {
-    headline: (
-      <>
-        Lebaran Lebih Bermakna,{" "}
-        <span className="accent">Bersama Fremio.</span>
-      </>
-    ),
-    subCopy: "Simpan tawa, cerita, dan kehangatan keluargamu dalam satu bingkai.",
-    cta: "Abadikan Momenmu"
-  };
-
   return (
     <>
       {/* ======= HERO (/#home) ======= */}
@@ -66,54 +40,59 @@ export default function Home() {
         className="hero-fremio"
         style={{ scrollMarginTop: "64px" }}
       >
-        {/* Ramadan deco */}
-        <CrescentIcon className="rmd-crescent" />
-        <StarIcon className="rmd-star rmd-star-1" />
-        <StarIcon className="rmd-star rmd-star-2" />
-        <StarIcon className="rmd-star rmd-star-3" />
+        {/* Dekorasi sudut – di luar container agar tidak menimpa teks */}
+        <CameraIcon className="deco deco-tl" />
+        <FilmIcon className="deco deco-tr" />
+        <FilmIcon className="deco deco-bl" />
+        <CameraIcon className="deco deco-br" />
+
         <div className="container">
           <div className="hero-grid">
-            {/* LEFT */}
-            <div className="hero-left">
-              <h1 className="hero-h1">
-                {currentHero.headline}
-              </h1>
+            <h1 className="hero-h1">
+              {t("home.hero_h1_line1")}<br />
+              <span className="accent">{t("home.hero_h1_line2")}</span>
+            </h1>
 
-              <p className="hero-sub">
-                {currentHero.subCopy}
-              </p>
+            <p className="hero-sub">
+              {t("home.hero_sub")}
+            </p>
 
-              <NavLink
-                to="/frames"
-                className="cta-pink"
-              >
-                {currentHero.cta}
+            <div className="cta-group">
+              <NavLink to="/shares" className="cta-share">
+                {t("home.cta_share")}
               </NavLink>
-
-              {/* dekorasi */}
-              <LanternIcon className="deco cam-tl" />
-              <FilmIcon className="deco film-tc" />
-              <LanternIcon className="deco cam-bl" />
-              <FilmIcon className="deco film-bc" />
-            </div>
-
-            {/* RIGHT – kolase */}
-            <div className="hero-right">
-              <img
-                src={frame3}
-                alt="Contoh frame utama"
-                className="shot main"
-              />
-              <img src={frame2} alt="Contoh frame kiri" className="shot left" />
-              <img
-                src={frame1}
-                alt="Contoh frame kanan"
-                className="shot right"
-              />
+              <NavLink to="/frames" className="cta-primary">
+                {t("home.cta_frames")}
+              </NavLink>
+              <NavLink
+                to={"/create"}
+                className="cta-secondary"
+              >
+                {t("home.cta_create")}
+              </NavLink>
+              <NavLink to="/designer" className="cta-tertiary">
+                {t("home.cta_designer")}
+              </NavLink>
             </div>
           </div>
         </div>
       </section>
+
+      {/* ======= STATS (Fremio Dalam Angka) ======= */}
+      <div className="home-stats-strip">
+        <span className="home-stats-label">Fremio dalam angka</span>
+        <div className="home-stats-items">
+          <div className="home-stats-item">
+            <span className="home-stats-num">10M+</span>
+            <span className="home-stats-desc">Awareness</span>
+          </div>
+          <div className="home-stats-item">
+            <span className="home-stats-num">1M+</span>
+            <span className="home-stats-desc">Pengguna dari berbagai negara</span>
+            <span className="home-stats-sub">🇮🇩 Indonesia &nbsp;·&nbsp; 🇲🇾 Malaysia &nbsp;·&nbsp; 🇸🇬 Singapura &nbsp;·&nbsp; 🇹🇭 Thailand &nbsp;·&nbsp; 🇵🇭 Filipina &nbsp;·&nbsp; 🇯🇵 Jepang &nbsp;·&nbsp; 🇺🇸 Amerika Serikat &nbsp;·&nbsp; 🇬🇧 Inggris &nbsp;·&nbsp; 🇫🇷 Prancis</span>
+          </div>
+        </div>
+      </div>
 
       {/* ======= ABOUT (/#about) ======= */}
       <section
@@ -125,23 +104,23 @@ export default function Home() {
           <div className="about-content">
             {/* Cinematic Title */}
             <div className="about-header fade-in-up">
-              <span className="about-overline">— fremio journey —</span>
+              <span className="about-overline">{t("home.about_overline")}</span>
               <h2 className="about-title">
-                <span className="about-title-main">Momen yang Kita Lewatkan</span>
+                <span className="about-title-main">{t("home.about_title")}</span>
               </h2>
             </div>
 
             {/* Story Block */}
             <div className="about-story">
               <div className="story-quote fade-in-up delay-1">"</div>
-              <p className="about-text fade-in-up delay-2">
-                Suatu hari kamu akan melihat ke belakang dan menyadari bahwa bukan <em>momen besar</em> yang paling penting, tapi <em>momen sehari-hari</em> yang mungkin biasa saja—tawa keluarga, candaan teman, tatapan lembut pasangan.
-              </p>
-              <p className="about-text about-text-fade fade-in-up delay-3">
-                Suatu hari rumah akan terasa sepi. Tempat favoritmu terasa hambar. Yang paling penting adalah: <strong>apakah kamu benar-benar ada di sana</strong> saat itu semua terjadi?
-              </p>
+              <p className="about-text fade-in-up delay-2"
+                dangerouslySetInnerHTML={{ __html: t("home.story_p1") }}
+              />
+              <p className="about-text about-text-fade fade-in-up delay-3"
+                dangerouslySetInnerHTML={{ __html: t("home.story_p2") }}
+              />
               <p className="about-closing fade-in-up delay-4">
-                — Mari berada di sana, bersama —
+                {t("home.story_closing")}
               </p>
             </div>
 
@@ -155,17 +134,13 @@ export default function Home() {
             {/* Vision & Mission - Refined */}
             <div className="mv-grid">
               <div className="mv-card fade-in-up delay-5">
-                <span className="mv-label">Vision</span>
-                <p>
-                  Setiap orang punya cerita yang layak dirayakan. Fremio hadir sebagai teman dalam setiap cerita unik yang terjadi sehari-hari.
-                </p>
+                <span className="mv-label">{t("home.vision_label")}</span>
+                <p>{t("home.vision_text")}</p>
               </div>
 
               <div className="mv-card fade-in-up delay-6">
-                <span className="mv-label">Mission</span>
-                <p>
-                  Menyediakan frame yang pas untuk ceritamu setiap bulannya—agar momen kecil terasa istimewa.
-                </p>
+                <span className="mv-label">{t("home.mission_label")}</span>
+                <p>{t("home.mission_text")}</p>
               </div>
             </div>
           </div>
@@ -178,17 +153,14 @@ export default function Home() {
 }
 
 /* ====== Ikon dekor ====== */
-function LanternIcon({ className = "" }) {
+function CameraIcon({ className = "" }) {
   return (
-    <svg className={className} viewBox="0 0 64 80" fill="none" aria-hidden="true">
-      <line x1="32" y1="0" x2="32" y2="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-      <rect x="18" y="10" width="28" height="5" rx="2" fill="currentColor"/>
-      <rect x="14" y="15" width="36" height="44" rx="8" fill="currentColor" opacity="0.18" stroke="currentColor" strokeWidth="2"/>
-      <line x1="14" y1="37" x2="50" y2="37" stroke="currentColor" strokeWidth="1.5" opacity="0.4"/>
-      <line x1="32" y1="15" x2="32" y2="59" stroke="currentColor" strokeWidth="1.5" opacity="0.4"/>
-      <rect x="18" y="59" width="28" height="5" rx="2" fill="currentColor"/>
-      <line x1="26" y1="64" x2="38" y2="64" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-      <circle cx="32" cy="37" r="5" fill="currentColor" opacity="0.5"/>
+    <svg className={className} viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <rect x="6" y="18" width="52" height="36" rx="6" fill="currentColor" opacity="0.85" />
+      <circle cx="32" cy="36" r="11" fill="none" stroke="#fff" strokeWidth="3" />
+      <circle cx="32" cy="36" r="6" fill="#fff" opacity="0.6" />
+      <rect x="22" y="10" width="20" height="10" rx="3" fill="currentColor" />
+      <circle cx="50" cy="26" r="3" fill="#fff" opacity="0.7" />
     </svg>
   );
 }
@@ -202,30 +174,6 @@ function FilmIcon({ className = "" }) {
       <rect x="48" y="20" width="6" height="24" rx="2" fill="currentColor" />
       <circle cx="51" cy="24" r="1.6" fill="#fff" />
       <circle cx="51" cy="40" r="1.6" fill="#fff" />
-    </svg>
-  );
-}
-function CrescentIcon({ className = "" }) {
-  return (
-    <svg className={className} viewBox="0 0 120 120" fill="none" aria-hidden="true">
-      <path
-        d="M75,18 A46,46 0 1,0 75,102 A30,30 0 1,1 75,18 Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinejoin="round"
-      />
-      <polygon points="92,14 94.5,21 102,21 96,25.5 98.5,32.5 92,28 85.5,32.5 88,25.5 82,21 89.5,21" fill="currentColor" />
-    </svg>
-  );
-}
-function StarIcon({ className = "" }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <polygon
-        points="12,2 13.8,8.2 20,8.2 15,12 17,18 12,14.5 7,18 9,12 4,8.2 10.2,8.2"
-        fill="currentColor"
-      />
     </svg>
   );
 }

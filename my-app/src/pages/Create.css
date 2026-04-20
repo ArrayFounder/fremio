@@ -1,9 +1,21 @@
+/* When designer editor is mounted, lock html/body scroll entirely.
+   overflow:clip (unlike hidden) blocks ALL scrolling including programmatic
+   scroll triggered by focus events / newly mounted DOM elements. */
+html:has(.create-page),
+body:has(.create-page) {
+  overflow: clip !important;
+  height: 100% !important;
+}
+
 .create-page {
   min-height: 100vh;
   min-height: 100dvh;
   background: linear-gradient(180deg, #f8f5f2 0%, #ffffff 100%);
-  padding: 48px 20px 60px;
+  padding: 2.5px 20px 8px;
   box-sizing: border-box;
+  overflow: hidden;
+  height: 100vh;
+  height: 100dvh;
 }
 
 .create-toast-wrapper {
@@ -43,8 +55,8 @@
   display: flex;
   gap: 28px;
   align-items: stretch;
-  height: calc(100vh - 120px);
-  height: calc(100dvh - 120px);
+  height: calc(100vh - 70px);
+  height: calc(100dvh - 70px);
 }
 
 .create-preview {
@@ -59,7 +71,7 @@
   border: 1px solid rgba(224, 183, 169, 0.2);
   backdrop-filter: blur(10px);
   align-items: center;
-  max-height: calc(100vh - 120px);
+  max-height: calc(100vh - 70px);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
@@ -106,8 +118,10 @@
   box-shadow: 0 24px 55px rgba(240, 204, 194, 0.35);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 120px);
+  max-height: calc(100vh - 70px);
   overflow: hidden;
+  /* Prevent focus-induced scroll-into-view inside panel from moving window */
+  contain: layout;
 }
 
 .create-panel--properties {
@@ -120,8 +134,20 @@
   box-shadow: 0 24px 55px rgba(240, 204, 194, 0.35);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 120px);
+  max-height: calc(100vh - 70px);
   overflow: hidden;
+  /* Prevent focus-induced scroll-into-view inside panel from moving window */
+  contain: layout;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.create-panel--properties--wide {
+  width: 380px;
+}
+
+.create-panel--properties--wide .create-panel__body {
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
 .create-panel__title {
@@ -357,11 +383,11 @@
 }
 
 .creator-element--selected {
-  box-shadow: 0 0 0 3px rgba(244, 114, 182, 0.4);
+  box-shadow: 0 0 0 15px rgba(244, 114, 182, 0.4);
 }
 
 .creator-element--type-background-photo.creator-element--selected {
-  box-shadow: 0 0 0 3px rgba(244, 114, 182, 0.22);
+  box-shadow: 0 0 0 15px rgba(244, 114, 182, 0.22);
 }
 
 .creator-resize-wrapper {
@@ -562,13 +588,50 @@
   }
 }
 
+/* Designer editor: allow full-page scroll so tools + info panel are reachable */
+html:has(.designer-editor),
+body:has(.designer-editor) {
+  overflow: auto !important;
+  height: auto !important;
+}
+
+.designer-editor.create-page {
+  height: auto !important;
+  min-height: 100dvh;
+  overflow: visible !important;
+  padding-bottom: 120px !important;
+}
+
+.designer-editor .create-grid {
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+.designer-editor .create-panel--tools {
+  height: auto !important;
+  max-height: none !important;
+  overflow-y: visible !important;
+}
+
 @media (max-width: 768px) {
+  /* Allow the page to scroll on mobile so Save/Use Frame buttons are reachable */
+  html:has(.create-page),
+  body:has(.create-page) {
+    overflow: auto !important;
+    height: auto !important;
+  }
+
   .create-page {
     padding: 12px 10px calc(110px + env(safe-area-inset-bottom, 0px));
+    overflow: visible;
+    height: auto;
+    min-height: 100dvh;
   }
 
   .create-grid {
-  gap: 8px;
+    gap: 8px;
+    height: auto;
+    min-height: 0;
   }
 
   .create-panel--tools,
@@ -586,7 +649,10 @@
     align-items: center;
     justify-content: flex-start;
     gap: 4px;
-    min-height: auto;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    overflow-y: visible;
   }
 
   .create-preview__body {

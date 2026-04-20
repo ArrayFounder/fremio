@@ -31,6 +31,10 @@ import {
   ChevronsUp,
   ChevronsDown,
   Grid3X3,
+  Search,
+  ChevronLeft,
+  Import as ImportIcon,
+  Download,
 } from "lucide-react";
 import CanvasPreview from "../components/creator/CanvasPreview.jsx";
 import PropertiesPanel from "../components/creator/PropertiesPanel.jsx";
@@ -49,9 +53,11 @@ import {
 } from "../components/creator/canvasConstants.js";
 import draftStorage from "../utils/draftStorage.js";
 import draftService from "../services/draftService.js";
+import paymentService from "../services/paymentService";
 import { computeDraftSignature } from "../utils/draftHelpers.js";
 import safeStorage from "../utils/safeStorage.js";
 import userStorage from "../utils/userStorage.js";
+import frameProvider from "../utils/frameProvider.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { clearStaleFrameCache } from "../utils/frameCacheCleaner.js";
 import { EDITOR_FONT_FAMILIES } from "../config/editorFonts.js";
@@ -571,9 +577,100 @@ const injectCapturedPhotoOverlays = (elements = []) => {
   return result;
 };
 
+// Smart background removal: samples ALL border pixels, finds dominant background color,
+// then flood-fills with tight tolerance so only actual background is removed.
+const removeWhiteBackground = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const MAX = 1000;
+    const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    let imgData;
+    try { imgData = ctx.getImageData(0, 0, w, h); } catch { resolve(dataUrl); return; }
+    const d = imgData.data;
+
+    // If image already has transparency, skip
+    let hasTransparency = false;
+    for (let i = 3; i < d.length; i += 4) { if (d[i] < 200) { hasTransparency = true; break; } }
+    if (hasTransparency) { resolve(canvas.toDataURL('image/png')); return; }
+
+    // --- Step 1: sample all border pixels, bin into 8-unit buckets ---
+    const binKey = (r, g, b) =>
+      `${Math.round(r / 8) * 8},${Math.round(g / 8) * 8},${Math.round(b / 8) * 8}`;
+    const colorBins = new Map();
+    const addBorder = (x, y) => {
+      const i = (y * w + x) * 4;
+      const key = binKey(d[i], d[i+1], d[i+2]);
+      colorBins.set(key, (colorBins.get(key) || 0) + 1);
+    };
+    for (let x = 0; x < w; x++) { addBorder(x, 0); addBorder(x, h - 1); }
+    for (let y = 1; y < h - 1; y++) { addBorder(0, y); addBorder(w - 1, y); }
+
+    // --- Step 2: pick most dominant border color ---
+    let maxCount = 0, bgKey = '';
+    for (const [key, count] of colorBins) {
+      if (count > maxCount) { maxCount = count; bgKey = key; }
+    }
+    const totalBorderPx = 2 * (w + h) - 4;
+    if (maxCount < totalBorderPx * 0.08 || !bgKey) { resolve(dataUrl); return; }
+    const [bgR, bgG, bgB] = bgKey.split(',').map(Number);
+
+    // --- Step 3: flood-fill from edges with tight per-channel tolerance ---
+    const TOL = 60;
+    const visited = new Uint8Array(w * h);
+    const q = new Int32Array(w * h * 2);
+    let qHead = 0, qTail = 0;
+    const enqueue = (x, y) => {
+      if (x >= 0 && x < w && y >= 0 && y < h) {
+        const idx = y * w + x;
+        if (!visited[idx]) { visited[idx] = 1; q[qTail++] = x; q[qTail++] = y; }
+      }
+    };
+    for (let x = 0; x < w; x++) { enqueue(x, 0); enqueue(x, h - 1); }
+    for (let y = 1; y < h - 1; y++) { enqueue(0, y); enqueue(w - 1, y); }
+
+    while (qHead < qTail) {
+      const x = q[qHead++], y = q[qHead++];
+      const p = (y * w + x) * 4;
+      const diff = Math.abs(d[p] - bgR) + Math.abs(d[p+1] - bgG) + Math.abs(d[p+2] - bgB);
+      if (diff <= TOL) {
+        d[p + 3] = 0;
+        enqueue(x - 1, y); enqueue(x + 1, y);
+        enqueue(x, y - 1); enqueue(x, y + 1);
+      }
+    }
+
+    // --- Step 4: soft edge — semi-transparent fringe pixels (anti-aliasing) ---
+    const SOFT_TOL = 110;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = (y * w + x) * 4;
+        if (d[p + 3] === 0) continue;
+        const diff = Math.abs(d[p] - bgR) + Math.abs(d[p+1] - bgG) + Math.abs(d[p+2] - bgB);
+        if (diff <= SOFT_TOL) {
+          const alpha = Math.round(((diff - TOL) / (SOFT_TOL - TOL)) * 255);
+          if (alpha < d[p + 3]) d[p + 3] = alpha;
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    resolve(canvas.toDataURL('image/png'));
+  };
+  img.onerror = () => resolve(dataUrl);
+  img.src = dataUrl;
+});
+
 export default function Create() {
   console.log("[Create] Component rendering...");
   const fileInputRef = useRef(null);
+  const importFrameInputRef = useRef(null);
   const uploadPurposeRef = useRef("upload");
   const toastTimeoutRef = useRef(null);
   const [saving, setSaving] = useState(false);
@@ -592,6 +689,10 @@ export default function Create() {
   const [isExistingDraft, setIsExistingDraft] = useState(false); // Track if draft was loaded from existing drafts
   const [isBackgroundLocked, setIsBackgroundLocked] = useState(false); // Lock background to prevent accidental edits
   const [pendingPhotoTool, setPendingPhotoTool] = useState(false); // Show photo tool properties without adding element
+  const [pendingPexelsTool, setPendingPexelsTool] = useState(false); // Show Pexels/Pixabay search in properties panel
+  const [showUseFrameConfirm, setShowUseFrameConfirm] = useState(false); // Confirm dialog before using frame without saving
+  // ── Import Frame ──
+  const [importFrameWorking, setImportFrameWorking] = useState(false);
   const previewFrameRef = useRef(null);
   const [previewConstraints, setPreviewConstraints] = useState({
     maxWidth: 460,
@@ -604,8 +705,33 @@ export default function Create() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth(); // For cloud draft saving
+  const [hasAccess, setHasAccess] = useState(false);
 
-  // Calculate canvas dimensions based on selected aspect ratio
+  const getEffectiveAuthUser = useCallback(() => {
+    if (user?.email || user?.role) return user;
+
+    try {
+      const cachedUser = localStorage.getItem("fremio_user");
+      if (cachedUser) {
+        return JSON.parse(cachedUser);
+      }
+    } catch (_) {
+      // ignore malformed cached auth
+    }
+
+    return null;
+  }, [user]);
+
+  const effectiveAuthUser = getEffectiveAuthUser();
+  const effectiveUserEmail = effectiveAuthUser?.email || null;
+
+  // Check membership access for membership-locked draft behavior.
+  useEffect(() => {
+    if (!effectiveUserEmail) { setHasAccess(false); return; }
+    paymentService.getAccess()
+      .then((res) => setHasAccess(!!(res?.success && res?.hasAccess)))
+      .catch(() => setHasAccess(false));
+  }, [effectiveUserEmail]);
   // NOTE: Must be defined before any callbacks that reference it.
   const getCanvasDimensions = useCallback((ratio) => {
     const defaultDimensions = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
@@ -676,7 +802,7 @@ export default function Create() {
             width: slotWidth * width,
             height: slotHeight * height,
             rotation: typeof slot.rotation === "number" ? slot.rotation : 0,
-            zIndex: 1,
+            zIndex: 0,
             data: {
               photoIndex:
                 slot.photoIndex !== undefined ? slot.photoIndex : index,
@@ -686,11 +812,21 @@ export default function Create() {
         });
       }
 
+      const hasPhotoSlotsFromSlots = result.some(
+        (element) => element?.type === "photo"
+      );
+
       // 2) Overlay/upload/text/shape elements (may be stored as normalized)
+      // NOTE: layout.elements may contain photo-type elements reconstructed from slots,
+      // but some legacy/custom templates only persist photo areas there. Keep them as a
+      // fallback when slots did not produce any photo elements.
       const layoutElements = baseFrame?.layout?.elements;
       if (Array.isArray(layoutElements)) {
         layoutElements.forEach((el) => {
           if (!el || typeof el !== "object") return;
+
+          // Skip duplicated photo elements when normalized slots already recreated them.
+          if (el.type === "photo" && hasPhotoSlotsFromSlots) return;
 
           let restoredWidth =
             el.widthNorm !== undefined ? el.widthNorm * width : el.width;
@@ -701,10 +837,15 @@ export default function Create() {
             restoredHeight = restoredWidth / el.data.imageAspectRatio;
           }
 
+          // CRITICAL: ALL non-photo, non-background elements must be above photo slots (zIndex 0)
+          // Use minimum 100 for ALL overlay types (upload, text, shape, etc.)
+          const OVERLAY_MIN_Z = 100;
           const restoredZIndex =
-            el.type === "upload"
-              ? Math.max(el.zIndex || 100, 100)
-              : Math.max(el.zIndex || 10, 10);
+            el.type === "photo"
+              ? 0
+              : el.type === "background-photo"
+              ? -4000
+              : Math.max(el.zIndex || OVERLAY_MIN_Z, OVERLAY_MIN_Z);
 
           const restoredElement = {
             ...el,
@@ -914,7 +1055,6 @@ export default function Create() {
           label: backgroundPhotoElement ? "Foto" : "Tambah Foto",
           icon: ImageIcon,
         },
-        { id: "canvas-size", label: "Ukuran", icon: Maximize2 },
       ];
     }
 
@@ -947,6 +1087,7 @@ export default function Create() {
           { id: "photo-size", label: "Ukuran", icon: Maximize2 },
           { id: "photo-radius", label: "Sudut", icon: CornerDownRight },
           { id: "photo-outline", label: "Outline", icon: Square },
+          { id: "photo-manage", label: "Kelola", icon: Trash2 },
           { id: "layer-order", label: "Lapisan", icon: Layers },
         ];
       case "upload":
@@ -956,6 +1097,7 @@ export default function Create() {
           { id: "photo-size", label: "Ukuran", icon: Maximize2 },
           { id: "photo-radius", label: "Sudut", icon: CornerDownRight },
           { id: "upload-outline", label: "Outline", icon: Square },
+          { id: "upload-manage", label: "Kelola", icon: Trash2 },
           { id: "layer-order", label: "Lapisan", icon: Layers },
         ];
       case "background-photo":
@@ -979,7 +1121,9 @@ export default function Create() {
       return;
     }
     if (!isMobilePropertyToolbar) {
-      setActiveMobileProperty(null);
+      if (activeMobileProperty !== "canvas-size") {
+        setActiveMobileProperty(null);
+      }
       return;
     }
     const availableIds = new Set(mobilePropertyButtons.map((item) => item.id));
@@ -1605,7 +1749,7 @@ export default function Create() {
       setCanvasBackground(
         baseFrame?.canvasBackground ||
           baseFrame?.layout?.backgroundColor ||
-          "#f7f1ed"
+          "#ffffff"
       );
 
       setActiveDraftId(null);
@@ -1633,7 +1777,7 @@ export default function Create() {
       // User entered Create page directly - reset ONLY on first mount
       console.log("🔄 [Create] First time entry - resetting canvas");
       setElements([]);
-      setCanvasBackground("#f7f1ed");
+      setCanvasBackground("#ffffff");
       setCanvasAspectRatio("9:16");
       setActiveDraftId(null);
       setIsExistingDraft(false); // Reset - this is a new frame
@@ -1807,6 +1951,168 @@ export default function Create() {
     };
     reader.readAsDataURL(file);
   };
+
+  // ── Detect transparent slot regions in a frame PNG ──
+  // Returns array of normalized { left, top, width, height } objects.
+  const detectFrameSlots = useCallback((dataUrl) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        // Work at reduced resolution for speed (max 400px on longest side)
+        const scale = Math.min(1, 400 / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+
+        const offscreen = document.createElement("canvas");
+        offscreen.width = w;
+        offscreen.height = h;
+        const ctx = offscreen.getContext("2d", { alpha: true });
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+
+        const { data: pixels } = ctx.getImageData(0, 0, w, h);
+
+        // Build transparent pixel map (alpha < 128)
+        const transp = new Uint8Array(w * h);
+        for (let i = 0; i < w * h; i++) {
+          transp[i] = pixels[i * 4 + 3] < 128 ? 1 : 0;
+        }
+
+        // Connected components (flood fill, 4-connected)
+        const labels = new Int32Array(w * h).fill(-1);
+        const bounds = []; // { minX, minY, maxX, maxY, size }
+        const stack = [];
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const idx = y * w + x;
+            if (!transp[idx] || labels[idx] !== -1) continue;
+            const label = bounds.length;
+            const b = { minX: x, minY: y, maxX: x, maxY: y, size: 0 };
+            stack.push(idx);
+            while (stack.length > 0) {
+              const cur = stack.pop();
+              if (labels[cur] !== -1) continue;
+              labels[cur] = label;
+              b.size++;
+              const cx = cur % w;
+              const cy = Math.floor(cur / w);
+              if (cx < b.minX) b.minX = cx;
+              if (cx > b.maxX) b.maxX = cx;
+              if (cy < b.minY) b.minY = cy;
+              if (cy > b.maxY) b.maxY = cy;
+              if (cx > 0 && transp[cur - 1] && labels[cur - 1] === -1) stack.push(cur - 1);
+              if (cx < w - 1 && transp[cur + 1] && labels[cur + 1] === -1) stack.push(cur + 1);
+              if (cy > 0 && transp[cur - w] && labels[cur - w] === -1) stack.push(cur - w);
+              if (cy < h - 1 && transp[cur + w] && labels[cur + w] === -1) stack.push(cur + w);
+            }
+            bounds.push(b);
+          }
+        }
+
+        // Keep only regions >= 1% of image area (filter noise)
+        const minSize = w * h * 0.01;
+        const slots = bounds
+          .filter((b) => b.size >= minSize)
+          .map((b) => ({
+            left: b.minX / w,
+            top: b.minY / h,
+            width: (b.maxX - b.minX + 1) / w,
+            height: (b.maxY - b.minY + 1) / h,
+          }));
+
+        resolve(slots);
+      };
+      img.onerror = () => resolve([]);
+      img.src = dataUrl;
+    });
+  }, []);
+
+  // ── Handle frame PNG file selected from device ──
+  const handleImportFrameFile = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Reset input so same file can be re-selected
+    if (importFrameInputRef.current) importFrameInputRef.current.value = "";
+
+    if (!file.type.startsWith("image/")) {
+      showToast("error", "Pilih file gambar (PNG/JPG).");
+      return;
+    }
+
+    if (importFrameWorking) return;
+    setImportFrameWorking(true);
+    try {
+      // 1. Read file as dataUrl
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      // 2. Get canvas dimensions
+      const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+
+      // 3. Detect transparent slot regions from the PNG
+      showToast("info", "Mendeteksi area slot foto…", 6000);
+      const slots = await detectFrameSlots(dataUrl);
+
+      // 4. Add photo slot elements FIRST (behind), one per detected transparent region
+      if (slots.length > 0) {
+        slots.forEach((slot, index) => {
+          addElement("photo", {
+            x: Math.round(slot.left * canvasW),
+            y: Math.round(slot.top * canvasH),
+            width: Math.round(slot.width * canvasW),
+            height: Math.round(slot.height * canvasH),
+            zIndex: 0,
+            data: { photoIndex: index, borderRadius: 0 },
+          });
+        });
+      } else {
+        // No transparent areas found — add single full-canvas slot as fallback
+        addElement("photo", {
+          x: 0, y: 0, width: canvasW, height: canvasH,
+          zIndex: 0,
+          data: { photoIndex: 0, borderRadius: 0 },
+        });
+      }
+
+      // 5. Add frame PNG as upload element on top (full canvas, fills frame area)
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = reject;
+        i.src = dataUrl;
+      });
+      addElement("upload", {
+        x: 0,
+        y: 0,
+        width: canvasW,
+        height: canvasH,
+        zIndex: 9000,
+        locked: false,
+        data: {
+          image: dataUrl,
+          originalImage: dataUrl,
+          imageAspectRatio: img.width / img.height,
+          objectFit: "fill",
+          label: file.name.replace(/\.[^.]+$/, "") || "Frame",
+          borderRadius: 0,
+          __isOverlay: true,
+        },
+      });
+
+      const slotMsg = slots.length > 0
+        ? `${slots.length} area foto ditambahkan.`
+        : "Tidak ada area transparan terdeteksi, 1 slot penuh ditambahkan.";
+      showToast("success", `Frame diimport! ${slotMsg}`, 4000);
+    } catch (err) {
+      showToast("error", err?.message || "Gagal import frame.");
+    } finally {
+      setImportFrameWorking(false);
+    }
+  }, [importFrameWorking, showToast, getCanvasDimensions, canvasAspectRatio, detectFrameSlots, addElement]);
 
   const handleSaveTemplate = async () => {
     if (saving) return;
@@ -2606,6 +2912,8 @@ export default function Create() {
       }
 
       setActiveDraftId(savedDraft.id);
+      // Persist activeDraftId to storage so cross-navigation saves UPDATE the same cloud draft
+      userStorage.setItem("activeDraftId", savedDraft.id);
       setJustSavedDraft(true); // Show "Gunakan Frame Ini" button
 
       // ☁️ CLOUD SAVE: ALWAYS save to cloud for sharing capability
@@ -2613,6 +2921,7 @@ export default function Create() {
       // non-logged-in users (falls back to public-share endpoint)
       try {
         console.log("☁️ [CLOUD SAVE] Starting cloud save...", user ? `for user: ${user.uid}` : "(anonymous)");
+        const cloudPreviewUrl = thumbnailDataUrl || previewDataUrl;
         
         // CRITICAL: frameData must be stringified for backend storage
         // Backend expects a JSON string in frame_data column
@@ -2621,7 +2930,9 @@ export default function Create() {
         const cloudResult = await draftService.saveDraftToCloud({
           title: draftTitle || savedDraft.title || "Untitled Frame",
           frameData: frameDataString,
-          previewUrl: previewDataUrl,
+          // Use the thumbnail snapshot for cloud listings because it keeps
+          // photo slots visible; the preview capture intentionally makes them transparent.
+          previewUrl: cloudPreviewUrl,
           draftId: savedDraft.cloudId // Use existing cloud ID if re-saving
         });
         
@@ -2704,8 +3015,8 @@ export default function Create() {
   }, [isBackgroundLocked, showToast]);
 
   const resetBackground = useCallback(() => {
-    // Reset to default cream color
-    setCanvasBackground("#f7f1ed");
+    // Reset to default white color
+    setCanvasBackground("#ffffff");
     // Also remove any background-photo element if exists
     const bgPhotoElement = elements.find(el => el.type === "background-photo");
     if (bgPhotoElement) {
@@ -2714,78 +3025,108 @@ export default function Create() {
     showToast("success", "Background direset ke default", 1500);
   }, [elements, removeElement, setCanvasBackground, showToast]);
 
+  // Activate frame without saving (uses current editor state directly)
+  const activateFrameWithoutSave = async () => {
+    try {
+      const { activateDraftFrame } = await import("../utils/draftHelpers.js");
+      // Always use a fresh temp ID so this operation never links back to an existing
+      // saved draft. Using activeDraftId here would cause activateDraftFrame to write
+      // the real draft's ID back into userStorage, making the old draft appear as
+      // "still saved" when the user returns to the Create page or Drafts list.
+      const tempDraft = {
+        id: `temp-${Date.now()}`,
+        title: draftTitle || "Frame",
+        elements,
+        aspectRatio: canvasAspectRatio,
+        canvasBackground,
+        canvasWidth: CANVAS_WIDTH,
+        canvasHeight: CANVAS_HEIGHT,
+      };
+      const frameConfig = activateDraftFrame(tempDraft);
+      if (!frameConfig) throw new Error("Gagal membuat konfigurasi frame.");
+      // Ensure the real saved draft (if any) is not restored when user returns to Create.
+      // activateDraftFrame already wrote the temp ID to userStorage; clear it so the
+      // Create page starts fresh instead of auto-loading the old draft.
+      userStorage.removeItem("activeDraftId");
+      userStorage.removeItem("activeDraftSignature");
+      try { sessionStorage.removeItem("__fremio_shared_frame_temp__"); } catch (_) {}
+      frameProvider.clearMemory();
+      navigate("/take-moment");
+    } catch (error) {
+      showToast("error", `Gagal menggunakan frame: ${error.message}`);
+    }
+  };
+
   const handleUseThisFrame = async () => {
-    if (!activeDraftId && elements.length === 0) {
+    if (elements.length === 0) {
       showToast("error", "Tidak ada frame untuk digunakan.");
       return;
     }
 
     try {
-      // ALWAYS save first before using frame to ensure latest changes are persisted
-      console.log("💾 [handleUseThisFrame] Auto-saving before use...");
-      showToast("info", "Menyimpan frame...");
-
-      const savedDraftId = await handleSaveTemplate();
-      const resolvedDraftId =
-        savedDraftId || activeDraftId || userStorage.getItem("activeDraftId");
-
-      console.log(
-        "✅ [handleUseThisFrame] Auto-save completed, draftId:",
-        resolvedDraftId
-      );
-
-      if (!resolvedDraftId) {
-        throw new Error("Draft ID tidak tersedia setelah save. Coba lagi.");
+      // Guest path: always use without saving
+      if (!user) {
+        await activateFrameWithoutSave();
+        return;
       }
 
-      // Persist for downstream pages (TakeMoment/Editor) to resolve the active draft.
+      // Logged-in path: if draft not yet saved, ask user first
+      if (!justSavedDraft) {
+        setShowUseFrameConfirm(true);
+        return;
+      }
+
+      // Draft already saved — use directly from storage
+      const resolvedDraftId = activeDraftId || userStorage.getItem("activeDraftId");
+      if (!resolvedDraftId) {
+        // Draft saved but no ID — fall back to direct activation
+        await activateFrameWithoutSave();
+        return;
+      }
+
       userStorage.setItem("activeDraftId", resolvedDraftId);
       setActiveDraftId(resolvedDraftId);
 
-      console.log("🔍 [handleUseThisFrame] Looking for draft:", resolvedDraftId);
-
-      // Check all drafts first
-      const allDrafts = await draftStorage.loadDrafts();
-      console.log(
-        "🔍 [handleUseThisFrame] All drafts in storage:",
-        allDrafts.map((d) => ({
-          id: d.id,
-          title: d.title,
-          hasElements: !!d.elements,
-        }))
-      );
-
-      // Load the draft
       let draft = await draftStorage.getDraftById(resolvedDraftId, user?.email);
       if (!draft) {
-        console.error("❌ [handleUseThisFrame] Draft not found!", {
-          searchedId: resolvedDraftId,
-          availableIds: allDrafts.map((d) => d.id),
-        });
-        throw new Error("Draft tidak ditemukan setelah save. Coba lagi.");
+        await activateFrameWithoutSave();
+        return;
       }
 
-      console.log("✅ [handleUseThisFrame] Draft loaded:", {
-        id: draft.id,
-        title: draft.title,
-        hasElements: !!draft.elements,
-        elementsCount: draft.elements?.length,
-      });
-
-      // Activate the frame
       const { activateDraftFrame } = await import("../utils/draftHelpers.js");
       const frameConfig = activateDraftFrame(draft);
+      if (!frameConfig) throw new Error("Gagal membuat konfigurasi frame dari draft");
 
-      if (!frameConfig) {
-        throw new Error("Gagal membuat konfigurasi frame dari draft");
-      }
-
-      console.log("✅ [CREATE] Frame activated:", frameConfig.id);
-
-      // Navigate to TakeMoment
+      try { sessionStorage.removeItem("__fremio_shared_frame_temp__"); } catch (_) {}
+      frameProvider.clearMemory();
       navigate("/take-moment");
     } catch (error) {
       console.error("❌ Failed to activate frame:", error);
+      showToast("error", `Gagal menggunakan frame: ${error.message}`);
+    }
+  };
+
+  // Called when user confirms "Ya, simpan" in confirm dialog
+  const handleUseFrameWithSave = async () => {
+    setShowUseFrameConfirm(false);
+    try {
+      showToast("info", "Menyimpan frame...");
+      const savedDraftId = await handleSaveTemplate();
+      const resolvedDraftId = savedDraftId || activeDraftId || userStorage.getItem("activeDraftId");
+      if (!resolvedDraftId) {
+        throw new Error("Draft ID tidak tersedia setelah save. Coba lagi.");
+      }
+      userStorage.setItem("activeDraftId", resolvedDraftId);
+      setActiveDraftId(resolvedDraftId);
+      let draft = await draftStorage.getDraftById(resolvedDraftId, user?.email);
+      if (!draft) throw new Error("Draft tidak ditemukan setelah save.");
+      const { activateDraftFrame } = await import("../utils/draftHelpers.js");
+      const frameConfig = activateDraftFrame(draft);
+      if (!frameConfig) throw new Error("Gagal membuat konfigurasi frame.");
+      try { sessionStorage.removeItem("__fremio_shared_frame_temp__"); } catch (_) {}
+      frameProvider.clearMemory();
+      navigate("/take-moment");
+    } catch (error) {
       showToast("error", `Gagal menggunakan frame: ${error.message}`);
     }
   };
@@ -2879,6 +3220,39 @@ export default function Create() {
   const toolButtons = useMemo(() => {
     const buttons = [
       {
+        id: "canvas-size",
+        label: "Ukuran Canvas",
+        mobileLabel: "Ukuran",
+        icon: Maximize2,
+        onClick: () => {
+          clearSelection();
+          if (isMobileView) {
+            setActiveMobileProperty((prev) =>
+              prev === "canvas-size" ? null : "canvas-size"
+            );
+          } else {
+            setShowCanvasSizeInProperties((prev) => !prev);
+          }
+        },
+        isActive:
+          showCanvasSizeInProperties || activeMobileProperty === "canvas-size",
+      },
+      {
+        id: "import-frame",
+        label: "Import Frame",
+        mobileLabel: "Import Frame",
+        icon: Download,
+        onClick: () => {
+          if (importFrameWorking) return;
+          setShowCanvasSizeInProperties(false);
+          if (importFrameInputRef.current) {
+            importFrameInputRef.current.value = "";
+            importFrameInputRef.current.click();
+          }
+        },
+        isActive: importFrameWorking,
+      },
+      {
         id: "background",
         label: "Background",
         mobileLabel: "Background",
@@ -2905,6 +3279,19 @@ export default function Create() {
           setPendingPhotoTool(true);
         },
         isActive: pendingPhotoTool || selectedElement?.type === "photo",
+      },
+      {
+        id: "pexels",
+        label: "Cari Foto",
+        mobileLabel: "Cari Foto",
+        icon: Search,
+        onClick: () => {
+          setShowCanvasSizeInProperties(false);
+          setPendingPhotoTool(false);
+          setPendingPexelsTool(true);
+          clearSelection();
+        },
+        isActive: pendingPexelsTool,
       },
       {
         id: "text",
@@ -2944,6 +3331,7 @@ export default function Create() {
     return buttons;
   }, [
     addToolElement,
+    importFrameWorking,
     selectElement,
     selectedElement?.type,
     selectedElementId,
@@ -2951,7 +3339,10 @@ export default function Create() {
     triggerBackgroundUpload,
     isMobileView,
     pendingPhotoTool,
+    pendingPexelsTool,
     clearSelection,
+    showCanvasSizeInProperties,
+    activeMobileProperty,
   ]);
 
   useEffect(() => {
@@ -3066,12 +3457,16 @@ export default function Create() {
         return "Ukuran";
       case "photo-radius":
         return "Sudut";
+      case "photo-manage":
+        return "Kelola Area Foto";
       case "shape-outline":
         return "Outline Bentuk";
       case "photo-outline":
         return "Outline Foto";
       case "upload-outline":
         return "Outline Unggahan";
+      case "upload-manage":
+        return "Kelola Unggahan";
       case "layer-order":
         return "Atur Lapisan";
       case "background-color":
@@ -3090,14 +3485,43 @@ export default function Create() {
   };
 
   const renderMobilePropertyPanel = () => {
-    if (!isMobilePropertyToolbar || !activeMobileProperty) {
+    if (!activeMobileProperty) {
+      return null;
+    }
+    if (!isMobilePropertyToolbar && activeMobileProperty !== "canvas-size") {
       return null;
     }
 
     let content = null;
     let title = getMobilePropertyTitle(activeMobileProperty);
 
-    if (isBackgroundSelected) {
+    if (activeMobileProperty === "canvas-size") {
+      content = (
+        <div className="create-mobile-property-panel__actions">
+          {[
+            { value: "9:16", label: "Story Instagram", desc: "1080 × 1920" },
+            { value: "2:3", label: "4R", desc: "1200 × 1800" },
+            { value: "1:3", label: "2R", desc: "600 × 1800" },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => {
+                setCanvasAspectRatio(opt.value);
+                setActiveMobileProperty(null);
+              }}
+              className={`create-mobile-property-panel__action${
+                canvasAspectRatio === opt.value
+                  ? " create-mobile-property-panel__action--active"
+                  : ""
+              }`}
+            >
+              {opt.label} — {opt.desc}
+            </button>
+          ))}
+        </div>
+      );
+    } else if (isBackgroundSelected) {
       if (activeMobileProperty === "background-color") {
         const isGradient =
           canvasBackground?.startsWith("linear-gradient") ||
@@ -3347,29 +3771,6 @@ export default function Create() {
             )}
           </div>
         );
-      } else if (activeMobileProperty === "canvas-size") {
-        const aspectRatioOptions = [
-          { value: "9:16", label: "Story Instagram" },
-          { value: "1:1", label: "Instagram Feeds" },
-          { value: "1200:1800", label: "Photostrip (ukuran cetak)" },
-        ];
-        content = (
-          <div className="create-mobile-property-panel__select">
-            <select
-              value={canvasAspectRatio}
-              onChange={(event) => {
-                setCanvasAspectRatio(event.target.value);
-                setActiveMobileProperty(null);
-              }}
-            >
-              {aspectRatioOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        );
       }
     } else if (selectedElementObject) {
       const data = selectedElementObject.data ?? {};
@@ -3598,6 +3999,27 @@ export default function Create() {
           );
           break;
         }
+        case "photo-manage":
+        case "upload-manage":
+          content = (
+            <div className="create-mobile-property-panel__actions">
+              <button
+                type="button"
+                onClick={() => {
+                  removeElement(selectedElementObject.id);
+                  clearSelection();
+                  setActiveMobileProperty(null);
+                  showToast("success", TOAST_MESSAGES.deleteSuccess, 2200);
+                }}
+                className="create-mobile-property-panel__action create-mobile-property-panel__action--danger"
+              >
+                {activeMobileProperty === "photo-manage"
+                  ? "Hapus area foto"
+                  : "Hapus unggahan"}
+              </button>
+            </div>
+          );
+          break;
         case "photo-fit":
         case "bg-photo-fit":
           content = (
@@ -3866,7 +4288,11 @@ export default function Create() {
                 }}
                 onUpdate={updateElement}
                 onBringToFront={bringToFront}
-                onRemove={removeElement}
+                onRemove={(id) => {
+                  removeElement(id);
+                  clearSelection();
+                  setActiveMobileProperty(null);
+                }}
                 onDuplicate={duplicateElement}
                 onToggleLock={toggleLock}
                 onResizeUpload={resizeUploadImage}
@@ -3881,7 +4307,13 @@ export default function Create() {
           <div className="create-actions">
             <Motion.button
               type="button"
-              onClick={handleSaveTemplate}
+              onClick={() => {
+                if (!user) {
+                  showToast("info", "Anda belum login, silakan login untuk menggunakan fitur ini");
+                  return;
+                }
+                handleSaveTemplate();
+              }}
               disabled={saving}
               className="create-save"
               whileTap={{ scale: 0.97 }}
@@ -3919,9 +4351,8 @@ export default function Create() {
               )}
             </Motion.button>
 
-            {/* Show "Gunakan Frame" button if there are elements (will auto-save before use) */}
-            {elements.length > 0 && (
-              <Motion.button
+            {/* Show "Gunakan Frame" button */}
+            <Motion.button
                 type="button"
                 onClick={handleUseThisFrame}
                 className="create-use-frame"
@@ -3948,7 +4379,6 @@ export default function Create() {
                 </svg>
                 Gunakan Frame
               </Motion.button>
-            )}
           </div>
         </Motion.section>
 
@@ -3958,7 +4388,7 @@ export default function Create() {
             initial="hidden"
             animate="visible"
             transition={{ delay: 0.15 }}
-            className="create-panel create-panel--properties"
+            className={`create-panel create-panel--properties${pendingPexelsTool ? ' create-panel--properties--wide' : ''}`}
           >
             <h2 className="create-panel__title">Properties</h2>
             <div className="create-panel__body">
@@ -4002,9 +4432,49 @@ export default function Create() {
                 isBackgroundLocked={isBackgroundLocked}
                 onToggleBackgroundLock={toggleBackgroundLock}
                 pendingPhotoTool={pendingPhotoTool}
+                pendingPexelsTool={pendingPexelsTool}
+                onAddPexelsPhoto={async (photoUrl) => {
+                  try {
+                    const response = await fetch(photoUrl);
+                    const blob = await response.blob();
+                    const dataUrl = await new Promise((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onload = () => resolve(reader.result);
+                      reader.onerror = reject;
+                      reader.readAsDataURL(blob);
+                    });
+                    const transparentDataUrl = await removeWhiteBackground(dataUrl);
+                    addUploadElement(transparentDataUrl);
+                    setPendingPexelsTool(false);
+                  } catch {
+                    showToast("error", "Gagal memuat aset. Coba lagi.");
+                  }
+                }}
+                onCancelPexelsTool={() => setPendingPexelsTool(false)}
+                onAddOpenverseBackground={async (photoUrl) => {
+                  try {
+                    const response = await fetch(photoUrl);
+                    const blob = await response.blob();
+                    const dataUrl = await new Promise((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onload = () => resolve(reader.result);
+                      reader.onerror = reject;
+                      reader.readAsDataURL(blob);
+                    });
+                    const { width: cw, height: ch } = getCanvasDimensions(canvasAspectRatio);
+                    addBackgroundPhoto(dataUrl, { canvasWidth: cw, canvasHeight: ch });
+                    setTimeout(() => fitBackgroundPhotoToCanvas({ canvasWidth: cw, canvasHeight: ch }), 300);
+                  } catch {
+                    showToast("error", "Gagal memuat foto. Coba lagi.");
+                  }
+                }}
                 onConfirmAddPhoto={(rows = 1, cols = 1) => {
                   setPendingPhotoTool(false);
                   
+                  // Replace existing photo elements so the selected layout is the definitive one.
+                  // Without this, adding a grid on top of previous photo slots doubles the count.
+                  elements.filter(el => el.type === "photo").forEach(el => removeElement(el.id));
+
                   // Canvas dimensions from constants
                   const canvasW = 1080;
                   const canvasH = 1920;
@@ -4062,6 +4532,129 @@ export default function Create() {
       {isMobileView && (
         <>
           {renderMobilePropertyPanel()}
+          {pendingPexelsTool && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 60 }}>
+              <div
+                style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)" }}
+                onClick={() => setPendingPexelsTool(false)}
+              />
+              <div style={{
+                position: "absolute", bottom: 0, left: 0, right: 0,
+                background: "#fff", borderRadius: "24px 24px 0 0",
+                maxHeight: "85vh", display: "flex", flexDirection: "column",
+                boxShadow: "0 -8px 32px rgba(0,0,0,0.15)",
+              }}>
+                <div style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "14px 20px 10px", borderBottom: "1px solid #f0e6e0",
+                  borderRadius: "24px 24px 0 0", background: "#fff", flexShrink: 0,
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => setPendingPexelsTool(false)}
+                    style={{
+                      border: "none", background: "rgba(244,63,94,0.08)", cursor: "pointer",
+                      color: "#e11d48", padding: "6px 10px", borderRadius: "10px",
+                      display: "flex", alignItems: "center", gap: "4px",
+                      fontSize: "13px", fontWeight: "600",
+                    }}
+                  >
+                    <ChevronLeft size={18} strokeWidth={2.5} />
+                    Kembali
+                  </button>
+                  <h2 style={{ margin: 0, fontSize: "16px", fontWeight: "700", color: "#1a1a2e" }}>Cari Foto</h2>
+                  <button
+                    type="button"
+                    onClick={() => setPendingPexelsTool(false)}
+                    style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", padding: "4px" }}
+                  ><X size={20} /></button>
+                </div>
+                <div style={{ overflowY: "auto", padding: "12px 16px calc(24px + env(safe-area-inset-bottom,0px))" }}>
+                  <PropertiesPanel
+                    selectedElement={selectedElement}
+                    canvasBackground={canvasBackground}
+                    onBackgroundChange={setCanvasBackground}
+                    onUpdateElement={updateElement}
+                    onDeleteElement={(id) => { removeElement(id); clearSelection(); }}
+                    clearSelection={clearSelection}
+                    onBringToFront={bringToFront}
+                    onSendToBack={sendToBack}
+                    onBringForward={bringForward}
+                    onSendBackward={sendBackward}
+                    canvasAspectRatio={canvasAspectRatio}
+                    onCanvasAspectRatioChange={setCanvasAspectRatio}
+                    showCanvasSizeMode={showCanvasSizeInProperties}
+                    gradientColor1={gradientColor1}
+                    gradientColor2={gradientColor2}
+                    setGradientColor1={setGradientColor1}
+                    setGradientColor2={setGradientColor2}
+                    isBackgroundLocked={isBackgroundLocked}
+                    onToggleBackgroundLock={toggleBackgroundLock}
+                    pendingPhotoTool={pendingPhotoTool}
+                    pendingPexelsTool={pendingPexelsTool}
+                    onAddPexelsPhoto={async (photoUrl) => {
+                      try {
+                        const response = await fetch(photoUrl);
+                        const blob = await response.blob();
+                        const dataUrl = await new Promise((resolve, reject) => {
+                          const reader = new FileReader();
+                          reader.onload = () => resolve(reader.result);
+                          reader.onerror = reject;
+                          reader.readAsDataURL(blob);
+                        });
+                        const transparentDataUrl = await removeWhiteBackground(dataUrl);
+                        addUploadElement(transparentDataUrl);
+                        setPendingPexelsTool(false);
+                      } catch {
+                        showToast("error", "Gagal memuat aset. Coba lagi.");
+                      }
+                    }}
+                    onCancelPexelsTool={() => setPendingPexelsTool(false)}
+                    onAddOpenverseBackground={async (photoUrl) => {
+                      try {
+                        const response = await fetch(photoUrl);
+                        const blob = await response.blob();
+                        const dataUrl = await new Promise((resolve, reject) => {
+                          const reader = new FileReader();
+                          reader.onload = () => resolve(reader.result);
+                          reader.onerror = reject;
+                          reader.readAsDataURL(blob);
+                        });
+                        const { width: cw, height: ch } = getCanvasDimensions(canvasAspectRatio);
+                        addBackgroundPhoto(dataUrl, { canvasWidth: cw, canvasHeight: ch });
+                        setTimeout(() => fitBackgroundPhotoToCanvas({ canvasWidth: cw, canvasHeight: ch }), 300);
+                      } catch {
+                        showToast("error", "Gagal memuat foto. Coba lagi.");
+                      }
+                    }}
+                    onConfirmAddPhoto={(rows = 1, cols = 1) => {
+                      setPendingPhotoTool(false);
+                      // Replace existing photo elements so layout is definitive
+                      elements.filter(el => el.type === "photo").forEach(el => removeElement(el.id));
+                      const canvasW = 1080; const canvasH = 1920;
+                      const gapX = 30, gapY = 30, marginX = 65, marginY = 140;
+                      const photoWidth = Math.floor((canvasW - 2*marginX - (cols-1)*gapX) / cols);
+                      const photoHeight = Math.floor((canvasH - 2*marginY - (rows-1)*gapY) / rows);
+                      let lastId = null;
+                      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+                        const id = addElement("photo", { x: marginX+c*(photoWidth+gapX), y: marginY+r*(photoHeight+gapY), width: photoWidth, height: photoHeight });
+                        if (id) lastId = id;
+                      }
+                      if (lastId) selectElement(lastId);
+                    }}
+                    onCancelPhotoTool={() => setPendingPhotoTool(false)}
+                    onSelectBackgroundPhoto={() => {
+                      if (isBackgroundLocked) { showToast("info", "Background dikunci.", 2000); return; }
+                      if (backgroundPhotoElement) { selectElement(backgroundPhotoElement.id); }
+                      else { triggerBackgroundUpload(); }
+                    }}
+                    onFitBackgroundPhoto={fitBackgroundPhotoToCanvas}
+                    backgroundPhoto={backgroundPhotoElement}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           {pendingPhotoTool ? (
             /* Photo Grid Selection Toolbar */
             <nav className="create-mobile-toolbar create-mobile-toolbar--grid">
@@ -4086,6 +4679,9 @@ export default function Create() {
                   onClick={() => {
                     setPendingPhotoTool(false);
                     
+                    // Replace existing photo elements so the selected layout is the definitive one
+                    elements.filter(el => el.type === "photo").forEach(el => removeElement(el.id));
+
                     // Canvas dimensions from constants
                     const canvasW = 1080;
                     const canvasH = 1920;
@@ -4138,6 +4734,16 @@ export default function Create() {
                 isMobilePropertyToolbar ? "create-mobile-toolbar--properties" : ""
               }`.trim()}
             >
+              {isMobilePropertyToolbar && (
+                <button
+                  type="button"
+                  onClick={() => { clearSelection(); setActiveMobileProperty(null); }}
+                  className="create-mobile-toolbar__button create-mobile-toolbar__button--back"
+                >
+                  <ChevronLeft size={20} strokeWidth={2.4} />
+                  <span>Kembali</span>
+                </button>
+              )}
               {(isMobilePropertyToolbar
                 ? mobilePropertyButtons
                 : toolButtons
@@ -4190,6 +4796,67 @@ export default function Create() {
           pointerEvents: "none",
         }}
         onChange={handleFileChange}
+      />
+
+      {/* Confirm dialog: Save before using frame? */}
+      {showUseFrameConfirm && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+            zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "16px",
+          }}
+          onClick={(e) => { e.stopPropagation(); setShowUseFrameConfirm(false); }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div
+            style={{
+              background: "#fff", borderRadius: "16px", padding: "24px",
+              maxWidth: "340px", width: "100%", boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 8px", fontSize: "17px", fontWeight: 700, color: "#1e293b" }}>
+              Simpan frame?
+            </h3>
+            <p style={{ margin: "0 0 20px", fontSize: "14px", color: "#64748b", lineHeight: 1.5 }}>
+              Frame belum disimpan. Ingin simpan sebelum digunakan?
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleUseFrameWithSave(); }}
+                style={{
+                  padding: "11px 18px", borderRadius: "8px", border: "none",
+                  background: "linear-gradient(to right, #e0b7a9, #d4a99a)",
+                  color: "#fff", fontSize: "14px", fontWeight: 600, cursor: "pointer", width: "100%",
+                }}
+              >
+                Ya, simpan dulu
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowUseFrameConfirm(false); activateFrameWithoutSave(); }}
+                style={{
+                  padding: "11px 18px", borderRadius: "8px", border: "1.5px solid #e2e8f0",
+                  background: "#fff", color: "#64748b", fontSize: "14px", fontWeight: 600, cursor: "pointer", width: "100%",
+                }}
+              >
+                Tidak, langsung pakai
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden file input for "Import Frame" — accepts PNG/image files from device */}
+      <input
+        ref={importFrameInputRef}
+        type="file"
+        accept="image/png,image/*"
+        style={{ position: "absolute", left: "-9999px", opacity: 0, pointerEvents: "none" }}
+        onChange={handleImportFrameFile}
       />
     </div>
   );

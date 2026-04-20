@@ -5,6 +5,7 @@ import App from "./App.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import "./index.css";
 import "./styles/editorFonts.css";
+import "./i18n/index.js";
 
 // App version for debugging cache issues
 console.log('🚀 Fremio App v14 - Build:', new Date().toISOString().slice(0, 10));

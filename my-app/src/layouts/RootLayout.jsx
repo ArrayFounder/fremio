@@ -2,12 +2,21 @@ import { Outlet, useLocation } from "react-router-dom";
 import Header from "../components/Header.jsx";
 import Footer from "../components/Footer.jsx";
 import { useEffect } from "react";
-import { HeaderBrandingProvider } from "../contexts/HeaderBrandingContext.jsx";
+import {
+  HeaderBrandingProvider,
+  useHeaderBranding,
+} from "../contexts/HeaderBrandingContext.jsx";
 
-export default function RootLayout() {
-  const { hash, pathname } = useLocation();
-  const hideHeader = false;
-  const hideFooter = false;
+function LayoutContent() {
+  const { hash, pathname, search } = useLocation();
+  const { branding } = useHeaderBranding();
+  const isStandaloneSharesEditor = pathname === "/shares" && new URLSearchParams(search).get("editor") === "1";
+  const hideHeader = isStandaloneSharesEditor;
+  const hideFooter =
+    pathname.startsWith("/take-moment") ||
+    pathname.startsWith("/edit-photo") ||
+    isStandaloneSharesEditor ||
+    Boolean(branding?.groupMode);
 
   useEffect(() => {
     // scroll ke anchor di homepage
@@ -22,14 +31,20 @@ export default function RootLayout() {
   }, [hash, pathname]);
 
   return (
+    <div className="app-shell">
+      {!hideHeader && <Header />}
+      <main className="app-main">
+        <Outlet />
+      </main>
+      {!hideFooter && <Footer />}
+    </div>
+  );
+}
+
+export default function RootLayout() {
+  return (
     <HeaderBrandingProvider>
-      <div className="app-shell">
-        {!hideHeader && <Header />}
-        <main className="app-main">
-          <Outlet />
-        </main>
-        {!hideFooter && <Footer />}
-      </div>
+      <LayoutContent />
     </HeaderBrandingProvider>
   );
 }

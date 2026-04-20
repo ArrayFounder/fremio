@@ -8,6 +8,7 @@ import { verifyToken } from "../middleware/auth.js";
 import paymentDB from "../services/paymentDatabaseService.js";
 import midtransService from "../services/midtransService.js";
 import n8nWebhook from "../services/n8nWebhookService.js";
+import { grantBasicShareQuota } from "./shareSubscription.js";
 
 const router = express.Router();
 const isUuidLike = (value) => {
@@ -42,17 +43,33 @@ const getAccessDurationDays = () => {
 
 // Map pricing plans to (amount, durationDays)
 const PRICING_PLANS = {
-  '3days':  { grossAmount: 5000,  durationDays: 3 },
-  '7days':  { grossAmount: 7000,  durationDays: 7 },
-  '30days': { grossAmount: 10000, durationDays: 30 },
+  '1day':   { grossAmount: 5000,  durationDays: 1 },
+  '3days':  { grossAmount: 6000,  durationDays: 3 },
+  '7days':  { grossAmount: 15000, durationDays: 7 },
+  '30days': { grossAmount: 25000, durationDays: 30 },
+};
+
+// International pricing — fixed USD display, charged in IDR equivalent
+// Kept as IDR equivalents for non-ID traffic using the same plan keys.
+const PRICING_PLANS_INTERNATIONAL = {
+  '3days':  { grossAmount: 16000, durationDays: 3 },
+  '14days': { grossAmount: 60000, durationDays: 14 },
+  '30days': { grossAmount: 100000, durationDays: 30 },
 };
 
 // Derive access duration from transaction amount so webhook & self-heal use correct plan durations.
 const getDurationDaysByAmount = (amount) => {
   const a = Number(amount);
-  if (a === 5000) return 3;
+  if (a === 5000) return 1;
+  if (a === 6000) return 3;
   if (a === 7000) return 7;
-  if (a === 10000) return 30;
+  if (a === 15000) return 7;
+  if (a === 10000 || a === 19000 || a === 25000) return 30;
+  // International amounts
+  if (a === 16000) return 3;
+  if (a === 40000) return 7;
+  if (a === 60000) return 14;
+  if (a === 80000 || a === 100000) return 30;
   return getAccessDurationDays(); // fallback to env/default (30)
 };
 
@@ -310,11 +327,18 @@ router.post("/create", verifyToken, async (req, res) => {
       // Continue without database validation in fallback mode
     }
 
-    // Resolve pricing plan
+    // Detect country via Cloudflare header (free, automatic for all requests)
+    const country = String(req.headers['cf-ipcountry'] || '').toUpperCase();
+    const isInternational = country !== '' && country !== 'ID';
+    console.log("🌍 Country:", country || 'unknown', "| International:", isInternational);
+
+    // Resolve pricing plan — use international pricing for non-ID users
     const planKey = Object.prototype.hasOwnProperty.call(PRICING_PLANS, req.body?.plan)
       ? req.body.plan
       : '30days';
-    const { grossAmount } = PRICING_PLANS[planKey];
+    const activePlans = isInternational ? PRICING_PLANS_INTERNATIONAL : PRICING_PLANS;
+    const { grossAmount } = activePlans[planKey];
+    console.log("💰 Plan:", planKey, "| Amount:", grossAmount, isInternational ? '(international)' : '(local)');
 
     // Generate order ID
     const orderId = midtransService.generateOrderId(userId);
@@ -344,6 +368,7 @@ router.post("/create", verifyToken, async (req, res) => {
         orderId,
         grossAmount,
         customerDetails,
+        isInternational,
       });
     } catch (e) {
       // If Midtrans creation fails after we inserted a DB row, don't leave it stuck as 'pending'.
@@ -479,10 +504,12 @@ router.get("/pending", verifyToken, async (req, res) => {
           const packages = await paymentDB.getAllPackages();
           let packageIds = determinePackageIdsToGrant({ packages });
           if (packageIds.length === 0) packageIds = [1];
+          const selfHealDays = getDurationDaysByAmount(latestPending.amount);
           await paymentDB.grantPackageAccess({
             userId,
             transactionId: latestPending.id,
             packageIds,
+            durationDays: selfHealDays,
           });
         }
       } catch (e) {
@@ -774,6 +801,18 @@ const handleMidtransNotification = async (req, res) => {
 
       console.log("✅ Access granted to user:", transaction.user_id, "duration:", txDurationDays, "days");
 
+      // Also grant basic (30 tamu/hari) share quota bundled with frame membership
+      if (txDurationDays >= 30) {
+        const memberEmail =
+          notification.fullResponse?.customer_details?.email ||
+          transaction.customer_email ||
+          null;
+        if (memberEmail) {
+          const shareExpiresAt = addDays(new Date(), txDurationDays);
+          await grantBasicShareQuota(memberEmail, shareExpiresAt);
+        }
+      }
+
       // Send email notification via n8n (idempotent - only sends once)
       try {
         const alreadySent = await paymentDB.isReceiptEmailSent(transaction.invoice_number);
@@ -791,9 +830,7 @@ const handleMidtransNotification = async (req, res) => {
             const paymentMethod = notification.paymentType || transaction.payment_method || "Unknown";
             const amount = transaction.amount || notification.fullResponse?.gross_amount || 0;
 
-            // Calculate access end date (default 30 days from now)
-            const accessDurationDays = getAccessDurationDays();
-            const accessEndDate = addDays(new Date(), accessDurationDays).toISOString();
+            const accessEndDate = addDays(new Date(), txDurationDays).toISOString();
 
             if (customerEmail) {
               await n8nWebhook.sendPaymentSuccessEvent({

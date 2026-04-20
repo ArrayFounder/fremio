@@ -17,10 +17,9 @@ export default function DesignerLogin() {
     confirmPassword: "",
     displayName: "",
   });
-  const [tosAgreed, setTosAgreed] = useState(false);
-  const [showTOS, setShowTOS] = useState(false);
 
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   const saveDesignerAuth = (user, token) => {
@@ -57,16 +56,13 @@ export default function DesignerLogin() {
   const handleRegister = async (e) => {
     e.preventDefault();
     setError("");
+    setSuccessMsg("");
     if (regData.password !== regData.confirmPassword) {
       setError("Password tidak cocok");
       return;
     }
     if (regData.password.length < 6) {
       setError("Password minimal 6 karakter");
-      return;
-    }
-    if (!tosAgreed) {
-      setError("Kamu harus menyetujui Syarat & Ketentuan untuk mendaftar");
       return;
     }
     setLoading(true);
@@ -84,7 +80,12 @@ export default function DesignerLogin() {
       const data = await res.json();
       if (data.success) {
         saveDesignerAuth(data.user, data.token);
-        navigate("/designer/dashboard");
+        if (data.upgraded) {
+          setSuccessMsg("Akun kamu berhasil diupgrade menjadi designer! Mengalihkan...");
+          setTimeout(() => navigate("/designer/dashboard"), 1500);
+        } else {
+          navigate("/designer/dashboard");
+        }
       } else {
         setError(data.message || "Registrasi gagal");
       }
@@ -109,20 +110,21 @@ export default function DesignerLogin() {
         <div style={styles.tabs}>
           <button
             style={{ ...styles.tab, ...(tab === "login" ? styles.tabActive : {}) }}
-            onClick={() => { setTab("login"); setError(""); }}
+            onClick={() => { setTab("login"); setError(""); setSuccessMsg(""); }}
           >
             Masuk
           </button>
           <button
             style={{ ...styles.tab, ...(tab === "register" ? styles.tabActive : {}) }}
-            onClick={() => { setTab("register"); setError(""); }}
+            onClick={() => { setTab("register"); setError(""); setSuccessMsg(""); }}
           >
             Daftar
           </button>
         </div>
 
-        {/* Error */}
+        {/* Error / Success */}
         {error && <div style={styles.errorBox}>{error}</div>}
+        {successMsg && <div style={styles.successBox}>{successMsg}</div>}
 
         {/* Login Form */}
         {tab === "login" && (
@@ -190,51 +192,14 @@ export default function DesignerLogin() {
               required
             />
 
-            {/* TOS Checkbox */}
-            <div style={styles.tosRow}>
-              <input
-                id="tos-check"
-                type="checkbox"
-                checked={tosAgreed}
-                readOnly
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (!tosAgreed) setShowTOS(true);
-                  else setTosAgreed(false);
-                }}
-                style={{ ...styles.tosCheckbox, cursor: "pointer" }}
-              />
-              <label
-                htmlFor="tos-check"
-                style={{ ...styles.tosLabel, cursor: "pointer" }}
-                onClick={(e) => { e.preventDefault(); if (!tosAgreed) setShowTOS(true); else setTosAgreed(false); }}
-              >
-                Saya menyetujui syarat dan ketentuan terutama terkait orisinalitas assets.{" "}
-                <button
-                  type="button"
-                  style={styles.tosLink}
-                  onClick={(e) => { e.stopPropagation(); setShowTOS(true); }}
-                >
-                  Baca syarat &amp; ketentuan
-                </button>
-              </label>
-            </div>
-
             <button
-              style={{ ...styles.submitBtn, opacity: !tosAgreed ? 0.6 : 1 }}
+              style={styles.submitBtn}
               type="submit"
-              disabled={loading || !tosAgreed}
+              disabled={loading}
             >
               {loading ? "Mendaftarkan..." : "Daftar sebagai Designer"}
             </button>
           </form>
-        )}
-
-        {showTOS && (
-          <DesignerTOSModal
-            onClose={() => setShowTOS(false)}
-            onAgree={() => setTosAgreed(true)}
-          />
         )}
 
         <div style={styles.footer}>
@@ -324,6 +289,25 @@ const styles = {
     borderRadius: "8px",
     fontSize: "14px",
     marginBottom: "16px",
+  },
+  successBox: {
+    background: "rgba(40,167,69,0.08)",
+    border: "1px solid rgba(40,167,69,0.30)",
+    color: "#1e7e34",
+    padding: "10px 14px",
+    borderRadius: "8px",
+    fontSize: "14px",
+    marginBottom: "16px",
+  },
+  infoBox: {
+    background: "rgba(224,140,115,0.10)",
+    border: "1px solid rgba(224,140,115,0.30)",
+    color: "#7a3520",
+    padding: "10px 14px",
+    borderRadius: "8px",
+    fontSize: "13px",
+    marginBottom: "8px",
+    lineHeight: "1.5",
   },
   form: {
     display: "flex",
