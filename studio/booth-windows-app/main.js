@@ -1,5 +1,7 @@
 const { app, BrowserWindow, ipcMain, shell, session, globalShortcut, systemPreferences } = require("electron");
+const { spawn } = require("child_process");
 const fs = require("fs");
+const http = require("http");
 const path = require("path");
 
 const DEFAULT_CONFIG = {
@@ -8,6 +10,10 @@ const DEFAULT_CONFIG = {
   kiosk: true,
 };
 
+const BRIDGE_PORT = 7432;
+const BRIDGE_STATUS_URL = `http://127.0.0.1:${BRIDGE_PORT}/status`;
+const MAX_LOG_CHARS = 4000;
+
 function getAppIconPath() {
   return path.join(__dirname, "build", "icon.ico");
 }
@@ -15,6 +21,209 @@ function getAppIconPath() {
 let boothWindow = null;
 let setupWindow = null;
 let currentConfig = null;
+let hardwareAgentProcess = null;
+let hardwareAgentExit = null;
+let hardwareAgentStdout = "";
+let hardwareAgentStderr = "";
+
+function trimLog(input) {
+  return input.length > MAX_LOG_CHARS ? input.slice(-MAX_LOG_CHARS) : input;
+}
+
+function appendAgentLog(stream, chunk) {
+  const text = String(chunk || "");
+  if (!text) return;
+
+  if (stream === "stderr") {
+    hardwareAgentStderr = trimLog(`${hardwareAgentStderr}${text}`);
+    return;
+  }
+
+  hardwareAgentStdout = trimLog(`${hardwareAgentStdout}${text}`);
+}
+
+function getAgentRootPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "embedded-agent", "agent");
+  }
+
+  return path.resolve(__dirname, "..", "..", "agent");
+}
+
+function getAgentEntryPath() {
+  return path.join(getAgentRootPath(), "src", "index.js");
+}
+
+function findWindowsGphoto2Path() {
+  if (process.platform !== "win32") return null;
+
+  const candidates = [
+    process.env.GPHOTO2_PATH,
+    "C:\\msys64\\mingw64\\bin\\gphoto2.exe",
+    "C:\\msys64\\ucrt64\\bin\\gphoto2.exe",
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function startHardwareAgent() {
+  if (hardwareAgentProcess && !hardwareAgentProcess.killed) return;
+
+  const agentEntryPath = getAgentEntryPath();
+  if (!fs.existsSync(agentEntryPath)) {
+    hardwareAgentStderr = trimLog(`${hardwareAgentStderr}\nFile bridge tidak ditemukan: ${agentEntryPath}`);
+    return;
+  }
+
+  const agentRootPath = getAgentRootPath();
+  const env = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: "1",
+    PORT: String(BRIDGE_PORT),
+  };
+
+  const gphoto2Path = findWindowsGphoto2Path();
+  if (gphoto2Path) env.GPHOTO2_PATH = gphoto2Path;
+
+  hardwareAgentExit = null;
+  hardwareAgentProcess = spawn(process.execPath, [agentEntryPath], {
+    cwd: agentRootPath,
+    env,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  hardwareAgentProcess.stdout?.on("data", (chunk) => appendAgentLog("stdout", chunk));
+  hardwareAgentProcess.stderr?.on("data", (chunk) => appendAgentLog("stderr", chunk));
+
+  hardwareAgentProcess.on("error", (error) => {
+    hardwareAgentStderr = trimLog(`${hardwareAgentStderr}\n${error.message}`);
+    hardwareAgentExit = { code: null, signal: null, at: new Date().toISOString() };
+    hardwareAgentProcess = null;
+  });
+
+  hardwareAgentProcess.on("exit", (code, signal) => {
+    hardwareAgentExit = { code, signal, at: new Date().toISOString() };
+    hardwareAgentProcess = null;
+  });
+}
+
+function stopHardwareAgent() {
+  if (!hardwareAgentProcess || hardwareAgentProcess.killed) return;
+  hardwareAgentProcess.kill();
+}
+
+function requestJson(url, timeoutMs = 1500) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { timeout: timeoutMs }, (res) => {
+      let body = "";
+
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        body += chunk;
+      });
+      res.on("end", () => {
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+
+        try {
+          resolve(JSON.parse(body));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy(new Error("timeout"));
+    });
+  });
+}
+
+function simplifyBridgeError(errorText) {
+  const normalized = String(errorText || "").replace(/\s+/g, " ").trim();
+
+  if (!normalized) return "";
+  if (/gphoto2 tidak ditemukan/i.test(normalized)) {
+    return "Komponen kamera Canon belum terpasang di Windows. Jalankan instalasi kamera sekali saja.";
+  }
+  if (/No camera found|Could not detect any camera/i.test(normalized)) {
+    return "Bridge aktif, tetapi kamera belum terbaca. Pastikan kamera menyala dan kabel USB terpasang rapat.";
+  }
+  if (/Could not claim the USB device/i.test(normalized)) {
+    return "Kamera sedang dipakai aplikasi lain. Tutup aplikasi kamera lain lalu cabut-colok USB kamera.";
+  }
+
+  return normalized;
+}
+
+async function getBridgeStatus() {
+  try {
+    const payload = await requestJson(BRIDGE_STATUS_URL);
+    const cameraAvailable = Boolean(payload?.camera?.available);
+    const printerCount = Number(payload?.printer?.count || 0);
+    const cameraCount = Number(payload?.camera?.count || 0);
+    const notes = [];
+
+    if (cameraAvailable) {
+      notes.push(`${cameraCount} kamera terdeteksi`);
+    } else if (payload?.camera?.error) {
+      notes.push(simplifyBridgeError(payload.camera.error));
+    } else {
+      notes.push("Bridge aktif, tetapi belum ada kamera DSLR yang terbaca");
+    }
+
+    if (printerCount > 0) {
+      notes.push(`${printerCount} printer terdeteksi`);
+    }
+
+    return {
+      ok: true,
+      running: true,
+      endpoint: BRIDGE_STATUS_URL,
+      summary: cameraAvailable ? "Kamera siap dipakai." : "Bridge aktif.",
+      action: cameraAvailable
+        ? "Anda bisa langsung buka booth dan mulai sesi foto."
+        : "Kalau kamera belum muncul, nyalakan kamera lalu cabut-colok kabel USB sekali.",
+      cameraAvailable,
+      cameraCount,
+      printerCount,
+      notes,
+      raw: payload,
+      agentPid: hardwareAgentProcess?.pid || null,
+    };
+  } catch (_error) {
+    const notes = [];
+
+    if (hardwareAgentProcess?.pid) {
+      notes.push("Launcher sedang menyalakan bridge lokal di background.");
+    }
+
+    if (hardwareAgentExit) {
+      notes.push("Bridge sempat berjalan lalu berhenti. Tutup app lalu buka lagi.");
+    }
+
+    if (hardwareAgentStderr) {
+      notes.push(simplifyBridgeError(hardwareAgentStderr));
+    }
+
+    return {
+      ok: false,
+      running: false,
+      endpoint: BRIDGE_STATUS_URL,
+      summary: "Bridge kamera belum siap.",
+      action: "Biarkan app tetap terbuka 5-10 detik, lalu klik cek lagi.",
+      cameraAvailable: false,
+      cameraCount: 0,
+      printerCount: 0,
+      notes,
+      agentPid: hardwareAgentProcess?.pid || null,
+    };
+  }
+}
 
 function getConfigPath() {
   return path.join(app.getPath("userData"), "booth-config.json");
@@ -192,6 +401,13 @@ function registerIpcHandlers() {
     reloadBoothWindow();
     return true;
   });
+
+  ipcMain.handle("bridge:get-status", () => getBridgeStatus());
+  ipcMain.handle("bridge:restart", async () => {
+    stopHardwareAgent();
+    startHardwareAgent();
+    return getBridgeStatus();
+  });
 }
 
 function registerShortcuts() {
@@ -201,6 +417,7 @@ function registerShortcuts() {
 
 app.whenReady().then(async () => {
   currentConfig = loadConfig();
+  startHardwareAgent();
   applyPermissionRules();
   registerIpcHandlers();
   registerShortcuts();
@@ -211,6 +428,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  stopHardwareAgent();
   if (process.platform !== "darwin") app.quit();
 });
 
@@ -219,5 +437,6 @@ app.on("activate", () => {
 });
 
 app.on("will-quit", () => {
+  stopHardwareAgent();
   globalShortcut.unregisterAll();
 });

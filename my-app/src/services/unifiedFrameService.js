@@ -395,27 +395,47 @@ class VPSFrameClient {
     console.log('📤 [saveFrame] frameData.layout exists:', !!frameData.layout);
     console.log('📤 [saveFrame] frameData.layout.elements:', frameData.layout?.elements?.length);
 
-    // Create frame - include ALL fields from frameData
-    const result = await this.createFrame({
-      id: frameData.id || `frame_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    const generatedId = frameData.id || `frame_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const resolvedMaxCaptures =
+      frameData.maxCaptures || frameData.max_captures || frameData.slots?.length || 1;
+
+    // Create frame - preserve studio booth metadata (source/is_template) and other optional flags.
+    const payload = {
+      ...frameData,
+      id: generatedId,
       name: frameData.name,
       description: frameData.description || '',
       category: frameData.category || 'custom',
       categories: frameData.categories,
       image_path: frameData.imagePath || frameData.image_path,
+      imagePath: frameData.imagePath || frameData.image_path,
       slots: frameData.slots || [],
-      max_captures: frameData.maxCaptures || frameData.slots?.length || 1,
-      maxCaptures: frameData.maxCaptures || frameData.slots?.length || 1,
-      // Include layout with elements (overlays, uploads, etc.)
+      max_captures: resolvedMaxCaptures,
+      maxCaptures: resolvedMaxCaptures,
       layout: frameData.layout || { elements: [] },
       canvasBackground: frameData.canvasBackground,
       canvasWidth: frameData.canvasWidth,
       canvasHeight: frameData.canvasHeight,
       createdBy: frameData.createdBy,
-      duplicatePhotos: frameData.duplicatePhotos
-    });
+      duplicatePhotos: frameData.duplicatePhotos,
+      source: frameData.source,
+      is_template: frameData.is_template,
+      is_hidden: frameData.is_hidden,
+      is_premium: frameData.is_premium,
+      isPremium: frameData.isPremium,
+      tags: frameData.tags,
+    };
 
-    return { success: true, frameId: result.frame?.id };
+    const result = await this.createFrame(payload);
+    const resolvedFrame = result?.frame || null;
+    const resolvedFrameId = resolvedFrame?.id || result?.id || generatedId;
+
+    return {
+      ...result,
+      success: result?.success !== false,
+      frame: resolvedFrame,
+      frameId: resolvedFrameId,
+    };
   }
 
   // Increment download/use count

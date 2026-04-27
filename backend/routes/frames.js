@@ -283,8 +283,13 @@ router.get("/", optionalAuth, async (req, res) => {
     }
 
     if (source) {
-      queryText += ` AND source = $${paramIndex}`;
-      queryParams.push(source);
+      if (source === "studio_booth") {
+        queryText += ` AND (source = $${paramIndex} OR is_template = true)`;
+        queryParams.push(source);
+      } else {
+        queryText += ` AND source = $${paramIndex}`;
+        queryParams.push(source);
+      }
       paramIndex++;
     }
 
@@ -316,8 +321,13 @@ router.get("/", optionalAuth, async (req, res) => {
         countParams.push(category);
       }
       if (source) {
-        countQuery += ` AND source = $${countParams.length + 1}`;
-        countParams.push(source);
+        if (source === "studio_booth") {
+          countQuery += ` AND (source = $${countParams.length + 1} OR is_template = true)`;
+          countParams.push(source);
+        } else {
+          countQuery += ` AND source = $${countParams.length + 1}`;
+          countParams.push(source);
+        }
       }
       const countResult = await pool.query(countQuery, countParams);
       total = parseInt(countResult.rows[0].count);

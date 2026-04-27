@@ -1318,6 +1318,30 @@ export default function Create() {
   // Sync property-panel changes (size, borderRadius, etc.) to ALL linked photos
   const handleUpdateElement = useCallback((id, changes) => {
     const el = elementsRef.current.find(e => e.id === id);
+
+    const hasBorderRadiusChange =
+      !!changes?.data &&
+      Object.prototype.hasOwnProperty.call(changes.data, 'borderRadius');
+
+    if (el?.type === 'photo' && hasBorderRadiusChange) {
+      const nextRadius = Number(changes.data.borderRadius);
+      const normalizedRadius = Number.isFinite(nextRadius)
+        ? Math.max(0, nextRadius)
+        : 0;
+      const updatesMap = {};
+      elementsRef.current
+        .filter((photo) => photo.type === 'photo')
+        .forEach((photo) => {
+          updatesMap[photo.id] = {
+            data: { borderRadius: normalizedRadius },
+          };
+        });
+      if (Object.keys(updatesMap).length > 0) {
+        batchUpdateElements(updatesMap);
+      }
+      return;
+    }
+
     if (!el || el.type !== 'photo' || el.data?.linkedGroup !== 'mirror') {
       updateElement(id, changes);
       return;

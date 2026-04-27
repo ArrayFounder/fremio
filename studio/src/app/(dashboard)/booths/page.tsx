@@ -1055,7 +1055,6 @@ function ImportFremioModal({
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
               {visible.map((f) => {
                 const isSel = selected.has(f.fremioId);
-                                const previewSlots = normalizeImportedSlots(f.slots, f.maxCaptures);
                 return (
                   <div key={f.fremioId} onClick={() => !f.alreadyImported && toggleSelect(f.fremioId)}
                     className={["relative rounded-xl border overflow-hidden transition-all",
@@ -1064,7 +1063,6 @@ function ImportFremioModal({
                         : "cursor-pointer border-gray-100 hover:border-primary-400"].join(" ")}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={f.thumbnailUrl} alt={f.name} className="w-full aspect-[2/3] object-cover" loading="lazy" />
-                                        <SlotOverlay slots={previewSlots} />
                     {isSel && !f.alreadyImported && (
                       <div className="absolute top-1.5 right-1.5 h-6 w-6 rounded-full bg-primary-900 flex items-center justify-center text-white text-xs font-bold">✓</div>
                     )}

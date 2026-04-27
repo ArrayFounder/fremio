@@ -127,8 +127,24 @@ export async function GET(req: Request): Promise<Response> {
       const studioId = `fremio_sb_${sourceId}`;
       const layout = f.layout as Record<string, unknown> | null;
       const aspectRatio = (layout?.aspectRatio as string | null) ?? "9:16";
-      const canvasWidth  = (f.canvasWidth  as number | null) ?? 1080;
-      const canvasHeight = (f.canvasHeight as number | null) ?? 1920;
+      // Prefer explicit canvasWidth/Height from API, then from layout JSON
+      // (AdminFrameCreator stores them there), then derive from aspectRatio.
+      const layoutCw = layout?.canvasWidth  as number | null;
+      const layoutCh = layout?.canvasHeight as number | null;
+      const rawCw = (f.canvasWidth  as number | null) ?? layoutCw ?? null;
+      const rawCh = (f.canvasHeight as number | null) ?? layoutCh ?? null;
+      let canvasWidth  = rawCw ?? 1080;
+      let canvasHeight = rawCh ?? 1920;
+      if (!rawCw || !rawCh) {
+        // Derive from aspect ratio so 2:3 frames get height=1620, not the
+        // default 1920 which would shift slot coordinates and break the filter.
+        const parts = aspectRatio.split(":").map(Number);
+        const [rw, rh] = parts;
+        if (rw > 0 && rh > 0) {
+          canvasWidth  = 1080;
+          canvasHeight = Math.round(1080 * rh / rw);
+        }
+      }
 
       // Tentukan status per-booth
       const inDb         = importedMap.has(studioId);
@@ -156,6 +172,7 @@ export async function GET(req: Request): Promise<Response> {
         canvasHeight,
         maxCaptures:    Math.max(1, (f.maxCaptures as number | null) ?? 1),
         isPremium:      (f.isPremium as boolean | null) ?? false,
+        captureMode:    (f.captureMode as string | null) ?? (f.duplicatePhotos ? "duplicate" : "single"),
         slots:          normalizeImportedSlots((f.slots as unknown[] | null) ?? null, Math.max(1, (f.maxCaptures as number | null) ?? 1)),
         // alreadyImported: frame aktif DAN sudah di booth (hijau, non-selectable)
         alreadyImported: isInBooth,

@@ -46,10 +46,10 @@ const MAC_VARIANTS: MacVariant[] = [
 ];
 
 const WIN_STEPS = [
-  { icon: "⬇️", title: "Download Windows Launcher", desc: "Klik Download. File launcher akan membuka layar welcome terlebih dulu (bukan langsung CMD)." },
-  { icon: "▶️", title: "Klik tombol Mulai", desc: "Di layar welcome owner photobox, klik Mulai Fremio Studio untuk menyalakan bridge printer/kamera." },
-  { icon: "🌐", title: "Buka link booth kamu", desc: "Setelah status Running, buka link booth di browser (Chrome direkomendasikan)." },
-  { icon: "⚠️", title: "Jangan close launcher", desc: "Selama sesi photobox berjalan, biarkan launcher tetap terbuka agar koneksi hardware stabil." },
+  { icon: "⬇️", title: "Download installer Windows", desc: "Install sekali saja. Aplikasi ini otomatis membuka booth dan menyalakan bridge lokal di background." },
+  { icon: "▶️", title: "Buka Fremio Studio", desc: "Setelah install, buka app seperti biasa. Setup screen akan memberi tahu apakah kamera dan printer sudah siap." },
+  { icon: "📷", title: "Hubungkan kamera Canon via USB", desc: "Kalau kamera belum terbaca, biarkan app tetap terbuka lalu klik Cek lagi. Tidak perlu buka folder agent atau CMD manual." },
+  { icon: "🌐", title: "Mulai booth", desc: "Kalau status sudah siap, simpan slug booth lalu mulai sesi foto langsung dari app." },
 ];
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -179,11 +179,11 @@ export default function AgentPage() {
               <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-100">
                 <div>
                   <p className="font-semibold text-gray-900 text-sm">Fremio Studio — Windows</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Launcher UI</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Installer one-click</p>
                 </div>
                 <a
-                  href="/downloads/fremio-studio-launcher.exe"
-                  download="fremio-studio-launcher.exe"
+                  href="/downloads/fremio-booth-windows-setup.exe"
+                  download="fremio-booth-windows-setup.exe"
                   className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
                   style={{ background: "linear-gradient(135deg, #c28a7a, #a8705e)" }}
                 >
@@ -228,10 +228,21 @@ export default function AgentPage() {
               <div className="rounded-xl bg-blue-50 border border-blue-100 px-4 py-3 flex gap-3">
                 <span className="text-lg shrink-0">⚡</span>
                 <div>
-                  <p className="text-xs font-semibold text-blue-800">Launcher menyalakan bridge saat tombol Mulai ditekan</p>
+                  <p className="text-xs font-semibold text-blue-800">Installer Windows sudah menyalakan bridge secara otomatis</p>
                   <p className="text-xs text-blue-700 mt-0.5 leading-relaxed">
-                    Tidak ada CMD mendadak saat file dibuka.
-                    CMD/engine dijalankan setelah owner klik tombol Mulai di welcome screen.
+                    Operator cukup install lalu buka app. Dari setup screen, app akan mengecek bridge lokal,
+                    kamera DSLR, dan printer secara otomatis.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-rose-50 border border-rose-100 px-4 py-3 flex gap-3">
+                <span className="text-lg shrink-0">📷</span>
+                <div className="space-y-0.5">
+                  <p className="text-xs font-semibold text-rose-800">Canon di Windows</p>
+                  <p className="text-xs text-rose-700 leading-relaxed">
+                    Jika kamera belum muncul, lihat status di setup screen. App akan memberi tahu apakah bridge aktif,
+                    kamera belum tersambung, atau printer belum siap.
                   </p>
                 </div>
               </div>
