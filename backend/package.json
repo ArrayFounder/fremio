@@ -9,7 +9,8 @@
     "dev": "nodemon server.js",
     "dev:old": "nodemon src/index.js",
     "backup": "bash scripts/backup.sh",
-    "restore": "bash scripts/restore.sh"
+    "restore": "bash scripts/restore.sh",
+    "migrate:frame-slots-v2": "node scripts/migrate-frame-slots-v2.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

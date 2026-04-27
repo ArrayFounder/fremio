@@ -616,7 +616,7 @@ export default function TakeMoment() {
 
       try {
         let photosPayload = [...nextArr];
-        if (inferredDuplicateMode && inferredMaxCaptures > 1 && photosPayload.length < inferredMaxCaptures) {
+        if (inferredDuplicateMode && inferredMaxCaptures > 1 && photosPayload.length < inferredMaxCaptures && !frameConfig?.duplicatePhotos) {
           const duplicated = [];
           for (const p of photosPayload) {
             duplicated.push(p);
@@ -4663,7 +4663,11 @@ export default function TakeMoment() {
         .filter(Boolean);
 
       // DUPLICATE MODE: If enabled, duplicate each photo for emergency save too
-      if (isDuplicateMode && maxCaptures > emergencyPhotos.length) {
+      // For frame-driven duplicate frames (duplicatePhotos=true), skip expansion —
+      // photos are stored as unique originals and mapped via slot.photoIndex in EditPhoto.
+      const _emergencyFrameCfg = frameProvider.getCurrentConfig() || safeStorage.getJSON("frameConfig", null);
+      const _isFrameDrivenDuplicate = Boolean(_emergencyFrameCfg?.duplicatePhotos);
+      if (isDuplicateMode && maxCaptures > emergencyPhotos.length && !_isFrameDrivenDuplicate) {
         console.log(
           "🔁 [EMERGENCY DUPLICATE] Duplicating photos in emergency save..."
         );
@@ -5079,7 +5083,9 @@ export default function TakeMoment() {
       // DUPLICATE MODE: If enabled, duplicate each photo AND video to fill all slots
       // Example: 3 photos with 6 slots -> Photo1, Photo1, Photo2, Photo2, Photo3, Photo3
       // Photos may already be duplicated from capture step, but videos need duplication here
-      if (isDuplicateMode && maxCaptures > 1) {
+      // For frame-driven duplicate frames (duplicatePhotos=true), skip expansion —
+      // photos are stored as unique originals and mapped via slot.photoIndex in EditPhoto.
+      if (isDuplicateMode && maxCaptures > 1 && !frameConfig?.duplicatePhotos) {
         // Check if photos need duplication (may already be done in capture step)
         if (photoPayloadSource.length < maxCaptures) {
           console.log("🔁 [DUPLICATE MODE] Duplicating photos...");
