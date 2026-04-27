@@ -1,0 +1,467 @@
+<html>
+<head>
+  <meta http-equiv="x-ua-compatible" content="IE=9" />
+  <title>Fremio Studio Launcher</title>
+  <link rel="shortcut icon" href="fremio-studio-icon.ico" type="image/x-icon" />
+  <hta:application
+    id="fremioStudioLauncher"
+    applicationname="Fremio Studio Launcher"
+    border="thin"
+    borderstyle="normal"
+    caption="yes"
+    maximizebutton="no"
+    minimizebutton="yes"
+    showintaskbar="yes"
+    singleinstance="yes"
+    sysmenu="yes"
+    icon="fremio-studio-icon.ico"
+    windowstate="normal"
+  />
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+    }
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      background: #f6f2ef;
+      color: #2a211d;
+      padding: 0;
+    }
+    .wrap {
+      display: table;
+      width: 100%;
+      height: 100%;
+      table-layout: fixed;
+    }
+    .center-cell {
+      display: table-cell;
+      vertical-align: middle;
+      text-align: center;
+      padding: 10px;
+    }
+    .card {
+      display: inline-block;
+      background: #ffffff;
+      border: 1px solid #eaded8;
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin: 0;
+      box-sizing: border-box;
+      width: 760px;
+      max-width: 100%;
+      text-align: left;
+    }
+    h1 {
+      font-size: 30px;
+      margin: 0 0 10px;
+      text-align: center;
+    }
+    .sub {
+      color: #6d5b53;
+      margin: 0;
+      line-height: 1.5;
+      text-align: center;
+      font-size: 16px;
+    }
+    .steps {
+      margin: 10px 0 0;
+      padding-left: 20px;
+      line-height: 1.8;
+      color: #3b2f2a;
+      font-size: 16px;
+    }
+    .row {
+      text-align: center;
+      margin-top: 14px;
+    }
+    .row-split {
+      margin-top: 10px;
+      text-align: center;
+    }
+    .row-split button {
+      display: inline-block;
+      width: 48%;
+      margin: 0 1%;
+      font-size: 14px;
+      padding: 12px 10px;
+    }
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 14px 20px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 16px;
+      display: block;
+      width: 300px;
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    .btn-primary {
+      background: #a8705e;
+      color: #ffffff;
+    }
+    .btn-secondary {
+      background: #f5ece8;
+      color: #8a5e50;
+      border: 1px solid #d8b8ac;
+    }
+    .field {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #e3d4cd;
+      font-size: 14px;
+      margin-top: 8px;
+      outline: none;
+    }
+    .field:focus {
+      border-color: #a8705e;
+    }
+    .label {
+      display: block;
+      margin-top: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #6d5b53;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .panel {
+      display: none;
+    }
+    .panel.active {
+      display: block;
+    }
+    .booth-list {
+      margin: 10px 0 0;
+      padding: 0;
+      list-style: none;
+      text-align: center;
+    }
+    .booth-item {
+      display: inline-block;
+      margin: 5px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      vertical-align: top;
+    }
+    .booth-title {
+      display: none;
+    }
+    .booth-url {
+      display: none;
+    }
+    .booth-item .open-btn {
+      margin-top: 0;
+      width: 220px;
+      max-width: 220px;
+      display: inline-block;
+      padding: 9px 12px;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .muted {
+      color: #8a7770;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    .account-line {
+      margin: 6px 0 0;
+      font-size: 13px;
+      color: #6d5b53;
+      text-align: center;
+    }
+    .status {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #5f4e47;
+      min-height: 20px;
+    }
+    .ok {
+      color: #166534;
+      font-weight: 700;
+    }
+    .err {
+      color: #b91c1c;
+      font-weight: 700;
+    }
+    .small {
+      font-size: 12px;
+      color: #7f6d66;
+      margin-top: 6px;
+    }
+  </style>
+  <script language="javascript">
+    var launcherSession = {
+      operatorName: "",
+      booths: []
+    };
+
+    function byId(id) {
+      return document.getElementById(id);
+    }
+
+    function showPanel(id) {
+      var loginPanel = byId("loginPanel");
+      var mainPanel = byId("mainPanel");
+      loginPanel.className = "panel";
+      mainPanel.className = "panel";
+      byId(id).className = "panel active";
+      loginPanel.style.display = id === "loginPanel" ? "block" : "none";
+      mainPanel.style.display = id === "mainPanel" ? "block" : "none";
+    }
+
+    function setLoginStatus(text, cls) {
+      var el = byId("loginStatus");
+      el.className = "status " + (cls || "");
+      el.innerText = text;
+    }
+
+    function setLoginButtonDisabled(disabled) {
+      var btn = byId("loginBtn");
+      btn.disabled = !!disabled;
+      btn.style.opacity = disabled ? "0.7" : "1";
+      btn.style.cursor = disabled ? "default" : "pointer";
+    }
+
+    function setBoothStatus(text) {
+      byId("boothStatus").innerText = text;
+    }
+
+    function openExternal(url) {
+      try {
+        var shell = new ActiveXObject("WScript.Shell");
+        shell.Run('cmd /c start "" "' + url + '"', 0, false);
+      } catch (e) {}
+    }
+
+    function renderBooths() {
+      var list = byId("boothList");
+      list.innerHTML = "";
+
+      if (!launcherSession.booths || launcherSession.booths.length === 0) {
+        setBoothStatus("Belum ada booth aktif di akun ini.");
+        return;
+      }
+
+      setBoothStatus("Link booth aktif berdasarkan akun:");
+
+      for (var i = 0; i < launcherSession.booths.length; i++) {
+        var booth = launcherSession.booths[i];
+
+        var li = document.createElement("li");
+        li.className = "booth-item";
+
+        var btn = document.createElement("button");
+        btn.className = "btn-secondary open-btn";
+        btn.innerText = "Buka Booth: " + booth.boothName;
+        btn.title = booth.boothUrl;
+        btn.setAttribute("data-url", booth.boothUrl);
+        btn.onclick = function () {
+          openExternal(this.getAttribute("data-url"));
+        };
+
+        li.appendChild(btn);
+        list.appendChild(li);
+      }
+    }
+
+    function loginLauncher() {
+      var email = byId("emailInput").value;
+      var password = byId("passwordInput").value;
+
+      if (!email || !password) {
+        setLoginStatus("Email dan password wajib diisi.", "err");
+        return;
+      }
+
+      setLoginStatus("Memverifikasi akun...", "");
+      setLoginButtonDisabled(true);
+
+      window.setTimeout(function () {
+        try {
+          var body = JSON.stringify({ email: email, password: password });
+          var statusCode = 0;
+          var responseText = "";
+          var payload = null;
+
+          try {
+            var req = new ActiveXObject("MSXML2.ServerXMLHTTP.6.0");
+            req.setTimeouts(10000, 10000, 15000, 15000);
+            req.open("POST", "https://studio.fremio.id/api/launcher/login", false);
+            req.setRequestHeader("Content-Type", "application/json");
+            req.send(body);
+            statusCode = req.status;
+            responseText = req.responseText || "";
+          } catch (httpErr) {
+            var reqFallback = new ActiveXObject("WinHttp.WinHttpRequest.5.1");
+            reqFallback.Option(9) = 2048;
+            reqFallback.SetTimeouts(10000, 10000, 15000, 15000);
+            reqFallback.Open("POST", "https://studio.fremio.id/api/launcher/login", false);
+            reqFallback.SetRequestHeader("Content-Type", "application/json");
+            reqFallback.Send(body);
+            statusCode = reqFallback.Status;
+            responseText = reqFallback.ResponseText || "";
+          }
+
+          try {
+            payload = JSON.parse(responseText || "{}");
+          } catch (parseErr) {
+            payload = null;
+          }
+
+          if (statusCode >= 200 && statusCode < 300 && payload && payload.success && payload.data) {
+            launcherSession.operatorName = payload.data.operator.businessName || payload.data.operator.email;
+            launcherSession.booths = payload.data.booths || [];
+
+            byId("accountName").innerText = launcherSession.operatorName;
+            renderBooths();
+            setStatus("Status: belum dijalankan.", "");
+            showPanel("mainPanel");
+            setLoginStatus("", "");
+          } else {
+            var errText = "Login gagal. Pastikan email dan password benar.";
+            if (payload && payload.error) errText = payload.error;
+            setLoginStatus(errText, "err");
+          }
+        } catch (e) {
+          setLoginStatus("Tidak bisa terhubung ke server. Cek internet lalu coba lagi.", "err");
+        }
+        setLoginButtonDisabled(false);
+      }, 30);
+    }
+
+    function logoutLauncher() {
+      launcherSession.operatorName = "";
+      launcherSession.booths = [];
+      byId("emailInput").value = "";
+      byId("passwordInput").value = "";
+      setLoginStatus("", "");
+      showPanel("loginPanel");
+    }
+
+    function openRegister() {
+      openExternal("https://studio.fremio.id/login");
+    }
+
+    function setStatus(text, cls) {
+      var el = document.getElementById("status");
+      el.className = "status " + (cls || "");
+      el.innerText = text;
+    }
+
+    function setStartButtonDisabled(disabled) {
+      var btn = document.getElementById("startBtn");
+      if (!btn) return;
+      btn.disabled = !!disabled;
+      btn.style.opacity = disabled ? "0.7" : "1";
+      btn.style.cursor = disabled ? "default" : "pointer";
+    }
+
+    function runStudio() {
+      setStatus("Menyiapkan Fremio Studio...", "");
+      var shell = new ActiveXObject("WScript.Shell");
+
+      var psCmd = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command \""
+        + "$ErrorActionPreference='Stop';"
+        + "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;"
+        + "$dir=Join-Path $env:LOCALAPPDATA 'FremioStudio';"
+        + "New-Item -ItemType Directory -Force -Path $dir | Out-Null;"
+        + "$exe=Join-Path $dir 'fremio-agent-win.exe';"
+        + "$tmp=Join-Path $dir 'fremio-agent-win.download';"
+        + "$url='https://studio.fremio.id/downloads/fremio-agent-win.exe';"
+        + "$needsDownload=$true;"
+        + "if (Test-Path $exe) {"
+        + "  try { $existing=[System.IO.File]::ReadAllBytes($exe); if ($existing.Length -ge 2 -and $existing[0] -eq 77 -and $existing[1] -eq 90) { $needsDownload=$false } } catch { $needsDownload=$true }"
+        + "};"
+        + "if ($needsDownload) {"
+        + "  Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 45;"
+        + "  $bytes=[System.IO.File]::ReadAllBytes($tmp);"
+        + "  if ($bytes.Length -lt 2 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Downloaded file bukan executable Windows yang valid.'; }"
+        + "  Move-Item -Force -Path $tmp -Destination $exe;"
+        + "};"
+        + "Start-Process -FilePath $exe -WindowStyle Hidden -ErrorAction Stop | Out-Null;"
+        + "\"";
+
+      try {
+        setStartButtonDisabled(true);
+        var code = shell.Run(psCmd, 0, true);
+        setStartButtonDisabled(false);
+        if (code === 0) {
+          setStatus("Fremio Studio aktif. Lanjutkan ke link booth.", "ok");
+        } else {
+          setStatus("Gagal menjalankan Fremio Studio. Coba klik lagi atau jalankan sebagai Administrator.", "err");
+        }
+      } catch (e) {
+        setStartButtonDisabled(false);
+        setStatus("Gagal menjalankan Fremio Studio. Coba Run as administrator.", "err");
+      }
+    }
+
+    window.onload = function () {
+      showPanel("loginPanel");
+      try {
+        byId("loginBtn").onclick = loginLauncher;
+        byId("registerBtn").onclick = openRegister;
+        byId("webLoginBtn").onclick = function () { openExternal("https://studio.fremio.id/login"); };
+      } catch (bindErr) {}
+    };
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <div class="center-cell">
+      <div class="card">
+        <div id="loginPanel" class="panel active" style="display:block;">
+          <h1>Login Fremio Studio</h1>
+          <p class="sub">Masuk dulu untuk menampilkan link booth aktif berdasarkan akun kamu.</p>
+
+          <label class="label" for="emailInput">Email</label>
+          <input id="emailInput" class="field" type="text" placeholder="email@bisnis.com" />
+
+          <label class="label" for="passwordInput">Password</label>
+          <input id="passwordInput" class="field" type="password" placeholder="••••••••" />
+
+          <div class="row">
+            <button id="loginBtn" type="button" class="btn-primary" onclick="loginLauncher()">Login</button>
+          </div>
+          <div class="row-split">
+            <button id="registerBtn" type="button" class="btn-secondary" onclick="openRegister()">Daftar Akun</button>
+            <button id="webLoginBtn" type="button" class="btn-secondary" onclick="openExternal('https://studio.fremio.id/login')">Buka Login Web</button>
+          </div>
+          <div id="loginStatus" class="status"></div>
+        </div>
+
+        <div id="mainPanel" class="panel" style="display:none;">
+          <h1>Welcome, Photobox Owner</h1>
+          <p class="sub">Akun aktif: <span id="accountName">-</span></p>
+
+          <ol class="steps">
+            <li>Klik tombol <strong>Mulai Fremio Studio</strong> dan jangan close selama sesi photobox berjalan</li>
+            <li>Setelah aktif, pilih booth di bawah lalu klik tombol booth</li>
+          </ol>
+
+          <div class="row">
+            <button id="startBtn" type="button" class="btn-primary" onclick="runStudio()">Mulai Fremio Studio</button>
+          </div>
+
+          <p id="boothStatus" class="muted">Memuat daftar booth...</p>
+          <ul id="boothList" class="booth-list"></ul>
+
+          <div class="row">
+            <button type="button" class="btn-secondary" onclick="logoutLauncher()">Ganti Akun</button>
+          </div>
+          <div id="status" class="status">Status: belum dijalankan.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

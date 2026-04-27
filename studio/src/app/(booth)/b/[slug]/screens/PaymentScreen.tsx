@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
 import { usePaymentPolling } from "../hooks/usePaymentPolling";
-import { getAdaptiveColors } from "../colorUtils";
 import type { BoothConfigData } from "../types";
 
 interface PaymentScreenProps {
@@ -11,6 +11,7 @@ interface PaymentScreenProps {
   sessionId:    string;
   qrImageUrl:   string | null;
   qrString:     string | null;
+  snapToken:    string | null;
   amount:       number;
   expiresAt:    Date | null;
   onPaid:       (sessionId: string) => void;
@@ -28,155 +29,195 @@ export function PaymentScreen({
   sessionId,
   qrImageUrl,
   qrString,
+  snapToken,
   amount,
   expiresAt,
   onPaid,
   onCancel,
 }: PaymentScreenProps) {
-  const { primaryColor, accentColor } = booth;
-  const { textPrimary, textSecondary, surfaceBg, surfaceBorder } = getAdaptiveColors(primaryColor);
+  const { primaryColor } = booth;
   const [simulating, setSimulating]   = useState(false);
+  const [qrDataUrl, setQrDataUrl]     = useState<string | null>(null);
+  const [snapLoading, setSnapLoading] = useState(false);
+  const snapOpenedRef                 = useRef(false);
+  const snapPaidRef                   = useRef(false);  // track successful payment
 
-  // Countdown
-  const [secondsLeft, setSecondsLeft] = useState(() => {
-    if (!expiresAt) return 300;
-    const diff = Math.floor((expiresAt.getTime() - Date.now()) / 1000);
-    return Math.max(0, diff);
-  });
-
+  // ── Snap: load script + auto-open popup ─────────────────────────────────
   useEffect(() => {
-    if (secondsLeft <= 0) return;
-    const id = setInterval(() =>
-      setSecondsLeft((s) => {
-        if (s <= 1) {
-          clearInterval(id);
-          onCancel(); // waktu habis → balik ke IDLE
-          return 0;
+    if (!snapToken || snapOpenedRef.current) return;
+
+    const clientKey = process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY ?? "";
+    const isProduction = process.env.NEXT_PUBLIC_MIDTRANS_ENV === "production";
+    const snapSrc = isProduction
+      ? "https://app.midtrans.com/snap/snap.js"
+      : "https://app.sandbox.midtrans.com/snap/snap.js";
+
+    async function handleSnapSuccess() {
+      snapPaidRef.current = true;
+      // Verifikasi + aktifkan session di server sebelum lanjut ke kamera
+      try {
+        const res  = await fetch("/api/payment/snap-activate", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ orderId }),
+        });
+        const json = await res.json();
+        if (json.success) {
+          onPaid(sessionId);
+        } else {
+          console.error("[snap-activate] gagal:", json.error);
+          // Tetap lanjutkan — mungkin webhook sudah mengaktifkan sesi
+          onPaid(sessionId);
         }
-        return s - 1;
-      }), 1000
-    );
-    return () => clearInterval(id);
-  }, []);                               // eslint-disable-line react-hooks/exhaustive-deps
+      } catch (err) {
+        console.error("[snap-activate] network error:", err);
+        // Tetap lanjutkan agar user tidak terjebak
+        onPaid(sessionId);
+      }
+    }
+
+    function openSnap() {
+      snapOpenedRef.current = true;
+      setSnapLoading(false);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).snap.embed(snapToken, {
+        embedId: "snap-container",
+        onSuccess: () => { void handleSnapSuccess(); },
+        onPending: () => { /* tetap polling */ },
+        onError:   () => { /* embed — tidak ada close button yang trigger redirect */ },
+        onClose:   () => { /* embed — tidak ada close button */ },
+      });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((window as any).snap) {
+      openSnap();
+      return;
+    }
+
+    setSnapLoading(true);
+    const script = document.createElement("script");
+    script.src = snapSrc;
+    script.setAttribute("data-client-key", clientKey);
+    script.onload  = openSnap;
+    script.onerror = () => { setSnapLoading(false); onCancel(); };
+    document.head.appendChild(script);
+
+    return () => {
+      // Jangan remove script — mungkin sudah dibersihkan oleh Snap
+    };
+  }, [snapToken, sessionId, onPaid, onCancel]);
+
+  // Render qrString → data URL jika qrImageUrl tidak tersedia (Xendit)
+  useEffect(() => {
+    if (qrImageUrl || !qrString) return;
+    QRCode.toDataURL(qrString, { width: 300, margin: 1, errorCorrectionLevel: "M" })
+      .then(setQrDataUrl)
+      .catch(console.error);
+  }, [qrImageUrl, qrString]);
 
   // Polling
   usePaymentPolling(orderId, onPaid, onCancel);
 
-  const mins = String(Math.floor(secondsLeft / 60)).padStart(2, "0");
-  const secs = String(secondsLeft % 60).padStart(2, "0");
-  const urgent = secondsLeft <= 60;
+  const isSandbox = process.env.NEXT_PUBLIC_MIDTRANS_ENV !== "production";
+
+  // ── QR / Snap embed ─────────────────────────────────────────────────────
+  const QrContent = snapToken ? (
+    <div
+      id="snap-container"
+      className="rounded-3xl overflow-hidden"
+      style={{ width: "420px", minHeight: "520px", backgroundColor: "white" }}
+    >
+      {snapLoading && (
+        <div className="flex items-center justify-center" style={{ width: "420px", height: "520px" }}>
+          <span className="text-gray-400 text-sm animate-pulse">Memuat pembayaran…</span>
+        </div>
+      )}
+    </div>
+  ) : (
+    <div className="flex flex-col items-center gap-4 rounded-3xl p-6" style={{ backgroundColor: "white" }}>
+      {qrImageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={qrImageUrl} alt="QRIS" className="w-64 h-64 object-contain"
+             onError={(e) => { e.currentTarget.style.display = "none"; }} />
+      ) : qrDataUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={qrDataUrl} alt="QRIS" className="w-64 h-64 object-contain" />
+      ) : (
+        <div className="w-64 h-64 flex items-center justify-center bg-gray-100 rounded-xl">
+          <span className="text-gray-400 text-sm animate-pulse">Memuat QR…</span>
+        </div>
+      )}
+      <div className="text-center">
+        <p className="text-gray-400 text-xs">Total Pembayaran</p>
+        <p className="font-black text-gray-900 text-2xl">Rp {amount.toLocaleString("id-ID")}</p>
+      </div>
+    </div>
+  );
+
+  const QRIS_WALLETS = [
+    { name: "GoPay",      bg: "#00AED6" },
+    { name: "OVO",        bg: "#4C3494" },
+    { name: "Dana",       bg: "#118EEA" },
+    { name: "ShopeePay", bg: "#EE4D2D" },
+    { name: "LinkAja",   bg: "#CC0000" },
+    { name: "BCA",       bg: "#005DAA" },
+    { name: "BNI",       bg: "#EB5B1E" },
+    { name: "BRI",       bg: "#00529B" },
+    { name: "Mandiri",   bg: "#003087" },
+    { name: "BSI",       bg: "#2D8654" },
+    { name: "CIMB",      bg: "#C8102E" },
+    { name: "Permata",   bg: "#0066B3" },
+    { name: "SeaBank",   bg: "#FF6600" },
+  ];
 
   return (
-    <div
-      className="flex flex-col h-full items-center justify-between py-10 px-6 select-none"
-      style={{ backgroundColor: primaryColor }}
-    >
-      {/* Header */}
-      <div className="text-center">
-        <h2 className="text-3xl font-bold" style={{ color: textPrimary }}>Pembayaran QRIS</h2>
-        <p className="text-sm mt-1" style={{ color: textSecondary }}>
-          Scan QR di bawah dengan aplikasi dompet digital
-        </p>
-      </div>
+    <div className="flex flex-col h-full items-center justify-center gap-4 select-none"
+         style={{ backgroundColor: primaryColor }}>
+      {QrContent}
 
-      {/* QR Code */}
-      <div
-        className="flex flex-col items-center gap-4 rounded-3xl p-6"
-        style={{ backgroundColor: "white" }}
-      >
-        {qrImageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={qrImageUrl}
-            alt="QRIS"
-            className="w-56 h-56 object-contain"
-            onError={(e) => {
-              // Fallback jika qrImageUrl gagal load — render qrString sebagai teks QR
-              e.currentTarget.style.display = "none";
-            }}
-          />
-        ) : qrString ? (
-          /* Fallback teks QR jika image tidak tersedia */
-          <div className="w-56 h-56 flex items-center justify-center bg-gray-100 rounded-xl">
-            <p className="text-xs text-gray-500 text-center break-all p-2">{qrString}</p>
-          </div>
-        ) : (
-          <div className="w-56 h-56 flex items-center justify-center">
-            <span className="text-gray-400 animate-pulse">Memuat QR…</span>
-          </div>
-        )}
-
-        {/* Nominal */}
-        <div className="text-center">
-          <p className="text-gray-500 text-sm">Total Pembayaran</p>
-          <p className="text-3xl font-black text-gray-900">
-            Rp {amount.toLocaleString("id-ID")}
-          </p>
+      {/* Bank / e-wallet logos */}
+      <div className="rounded-2xl px-5 py-4" style={{ backgroundColor: "white", width: snapToken ? "420px" : "320px" }}>
+        <p className="text-gray-400 text-xs font-medium mb-3 text-center uppercase tracking-wider">Pembayaran Melalui</p>
+        <div className="flex flex-wrap justify-center gap-2">
+          {QRIS_WALLETS.map((b) => (
+            <span
+              key={b.name}
+              className="px-3 py-1.5 rounded-full text-white text-xs font-semibold"
+              style={{ backgroundColor: b.bg }}
+            >
+              {b.name}
+            </span>
+          ))}
         </div>
       </div>
 
-      {/* Countdown + instruksi */}
-      <div className="flex flex-col items-center gap-4 w-full">
-        <div className="flex flex-col items-center gap-1">
-          <p className="text-xs uppercase tracking-wider" style={{ color: textSecondary }}>Sisa Waktu</p>
-          <p
-            className="text-5xl font-black tabular-nums"
-            style={{ color: urgent ? "#f87171" : accentColor }}
-          >
-            {mins}:{secs}
-          </p>
-          {urgent && (
-            <p className="text-red-400 text-sm font-medium animate-pulse">
-              Segera selesaikan pembayaran!
-            </p>
-          )}
-        </div>
-
-        {/* Instruksi singkat */}
-        <p className="text-xs text-center" style={{ color: textSecondary }}>
-          GoPay · OVO · Dana · BCA Mobile · Semua QRIS
-        </p>
-
-        {/* Tombol batalkan */}
-        <button
-          onClick={onCancel}
-          className="w-full py-4 rounded-2xl text-lg font-semibold
-                     active:scale-95 transition-colors"
-          style={{ color: textSecondary, border: `1px solid ${surfaceBorder}`, backgroundColor: surfaceBg }}
-        >
-          Batalkan
+      {/* Simulasi bayar — sandbox only */}
+      {isSandbox && (
+        <button disabled={simulating}
+                onClick={async () => {
+                  setSimulating(true);
+                  try {
+                    const res  = await fetch("/api/payment/simulate-paid", {
+                      method:  "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        "x-agent-token": "ff03c6abc48b938e47846267d347f490ab1a0c3cb1476b5c2a16ce0099a0b590",
+                      },
+                      body: JSON.stringify({ sessionId }),
+                    });
+                    const body = await res.json();
+                    if (body.success) onPaid(sessionId);
+                  } catch (e) {
+                    console.error("Simulate paid error:", e);
+                  } finally {
+                    setSimulating(false);
+                  }
+                }}
+                className="px-6 py-3 rounded-2xl text-sm font-bold text-gray-900 bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 transition-colors">
+          {simulating ? "Memproses…" : "⚡ Simulasi Bayar (Testing)"}
         </button>
-
-        {/* ── Simulasi bayar (testing only) ── */}
-        {process.env.NEXT_PUBLIC_MIDTRANS_ENV !== "production" && (
-          <button
-            disabled={simulating}
-            onClick={async () => {
-              setSimulating(true);
-              try {
-                const res  = await fetch("/api/payment/simulate-paid", {
-                  method:  "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "x-agent-token": "ff03c6abc48b938e47846267d347f490ab1a0c3cb1476b5c2a16ce0099a0b590",
-                  },
-                  body: JSON.stringify({ sessionId }),
-                });
-                const body = await res.json();
-                if (body.success) onPaid(sessionId);
-              } catch (e) {
-                console.error("Simulate paid error:", e);
-              } finally {
-                setSimulating(false);
-              }
-            }}
-            className="w-full py-3 rounded-2xl text-sm font-bold text-primary-900
-                       bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 transition-colors"
-          >
-            {simulating ? "Memproses…" : "⚡ Simulasi Bayar (Testing)"}
-          </button>
-        )}
-      </div>
+      )}
     </div>
   );
 }

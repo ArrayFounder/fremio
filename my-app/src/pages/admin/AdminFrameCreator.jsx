@@ -21,11 +21,16 @@ import {
   UploadCloud,
   Maximize2,
   Upload,
+  Download,
+  Search,
+  X,
+  Plus,
 } from "lucide-react";
 import CanvasPreview from "../../components/creator/CanvasPreview.jsx";
 import PropertiesPanel from "../../components/creator/PropertiesPanel.jsx";
 import useCreatorStore from "../../store/useCreatorStore.js";
 import { useShallow } from "zustand/react/shallow";
+import api from "../../services/api";
 import {
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
@@ -39,60 +44,168 @@ const panelMotion = {
   visible: { opacity: 1, y: 0 },
 };
 
-export default function AdminFrameCreator() {
+// ── Detect transparent slot regions from a frame PNG ──
+const detectFrameSlots = (dataUrl) =>
+  new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 400 / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const offscreen = document.createElement("canvas");
+      offscreen.width = w;
+      offscreen.height = h;
+      const ctx = offscreen.getContext("2d", { alpha: true });
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      const { data: pixels } = ctx.getImageData(0, 0, w, h);
+      const transp = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) transp[i] = pixels[i * 4 + 3] < 128 ? 1 : 0;
+      const labels = new Int32Array(w * h).fill(-1);
+      const bounds = [];
+      const stack = [];
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = y * w + x;
+          if (!transp[idx] || labels[idx] !== -1) continue;
+          const label = bounds.length;
+          const b = { minX: x, minY: y, maxX: x, maxY: y, size: 0 };
+          stack.push(idx);
+          while (stack.length > 0) {
+            const cur = stack.pop();
+            if (labels[cur] !== -1) continue;
+            labels[cur] = label;
+            b.size++;
+            const cx = cur % w;
+            const cy = Math.floor(cur / w);
+            if (cx < b.minX) b.minX = cx;
+            if (cx > b.maxX) b.maxX = cx;
+            if (cy < b.minY) b.minY = cy;
+            if (cy > b.maxY) b.maxY = cy;
+            if (cx > 0 && transp[cur - 1] && labels[cur - 1] === -1) stack.push(cur - 1);
+            if (cx < w - 1 && transp[cur + 1] && labels[cur + 1] === -1) stack.push(cur + 1);
+            if (cy > 0 && transp[cur - w] && labels[cur - w] === -1) stack.push(cur - w);
+            if (cy < h - 1 && transp[cur + w] && labels[cur + w] === -1) stack.push(cur + w);
+          }
+          bounds.push(b);
+        }
+      }
+      const minSize = w * h * 0.01;
+      const slots = bounds
+        .filter((b) => b.size >= minSize)
+        .map((b) => ({
+          left: b.minX / w,
+          top: b.minY / h,
+          width: (b.maxX - b.minX + 1) / w,
+          height: (b.maxY - b.minY + 1) / h,
+        }));
+      resolve(slots);
+    };
+    img.onerror = () => resolve([]);
+    img.src = dataUrl;
+  });
+
+// ── Build slot display number map (mirror-aware) ──
+const buildSlotDisplayNumberMap = (slots) => {
+  const map = {};
+  if (!Array.isArray(slots) || slots.length === 0) return map;
+  slots.forEach((_, index) => { map[index] = index + 1; });
+  const withGeom = slots.map((slot, index) => {
+    const left = Number.isFinite(Number(slot?.left)) ? Number(slot.left) : 0;
+    const top = Number.isFinite(Number(slot?.top)) ? Number(slot.top) : 0;
+    const width = Number.isFinite(Number(slot?.width)) ? Number(slot.width) : 0;
+    const height = Number.isFinite(Number(slot?.height)) ? Number(slot.height) : 0;
+    return { index, top, centerX: left + width / 2, width, height };
+  });
+  const valid = withGeom.filter((s) => s.width > 0 && s.height > 0);
+  if (valid.length !== slots.length || slots.length % 2 !== 0) return map;
+  const left = valid.filter((s) => s.centerX < 0.5);
+  const right = valid.filter((s) => s.centerX >= 0.5);
+  if (left.length === 0 || left.length !== right.length) return map;
+  const sort = (a, b) => Math.abs(a.top - b.top) > 0.0001 ? a.top - b.top : a.centerX - b.centerX;
+  left.sort(sort);
+  right.sort(sort);
+  const rowCount = left.length;
+  left.forEach((s, i) => { map[s.index] = i + 1; });
+  right.forEach((s, i) => { map[s.index] = rowCount - i; });
+  return map;
+};
+
+export default function AdminFrameCreator({ studioBoothMode = false }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editFrameId = searchParams.get("edit");
   
   const { user } = useAuth();
   const fileInputRef = useRef(null);
+  const importFrameInputRef = useRef(null);
   const uploadPurposeRef = useRef("upload");
   const previewFrameRef = useRef(null);
   const toastTimeoutRef = useRef(null);
+  const elementsRef = useRef([]);
 
   // State
   const [saving, setSaving] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [loadingFrame, setLoadingFrame] = useState(false);
   const [toast, setToast] = useState(null);
-  const [canvasAspectRatio, setCanvasAspectRatio] = useState("9:16");
+  // Locked to 4R (2:3) for studio booth frames
+  const [canvasAspectRatio, setCanvasAspectRatio] = useState("2:3");
   const [showCanvasSizeInProperties, setShowCanvasSizeInProperties] = useState(false);
   const [gradientColor1, setGradientColor1] = useState("#667eea");
   const [gradientColor2, setGradientColor2] = useState("#764ba2");
   const [isBackgroundLocked, setIsBackgroundLocked] = useState(false);
   const [pendingPhotoTool, setPendingPhotoTool] = useState(false);
+  const [pendingPexelsTool, setPendingPexelsTool] = useState(false);
+  const [importFrameWorking, setImportFrameWorking] = useState(false);
   const [previewConstraints, setPreviewConstraints] = useState({
     maxWidth: 280,
     maxHeight: 500,
   });
+  const [newCategoryInput, setNewCategoryInput] = useState("");
+  const [showAddCategory, setShowAddCategory] = useState(false);
 
   // Admin frame metadata
   const [frameName, setFrameName] = useState("");
   const [frameDescription, setFrameDescription] = useState("");
-  const [frameCategories, setFrameCategories] = useState(["Fremio Series"]);
+  const [frameCategories, setFrameCategories] = useState(["Aesthetic"]);
 
-  // Available categories
-  const availableCategories = [
-    "Fremio Series",
+  // Available categories (Indonesian, matching studio editor)
+  const [availableCategories, setAvailableCategories] = useState([
+    "Aesthetic",
+    "Korean",
+    "Vintage",
+    "Minimalis",
+    "Ulang Tahun",
     "Wedding",
-    "Birthday", 
-    "Graduation",
-    "Event",
-    "Music",
-    "Custom"
-  ];
+    "Wisuda",
+    "Seasonal",
+    "Custom",
+  ]);
 
   // Toggle category selection
   const toggleCategory = (category) => {
     setFrameCategories(prev => {
       if (prev.includes(category)) {
-        // Don't allow removing if it's the last one
         if (prev.length === 1) return prev;
         return prev.filter(c => c !== category);
       } else {
         return [...prev, category];
       }
     });
+  };
+
+  const addCustomCategory = () => {
+    const trimmed = newCategoryInput.trim();
+    if (!trimmed) return;
+    if (!availableCategories.includes(trimmed)) {
+      setAvailableCategories(prev => [...prev, trimmed]);
+    }
+    if (!frameCategories.includes(trimmed)) {
+      setFrameCategories(prev => [...prev, trimmed]);
+    }
+    setNewCategoryInput("");
+    setShowAddCategory(false);
   };
 
   // Creator store
@@ -141,6 +254,9 @@ export default function AdminFrameCreator() {
       setElements: state.setElements,
     }))
   );
+
+  // Keep elementsRef in sync with store
+  useEffect(() => { elementsRef.current = elements; }, [elements]);
 
   // Reset store on mount OR load frame for edit
   useEffect(() => {
@@ -394,6 +510,181 @@ export default function AdminFrameCreator() {
     showToast("success", isBackgroundLocked ? "Background unlocked" : "Background locked", 1500);
   }, [isBackgroundLocked, showToast]);
 
+  // Mirror canvas layout builder (matches studio editor)
+  const buildMirroredPhotoLayout = useCallback((numRows, canvasW, canvasH) => {
+    const centerX = Math.floor(canvasW / 2);
+    const marginX = 65;
+    const marginY = 140;
+    const gapCenter = 30;
+    const gapY = 30;
+    const halfGap = Math.floor(gapCenter / 2);
+    const colWidth = centerX - marginX - halfGap;
+    const availableH = canvasH - 2 * marginY - (numRows - 1) * gapY;
+    const photoH = Math.floor(availableH / numRows);
+    const slots = [];
+    for (let row = 0; row < numRows; row++) {
+      const y = marginY + row * (photoH + gapY);
+      slots.push({ x: marginX, y, width: colWidth, height: photoH, side: "left", rowIndex: row });
+      slots.push({ x: centerX + halfGap, y, width: colWidth, height: photoH, side: "right", rowIndex: row });
+    }
+    return slots;
+  }, []);
+
+  // Mirror-aware element update (matches studio editor)
+  const handleElementUpdate = useCallback((id, changes) => {
+    const currentElements = elementsRef.current;
+    const el = currentElements.find((e) => e.id === id);
+    if (!el || el.type !== "photo" || el.data?.linkedGroup !== "mirror") {
+      updateElement(id, changes);
+      return;
+    }
+    const isResize = "width" in changes || "height" in changes;
+    const hasX = "x" in changes;
+    const hasY = "y" in changes;
+    const linkedPhotos = currentElements.filter(
+      (e) => e.type === "photo" && e.data?.linkedGroup === "mirror"
+    );
+    const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+    const centerX = el.data?.mirrorCenterX ?? Math.floor(canvasW / 2);
+    if (isResize) {
+      const side = el.data?.side;
+      const newW = "width" in changes ? changes.width : el.width;
+      const newH = "height" in changes ? changes.height : el.height;
+      const deltaX = ("x" in changes ? changes.x : el.x) - el.x;
+      const deltaY = ("y" in changes ? changes.y : el.y) - el.y;
+      const deltaW = newW - el.width;
+      const updatesMap = {};
+      linkedPhotos.forEach((photo) => {
+        if (photo.id === id) return;
+        const pSide = photo.data?.side;
+        let newX, newY;
+        if (pSide === side) {
+          newX = photo.x + deltaX;
+          newY = photo.y + deltaY;
+        } else {
+          newX = photo.x - (deltaX + deltaW);
+          newY = photo.y + deltaY;
+        }
+        if (pSide === "left") newX = Math.max(0, Math.min(centerX - newW, newX));
+        else newX = Math.max(centerX, Math.min(canvasW - newW, newX));
+        newY = Math.max(0, Math.min(canvasH - newH, newY));
+        updatesMap[photo.id] = { x: newX, y: newY, width: newW, height: newH };
+      });
+      linkedPhotos.forEach((photo) => {
+        if (updatesMap[photo.id]) updateElement(photo.id, updatesMap[photo.id]);
+      });
+      updateElement(id, changes);
+      return;
+    }
+    if (hasY && !hasX) {
+      const newY = changes.y;
+      linkedPhotos.forEach((photo) => {
+        updateElement(photo.id, { y: newY });
+      });
+      return;
+    }
+    if (hasX) {
+      const newX = changes.x;
+      const side = el.data?.side;
+      const elW = el.width;
+      linkedPhotos.forEach((photo) => {
+        const pSide = photo.data?.side;
+        let mirroredX;
+        if (pSide === side) {
+          mirroredX = newX;
+        } else {
+          const delta = newX - el.x;
+          mirroredX = photo.x - delta;
+        }
+        if (pSide === "left") mirroredX = Math.max(0, Math.min(centerX - elW, mirroredX));
+        else mirroredX = Math.max(centerX, Math.min(canvasW - elW, mirroredX));
+        const update = { x: mirroredX };
+        if (hasY) update.y = changes.y;
+        updateElement(photo.id, update);
+      });
+    }
+  }, [updateElement, getCanvasDimensions, canvasAspectRatio]);
+
+  // Import Frame handler — detects transparent slots, same as studio editor
+  const handleImportFrameFile = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (importFrameInputRef.current) importFrameInputRef.current.value = "";
+    if (!file.type.startsWith("image/")) {
+      showToast("error", "Pilih file gambar (PNG/JPG).");
+      return;
+    }
+    if (importFrameWorking) return;
+    setImportFrameWorking(true);
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+
+      showToast("info", "Mendeteksi area slot foto…", 6000);
+      const slots = await detectFrameSlots(dataUrl);
+      const slotNumberMap = buildSlotDisplayNumberMap(slots);
+
+      if (slots.length > 0) {
+        slots.forEach((slot, index) => {
+          addElement("photo", {
+            x: Math.round(slot.left * canvasW),
+            y: Math.round(slot.top * canvasH),
+            width: Math.round(slot.width * canvasW),
+            height: Math.round(slot.height * canvasH),
+            zIndex: 0,
+            data: {
+              photoIndex: index,
+              slotNumber: slotNumberMap[index] ?? index + 1,
+              borderRadius: 0,
+            },
+          });
+        });
+      } else {
+        addElement("photo", {
+          x: 0, y: 0, width: canvasW, height: canvasH,
+          zIndex: 0,
+          data: { photoIndex: 0, slotNumber: 1, borderRadius: 0 },
+        });
+      }
+
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = reject;
+        i.src = dataUrl;
+      });
+      addElement("upload", {
+        x: 0, y: 0, width: canvasW, height: canvasH,
+        zIndex: 9000,
+        locked: false,
+        data: {
+          image: dataUrl,
+          originalImage: dataUrl,
+          imageAspectRatio: img.width / img.height,
+          objectFit: "fill",
+          label: file.name.replace(/\.[^.]+$/, "") || "Frame",
+          borderRadius: 0,
+          __isOverlay: true,
+        },
+      });
+
+      const slotMsg = slots.length > 0
+        ? `${slots.length} area foto terdeteksi.`
+        : "Tidak ada area transparan terdeteksi, 1 slot penuh ditambahkan.";
+      showToast("success", `Frame diimport! ${slotMsg}`, 4000);
+    } catch (err) {
+      showToast("error", err?.message || "Gagal import frame.");
+    } finally {
+      setImportFrameWorking(false);
+    }
+  }, [importFrameWorking, showToast, getCanvasDimensions, canvasAspectRatio, addElement]);
+
   // Tool buttons
   const toolButtons = useMemo(
     () => [
@@ -405,6 +696,20 @@ export default function AdminFrameCreator() {
         onClick: () => {
           setShowCanvasSizeInProperties((prev) => !prev);
           clearSelection();
+        },
+      },
+      {
+        id: "import-frame",
+        icon: Download,
+        label: "Import Frame",
+        isActive: importFrameWorking,
+        onClick: () => {
+          if (importFrameWorking) return;
+          setShowCanvasSizeInProperties(false);
+          if (importFrameInputRef.current) {
+            importFrameInputRef.current.value = "";
+            importFrameInputRef.current.click();
+          }
         },
       },
       {
@@ -426,10 +731,23 @@ export default function AdminFrameCreator() {
         id: "photo",
         icon: ImageIcon,
         label: "Area Foto",
-        isActive: false,
+        isActive: pendingPhotoTool,
         onClick: () => {
           setShowCanvasSizeInProperties(false);
+          setPendingPexelsTool(false);
           setPendingPhotoTool(true);
+          clearSelection();
+        },
+      },
+      {
+        id: "pexels",
+        icon: Search,
+        label: "Cari Foto",
+        isActive: pendingPexelsTool,
+        onClick: () => {
+          setShowCanvasSizeInProperties(false);
+          setPendingPhotoTool(false);
+          setPendingPexelsTool(true);
           clearSelection();
         },
       },
@@ -440,6 +758,7 @@ export default function AdminFrameCreator() {
         isActive: false,
         onClick: () => {
           setShowCanvasSizeInProperties(false);
+          setPendingPexelsTool(false);
           addElement("text");
         },
       },
@@ -450,6 +769,7 @@ export default function AdminFrameCreator() {
         isActive: false,
         onClick: () => {
           setShowCanvasSizeInProperties(false);
+          setPendingPexelsTool(false);
           addElement("shape");
         },
       },
@@ -464,7 +784,7 @@ export default function AdminFrameCreator() {
         },
       },
     ],
-    [showCanvasSizeInProperties, selectedElementId, addElement, selectElement, clearSelection, triggerUpload]
+    [showCanvasSizeInProperties, selectedElementId, pendingPhotoTool, pendingPexelsTool, importFrameWorking, addElement, selectElement, clearSelection, triggerUpload, setPendingPhotoTool, setPendingPexelsTool]
   );
 
   // Upload frame handler
@@ -695,6 +1015,8 @@ export default function AdminFrameCreator() {
           backgroundColor: canvasBackground,
           elements: otherElements, // Store upload/text/shape elements here
         },
+        source: studioBoothMode ? "studio_booth" : "fremio",
+        is_template: !!studioBoothMode,
       };
 
       console.log("💾 Frame data to save:", {
@@ -727,10 +1049,29 @@ export default function AdminFrameCreator() {
       }
 
       if (result.success) {
+        const savedFrameId = result?.frame?.id || result?.data?.id || result?.id || null;
+
+        if (studioBoothMode && savedFrameId) {
+          try {
+            const cfg = await api.get("/admin/studio/managed-frames");
+            const prevIds = Array.isArray(cfg?.data?.allowedFrameIds)
+              ? cfg.data.allowedFrameIds.map((v) => String(v))
+              : [];
+            if (!prevIds.includes(String(savedFrameId))) {
+              await api.put("/admin/studio/managed-frames", {
+                enforceWhitelist: true,
+                allowedFrameIds: [...prevIds, String(savedFrameId)],
+              });
+            }
+          } catch (syncErr) {
+            console.warn("Failed to auto-add frame to studio booth whitelist:", syncErr);
+          }
+        }
+
         setFrameName("");
         setFrameDescription("");
         setFrameCategories(["Fremio Series"]);
-        setTimeout(() => navigate("/admin/frames"), 1500);
+        setTimeout(() => navigate(studioBoothMode ? "/admin/studio-booths" : "/admin/frames"), 1500);
       } else {
         showToast("error", result.message || "Gagal menyimpan frame");
       }
@@ -744,12 +1085,19 @@ export default function AdminFrameCreator() {
 
   return (
     <div className="create-page">
-      {/* Hidden file input */}
+      {/* Hidden file inputs */}
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
         onChange={handleFileChange}
+        style={{ display: "none" }}
+      />
+      <input
+        ref={importFrameInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImportFrameFile}
         style={{ display: "none" }}
       />
 
@@ -795,41 +1143,31 @@ export default function AdminFrameCreator() {
             })}
           </div>
 
-          {/* Frame Settings */}
-          <div style={{ marginTop: "24px", borderTop: "1px solid #f0e6e0", paddingTop: "16px" }}>
-            <h3 style={{ fontSize: "13px", fontWeight: "600", color: "#374151", marginBottom: "12px" }}>
-              {isEditMode ? "✏️ Edit Frame" : "📋 Frame Settings"}
-            </h3>
-            
+          {/* Frame Metadata */}
+          <div style={{ marginTop: "20px", borderTop: "1px solid #f0e6e0", paddingTop: "16px" }}>
             {loadingFrame && (
-              <div style={{ 
-                padding: "12px", 
-                background: "#f0f9ff", 
-                borderRadius: "8px", 
-                marginBottom: "12px",
-                fontSize: "13px",
-                color: "#0369a1"
-              }}>
+              <div style={{ padding: "10px", background: "#f0f9ff", borderRadius: "8px", marginBottom: "12px", fontSize: "13px", color: "#0369a1" }}>
                 ⏳ Memuat data frame...
               </div>
             )}
             
             <div style={{ marginBottom: "12px" }}>
-              <label style={{ fontSize: "12px", color: "#6b7280", display: "block", marginBottom: "4px" }}>
-                Nama Frame *
+              <label style={{ fontSize: "11px", fontWeight: 700, color: "#b08a7a", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: "6px" }}>
+                NAMA FRAME
               </label>
               <input
                 type="text"
                 value={frameName}
                 onChange={(e) => setFrameName(e.target.value)}
-                placeholder="contoh: FremioSeries-Blue-6"
+                placeholder="Masukkan nama frame"
                 style={{
                   width: "100%",
-                  padding: "8px 10px",
+                  padding: "9px 12px",
                   fontSize: "13px",
-                  border: "1px solid #e5e7eb",
-                  borderRadius: "8px",
+                  border: "1.5px solid #e5e7eb",
+                  borderRadius: "10px",
                   boxSizing: "border-box",
+                  outline: "none",
                 }}
               />
             </div>
@@ -856,72 +1194,70 @@ export default function AdminFrameCreator() {
             </div>
 
             <div style={{ marginBottom: "12px" }}>
-              <label style={{ fontSize: "12px", color: "#6b7280", display: "block", marginBottom: "8px" }}>
-                Kategori (pilih satu atau lebih)
+              <label style={{ fontSize: "11px", fontWeight: 700, color: "#b08a7a", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: "8px" }}>
+                KATEGORI FRAME
               </label>
-              <div style={{ 
-                display: "flex", 
-                flexDirection: "column", 
-                gap: "6px",
-                padding: "8px",
-                border: "1px solid #e5e7eb",
-                borderRadius: "8px",
-                backgroundColor: "#fafafa"
-              }}>
-                {availableCategories.map((cat) => (
-                  <label 
-                    key={cat}
-                    style={{ 
-                      display: "flex", 
-                      alignItems: "center", 
-                      gap: "8px",
-                      cursor: "pointer",
-                      padding: "4px 6px",
-                      borderRadius: "6px",
-                      backgroundColor: frameCategories.includes(cat) ? "#f0e6ff" : "transparent",
-                      transition: "background-color 0.2s"
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={frameCategories.includes(cat)}
-                      onChange={() => toggleCategory(cat)}
-                      style={{
-                        width: "16px",
-                        height: "16px",
-                        accentColor: "#8b5cf6",
-                        cursor: "pointer"
-                      }}
-                    />
-                    <span style={{ fontSize: "13px", color: "#374151" }}>{cat}</span>
-                  </label>
-                ))}
-              </div>
-              {frameCategories.length > 0 && (
-                <div style={{ 
-                  marginTop: "8px", 
-                  fontSize: "11px", 
-                  color: "#8b5cf6",
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "4px"
-                }}>
-                  {frameCategories.map((cat) => (
-                    <span 
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {availableCategories.map((cat) => {
+                  const selected = frameCategories.includes(cat);
+                  return (
+                    <button
                       key={cat}
+                      type="button"
+                      onClick={() => toggleCategory(cat)}
                       style={{
-                        background: "linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)",
-                        color: "white",
-                        padding: "2px 8px",
-                        borderRadius: "12px",
-                        fontSize: "11px"
+                        padding: "5px 12px",
+                        borderRadius: "999px",
+                        border: selected ? "1.5px solid #8b5cf6" : "1.5px solid #e5e7eb",
+                        background: selected ? "#f5f3ff" : "#fff",
+                        color: selected ? "#6d28d9" : "#374151",
+                        fontSize: "12px",
+                        fontWeight: selected ? 700 : 500,
+                        cursor: "pointer",
+                        transition: "all 0.15s",
                       }}
                     >
                       {cat}
-                    </span>
-                  ))}
-                </div>
-              )}
+                    </button>
+                  );
+                })}
+                {showAddCategory ? (
+                  <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newCategoryInput}
+                      onChange={(e) => setNewCategoryInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") addCustomCategory(); if (e.key === "Escape") { setShowAddCategory(false); setNewCategoryInput(""); } }}
+                      placeholder="Nama kategori"
+                      style={{ padding: "4px 8px", borderRadius: "999px", border: "1.5px solid #8b5cf6", fontSize: "12px", width: "110px", outline: "none" }}
+                    />
+                    <button type="button" onClick={addCustomCategory} style={{ border: "none", background: "#8b5cf6", color: "#fff", borderRadius: "999px", padding: "4px 8px", fontSize: "12px", cursor: "pointer" }}>OK</button>
+                    <button type="button" onClick={() => { setShowAddCategory(false); setNewCategoryInput(""); }} style={{ border: "1px solid #e5e7eb", background: "#fff", borderRadius: "999px", padding: "4px 8px", fontSize: "12px", cursor: "pointer" }}>
+                      <X size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCategory(true)}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: "999px",
+                      border: "1.5px dashed #d1d5db",
+                      background: "#fff",
+                      color: "#9ca3af",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                    }}
+                  >
+                    <Plus size={12} /> Tambah
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </Motion.aside>
@@ -961,7 +1297,7 @@ export default function AdminFrameCreator() {
                     selectElement(id);
                   }
                 }}
-                onUpdate={updateElement}
+                onUpdate={handleElementUpdate}
                 onBringToFront={bringToFront}
                 onRemove={removeElement}
                 onDuplicate={duplicateElement}
@@ -971,7 +1307,7 @@ export default function AdminFrameCreator() {
             </div>
           </div>
 
-          {/* Upload Button */}
+          {/* Save Button — matches studio editor style */}
           <Motion.button
             type="button"
             onClick={handleUploadFrame}
@@ -980,9 +1316,18 @@ export default function AdminFrameCreator() {
             whileTap={{ scale: 0.97 }}
             whileHover={{ y: -3 }}
             style={{
-              background: isEditMode 
-                ? "linear-gradient(135deg, #10b981 0%, #059669 100%)"
-                : "linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)",
+              background: isEditMode ? "#1f2937" : "#111827",
+              borderRadius: "999px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "14px 32px",
+              fontSize: "15px",
+              fontWeight: 700,
+              color: "#fff",
+              border: "none",
+              cursor: saving || loadingFrame ? "not-allowed" : "pointer",
+              opacity: saving || loadingFrame ? 0.7 : 1,
             }}
           >
             {saving ? (
@@ -991,12 +1336,12 @@ export default function AdminFrameCreator() {
                   <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
                   <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75" />
                 </svg>
-                {isEditMode ? "Menyimpan..." : "Mengupload..."}
+                {isEditMode ? "Menyimpan..." : "Menyimpan..."}
               </>
             ) : (
               <>
                 <Upload size={18} strokeWidth={2.5} />
-                {isEditMode ? "Update Frame" : "Upload Frame"}
+                {isEditMode ? "Update Frame" : "Save"}
               </>
             )}
           </Motion.button>
@@ -1012,11 +1357,11 @@ export default function AdminFrameCreator() {
         >
           <h2 className="create-panel__title">Properties</h2>
           <div className="create-panel__body">
-            <PropertiesPanel
+<PropertiesPanel
               selectedElement={selectedElement}
               canvasBackground={canvasBackground}
               onBackgroundChange={setCanvasBackground}
-              onUpdateElement={updateElement}
+              onUpdateElement={handleElementUpdate}
               onDeleteElement={removeElement}
               clearSelection={clearSelection}
               onSelectBackgroundPhoto={() => {
@@ -1046,29 +1391,33 @@ export default function AdminFrameCreator() {
               isBackgroundLocked={isBackgroundLocked}
               onToggleBackgroundLock={toggleBackgroundLock}
               pendingPhotoTool={pendingPhotoTool}
-              onConfirmAddPhoto={(rows = 1, cols = 1) => {
+              pendingPexelsTool={pendingPexelsTool}
+              onConfirmAddPhoto={(numRows = 3) => {
                 setPendingPhotoTool(false);
-                const canvasW = CANVAS_WIDTH;
-                const canvasH = CANVAS_HEIGHT;
-                const gapX = 30, gapY = 30;
-                const marginX = 65, marginY = 140;
-                const availableWidth = canvasW - (2 * marginX) - ((cols - 1) * gapX);
-                const availableHeight = canvasH - (2 * marginY) - ((rows - 1) * gapY);
-                const photoWidth = Math.floor(availableWidth / cols);
-                const photoHeight = Math.floor(availableHeight / rows);
-                
+                elements.filter((el) => el.type === "photo").forEach((el) => removeElement(el.id));
+                const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+                const centerX = Math.floor(canvasW / 2);
+                const slots = buildMirroredPhotoLayout(numRows, canvasW, canvasH);
+                // Assign display numbers: left col 1..N top→bottom, right col N..1 top→bottom
+                const leftSlots = slots.filter((s) => s.side === "left").sort((a, b) => a.y - b.y);
+                const rightSlots = slots.filter((s) => s.side === "right").sort((a, b) => a.y - b.y);
+                const rowCount = leftSlots.length;
+                const slotNumberMap = {};
+                leftSlots.forEach((s, i) => { slotNumberMap[slots.indexOf(s)] = i + 1; });
+                rightSlots.forEach((s, i) => { slotNumberMap[slots.indexOf(s)] = rowCount - i; });
                 let lastAddedId = null;
-                for (let row = 0; row < rows; row++) {
-                  for (let col = 0; col < cols; col++) {
-                    const x = marginX + (col * (photoWidth + gapX));
-                    const y = marginY + (row * (photoHeight + gapY));
-                    const newId = addElement("photo", { x, y, width: photoWidth, height: photoHeight });
-                    if (newId) lastAddedId = newId;
-                  }
-                }
+                slots.forEach((slot, index) => {
+                  const newId = addElement("photo", {
+                    x: slot.x, y: slot.y, width: slot.width, height: slot.height,
+                    zIndex: 0,
+                    data: { photoIndex: index, slotNumber: slotNumberMap[index] ?? index + 1, borderRadius: 0, linkedGroup: "mirror", side: slot.side, rowIndex: slot.rowIndex, mirrorCenterX: centerX },
+                  });
+                  if (newId) lastAddedId = newId;
+                });
                 if (lastAddedId) selectElement(lastAddedId);
               }}
               onCancelPhotoTool={() => setPendingPhotoTool(false)}
+              onCancelPexelsTool={() => setPendingPexelsTool(false)}
             />
           </div>
         </Motion.aside>

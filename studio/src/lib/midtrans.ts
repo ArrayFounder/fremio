@@ -118,6 +118,10 @@ export async function createQrisCharge(
   const data = await res.json();
 
   if (!res.ok || (data.status_code !== "201" && data.status_code !== "200")) {
+    // 401 = Server Key tidak valid — beri pesan spesifik agar mudah diagnosis
+    if (data.status_code === "401" || res.status === 401) {
+      throw new Error("Midtrans Server Key tidak valid atau tidak dikenali. Periksa kembali konfigurasi key di dashboard.");
+    }
     throw new Error(
       `Midtrans QRIS charge gagal: [${data.status_code}] ${data.status_message ?? res.status}`
     );
@@ -155,7 +159,10 @@ export async function createSnapToken(
     ...(req.email || req.name
       ? { customer_details: { email: req.email, first_name: req.name } }
       : {}),
-    enabled_payments: ["qris", "gopay", "bca_va", "bni_va", "bri_va"],
+    // Hanya tampilkan QRIS generik — semua e-wallet bisa scan, tidak auto-expand satu metode
+    enabled_payments: ["other_qris", "qris"],
+    // Cegah Snap meredirect halaman parent setelah selesai/ditutup
+    callbacks: { finish: "" },
   };
 
   const res = await fetch(`${SNAP_BASE}/snap/v1/transactions`, {

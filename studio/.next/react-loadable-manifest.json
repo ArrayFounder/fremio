@@ -5,10 +5,24 @@
       "static/chunks/d0f5a89a.88baa57ade7f5e6b.js"
     ]
   },
+  "app/(editor)/frames/editor/CreateStudio.jsx -> @/utils/draftHelpers": {
+    "id": 63787,
+    "files": []
+  },
+  "app/(editor)/frames/editor/CreateStudio.jsx -> @/utils/indexedDBStorage": {
+    "id": 79244,
+    "files": [
+      "static/chunks/244.65964c699c040bd4.js"
+    ]
+  },
+  "lib/frameEngine.ts -> gifenc": {
+    "id": 4834,
+    "files": [
+      "static/chunks/834.2f797b9ad79d3e79.js"
+    ]
+  },
   "lib/frameEngine.ts -> qrcode": {
     "id": 35819,
-    "files": [
-      "static/chunks/819.6730592eb3ccf9c1.js"
-    ]
+    "files": []
   }
 }

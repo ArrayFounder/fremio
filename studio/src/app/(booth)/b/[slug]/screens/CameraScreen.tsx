@@ -3,7 +3,19 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useCamera } from "../hooks/useCamera";
 import { getAdaptiveColors } from "../colorUtils";
-import type { BoothConfigData, FrameData } from "../types";
+import type { BoothConfigData, FrameData, PhotoSlot } from "../types";
+import { getEffectiveCaptureCount, getEffectiveSlots, isEffectiveDuplicateMode } from "../frameSlotUtils";
+
+function isOverlayAsset(url: string): boolean {
+  if (!url) return false;
+  const path = url.split("?")[0];
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "png") return true;
+  const lastDot = path.lastIndexOf(".");
+  if (lastDot <= 0) return false;
+  const stem = path.substring(0, lastDot);
+  return stem.endsWith("_png");
+}
 
 function useIsPortrait() {
   const [portrait, setPortrait] = useState(false);
@@ -57,35 +69,82 @@ function drawCoverToCanvas(
 }
 
 interface LivePreviewCanvasProps {
-  stream:         MediaStream | null;
-  mirror:         boolean;
-  frame:          FrameData;
-  capturedPhotos: string[];
-  isDuplicate:    boolean;
-  allPhotosDone:  boolean;
+  stream:          MediaStream | null;
+  mirror:          boolean;
+  frame:           FrameData;
+  slots:           PhotoSlot[];
+  capturedPhotos:  string[];
+  isDuplicate:     boolean;
+  allPhotosDone:   boolean;
+  activeSlotIndex: number;
 }
 
-function LivePreviewCanvas({ stream, mirror, frame, capturedPhotos, isDuplicate, allPhotosDone }: LivePreviewCanvasProps) {
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const hiddenVidRef = useRef<HTMLVideoElement>(null);
-  const photoImgsRef = useRef<Map<number, HTMLImageElement>>(new Map());
-  const rafRef       = useRef<number>(0);
+function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex }: LivePreviewCanvasProps) {
+  const canvasRef           = useRef<HTMLCanvasElement>(null);
+  const hiddenVidRef        = useRef<HTMLVideoElement>(null);
+  const frameBaseImgRef     = useRef<HTMLImageElement | null>(null);
+  const frameOverlayImgRef  = useRef<HTMLImageElement | null>(null);
+  const photoImgsRef        = useRef<Map<number, HTMLImageElement>>(new Map());
+  const photoUrlsRef        = useRef<Map<number, string>>(new Map());
+  const capturedPhotosRef   = useRef<string[]>(capturedPhotos);
+  const activeSlotRef       = useRef<number>(activeSlotIndex);
+  const rafRef              = useRef<number>(0);
 
-  const cw    = frame.canvasWidth  || 1080;
-  const ch    = frame.canvasHeight || 1920;
-  const slots = useMemo(() => frame.slots ?? [], [frame.slots]);
-  const n     = slots.length;
+  const cw = frame.canvasWidth  || 1080;
+  const ch = frame.canvasHeight || 1920;
+  const n  = slots.length;
 
-  // Attach stream to hidden video
+  // Keep refs fresh so the RAF loop always reads the latest values without restarting
+  useEffect(() => { capturedPhotosRef.current = capturedPhotos; }, [capturedPhotos]);
+  useEffect(() => { activeSlotRef.current = activeSlotIndex; }, [activeSlotIndex]);
+
+  // Attach stream to hidden video + explicitly play (autoPlay can be blocked for invisible elements)
   useEffect(() => {
     const v = hiddenVidRef.current;
-    if (v) v.srcObject = stream;
+    if (!v) return;
+    v.srcObject = stream;
+    if (stream) {
+      v.play().catch(() => {});
+    }
   }, [stream]);
 
-  // Load captured photo images when new photos arrive
+  // Muat frame base + overlay dekorasi.
+  useEffect(() => {
+    frameBaseImgRef.current = null;
+    frameOverlayImgRef.current = null;
+
+    const baseSrc = (frame.assetUrl && frame.assetUrl.trim()) || (frame.thumbnailUrl && frame.thumbnailUrl.trim()) || "";
+    if (baseSrc) {
+      const baseImg = new Image();
+      baseImg.onload = () => { frameBaseImgRef.current = baseImg; };
+      baseImg.onerror = () => { frameBaseImgRef.current = null; };
+      baseImg.src = baseSrc;
+    }
+
+    if (frame.overlayUrl && frame.overlayUrl.trim()) {
+      const overlayImg = new Image();
+      overlayImg.onload = () => { frameOverlayImgRef.current = overlayImg; };
+      overlayImg.onerror = () => { frameOverlayImgRef.current = null; };
+      overlayImg.src = frame.overlayUrl;
+    }
+
+    return () => {
+      frameBaseImgRef.current = null;
+      frameOverlayImgRef.current = null;
+    };
+  }, [frame.assetUrl, frame.thumbnailUrl, frame.overlayUrl]);
+
+  // Load/reload captured photo images — track URL per slot to handle retake
+  // When URL is cleared (retake), remove from cache so draw loop shows blank immediately
   useEffect(() => {
     capturedPhotos.forEach((url, i) => {
-      if (!photoImgsRef.current.has(i) && url) {
+      if (!url) {
+        photoImgsRef.current.delete(i);
+        photoUrlsRef.current.delete(i);
+        return;
+      }
+      if (photoUrlsRef.current.get(i) !== url) {
+        photoUrlsRef.current.set(i, url);
         const img = new Image();
         img.onload = () => { photoImgsRef.current.set(i, img); };
         img.src = url;
@@ -104,6 +163,15 @@ function LivePreviewCanvas({ stream, mirror, frame, capturedPhotos, isDuplicate,
       // 1. Background
       ctx.fillStyle = frame.backgroundColor || "#ffffff";
       ctx.fillRect(0, 0, cw, ch);
+
+      const baseFrameImg = frameBaseImgRef.current;
+      const assetUrl = frame.assetUrl || "";
+      const drawBaseAfterSlots = !!assetUrl && isOverlayAsset(assetUrl);
+
+      // Background template draw (webp/jpg/opaque asset) BEFORE slots.
+      if (!drawBaseAfterSlots && baseFrameImg?.complete) {
+        ctx.drawImage(baseFrameImg, 0, 0, cw, ch);
+      }
 
       // 2. Each slot: captured photo OR live video
       // Untuk duplicate 2-kolom: kiri-row-r berpasangan dengan kanan-row-(nRows-1-r)
@@ -127,13 +195,13 @@ function LivePreviewCanvas({ stream, mirror, frame, capturedPhotos, isDuplicate,
         ctx.rect(x, y, w, h);
         ctx.clip();
 
-        if (captureIdx < capturedPhotos.length) {
-          // Tampilkan foto yang sudah diambil
+        const photoUrl = capturedPhotosRef.current[captureIdx];
+        if (photoUrl) {
+          // Tampilkan foto yang sudah diambil (non-empty URL)
           const img = photoImgsRef.current.get(captureIdx);
           if (img?.complete && img.naturalWidth) drawCoverToCanvas(ctx, img, x, y, w, h);
-        } else if (!allPhotosDone && captureIdx === capturedPhotos.length) {
-          // Tampilkan live stream HANYA untuk pair yang sedang akan diambil.
-          // Slot dengan captureIdx > capturedPhotos.length (pair berikutnya) tetap blank/putih.
+        } else if (!allPhotosDone && captureIdx === activeSlotRef.current) {
+          // Tampilkan live stream untuk slot aktif (capture normal maupun retake).
           const vid = hiddenVidRef.current;
           if (vid && vid.readyState >= 2 && vid.videoWidth > 0) {
             if (mirror) {
@@ -148,14 +216,25 @@ function LivePreviewCanvas({ stream, mirror, frame, capturedPhotos, isDuplicate,
         ctx.restore();
       });
 
-      // Tidak ada overlay di canvas — overlay ditampilkan sebagai <img> di atas
+      // Overlay frame draw AFTER slots for transparent overlays.
+      if (drawBaseAfterSlots && baseFrameImg?.complete) {
+        ctx.drawImage(baseFrameImg, 0, 0, cw, ch);
+      }
+
+      // Decoration overlay always above slots/frame base.
+      const decorOverlay = frameOverlayImgRef.current;
+      if (decorOverlay?.complete) {
+        ctx.drawImage(decorOverlay, 0, 0, cw, ch);
+      }
+
       rafRef.current = requestAnimationFrame(draw);
     };
 
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
+  // capturedPhotos & activeSlotIndex intentionally omitted — read via refs to avoid restarting RAF loop
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream, cw, ch, frame.backgroundColor, slots, isDuplicate, n, capturedPhotos.length, mirror, allPhotosDone]);
+  }, [stream, cw, ch, frame.backgroundColor, slots, isDuplicate, n, mirror, allPhotosDone]);
 
   return (
     <>
@@ -172,29 +251,18 @@ function LivePreviewCanvas({ stream, mirror, frame, capturedPhotos, isDuplicate,
         className="absolute inset-0 w-full h-full"
         style={{ zIndex: 0 }}
       />
-      {/* Overlay PNG: bintang, border, dekorasi frame — pakai objectFit:fill
-          agar tidak ada letterbox yang menyebabkan misalign dgn canvas. */}
-      {frame.assetUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={frame.assetUrl}
-          alt=""
-          className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{ objectFit: "fill", zIndex: 1 }}
-        />
-      )}
     </>
   );
 }
 
 export function CameraScreen({ booth, frame, photoIndex, capturedCount, capturedPhotos, allPhotosDone, retakeSlotIndex, onCapture, onVideoReady, onProceed, onRetakeSlot }: CameraScreenProps) {
   const { primaryColor, accentColor } = booth;
-  const { textPrimary, textSecondary, textTertiary } = getAdaptiveColors(primaryColor);
+  const bgColor = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.cameraBgColor as string | undefined ?? primaryColor;
+  const { textPrimary, textSecondary, textTertiary } = getAdaptiveColors(bgColor);
   const isPortrait = useIsPortrait();
-  const isDuplicate = !!(frame.slots && frame.slots.length >= 2 && frame.slots.length % 2 === 0);
-  const totalPhotos = isDuplicate
-    ? frame.slots!.length / 2
-    : (frame.slots && frame.slots.length > 0 ? frame.slots.length : (frame.maxCaptures || 1));
+  const isDuplicate = isEffectiveDuplicateMode(frame);
+  const effectiveSlots = useMemo(() => getEffectiveSlots(frame), [frame]);
+  const totalPhotos = getEffectiveCaptureCount(frame);
   const remaining = totalPhotos - capturedCount;
 
   // ── Device + mirror state (persisted in sessionStorage) ────────────────────────
@@ -208,6 +276,47 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   });
   const [showSettings, setShowSettings] = useState(false);
 
+  // ── DSLR via Local Agent ────────────────────────────────────────────────────
+  const [dslrAvailable, setDslrAvailable] = useState<boolean>(false);
+  const [dslrModel,     setDslrModel]     = useState<string | null>(null);
+  const agentBaseRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    (async () => {
+      for (const base of ["https://127.0.0.1:3002", "http://127.0.0.1:3002"]) {
+        try {
+          const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(2500) });
+          if (!res.ok) continue;
+          const data = await res.json() as { camera?: { available: boolean; cameras?: { model: string }[] } };
+          if (data.camera?.available) {
+            agentBaseRef.current = base;
+            setDslrAvailable(true);
+            setDslrModel(data.camera.cameras?.[0]?.model ?? "DSLR");
+          }
+          break;
+        } catch { /* agent tidak ada atau error → skip */ }
+      }
+    })();
+  }, []);
+
+  const captureFromAgent = useCallback(async (): Promise<string | null> => {
+    const base = agentBaseRef.current;
+    if (!base) return null;
+    try {
+      const res = await fetch(`${base}/capture`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as { ok: boolean; image?: { base64: string; mimeType: string } };
+      if (!data.ok || !data.image) return null;
+      return `data:${data.image.mimeType};base64,${data.image.base64}`;
+    } catch { return null; }
+  }, []);
+
   const { videoRef, stream, isReady, permissionError, devices, start, stop, capture, startRecording, stopRecording } = useCamera({
     canvasWidth:  1920,
     canvasHeight: 1080,
@@ -217,9 +326,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   // ── Hitung zona aktif di viewfinder sesuai slot saat ini ──────────────────
   const slotOverlay = useMemo(() => {
-    if (!frame.slots || frame.slots.length === 0) return null;
+    if (!effectiveSlots || effectiveSlots.length === 0) return null;
     // En mode duplicate, le slot actif est capturedCount (pas n-1-capturedCount)
-    const currentSlot = frame.slots.find((s) => s.photoIndex === capturedCount);
+    const currentSlot = effectiveSlots.find((s) => s.photoIndex === capturedCount);
     if (!currentSlot) return null;
 
     const CAM_W = 1920, CAM_H = 1080;
@@ -237,17 +346,18 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       const activeFrac = (CAM_W / slotAspect) / CAM_H;  // 0-1
       return { type: "tb" as const, side: (1 - activeFrac) / 2 };
     }
-  }, [frame.slots, frame.canvasWidth, frame.canvasHeight, capturedCount]);
+  }, [effectiveSlots, frame.canvasWidth, frame.canvasHeight, capturedCount]);
 
   const [countdown, setCountdown]       = useState<number | null>(null);
   const [cdState, setCdState]           = useState<CountdownState>("READY");
   const countdownTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset cdState ke READY saat berpindah ke slot foto berikutnya
+  // Reset cdState ke READY saat berpindah ke slot foto berikutnya,
+  // atau saat user klik Ulangi (capturedCount berkurang → cdState stuck di DONE tanpa ini)
   useEffect(() => {
     setCdState("READY");
     setCountdown(null);
-  }, [photoIndex, retakeSlotIndex]);
+  }, [photoIndex, retakeSlotIndex, capturedCount]);
 
   // Restart camera when device or mirror changes
   useEffect(() => {
@@ -292,8 +402,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         setCountdown(null);
         setCdState("FLASH");
         countdownTimerRef.current = setTimeout(async () => {
-          // Ambil foto
-          const dataUrl = capture();
+          // Ambil foto — coba DSLR via agent dulu, fallback ke webcam
+          let dataUrl: string | null = null;
+          if (dslrAvailable) {
+            dataUrl = await captureFromAgent();
+          }
+          if (!dataUrl) {
+            dataUrl = capture() ?? null;
+          }
           setCdState("DONE");
           if (!dataUrl) {
             stopRecording().catch(() => {});
@@ -311,7 +427,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
     countdownTimerRef.current = setTimeout(tick, 1000);
-  }, [cdState, capture, onCapture, onVideoReady, startRecording, stopRecording]);
+  }, [cdState, capture, captureFromAgent, dslrAvailable, onCapture, onVideoReady, startRecording, stopRecording]);
 
   // Viewfinder — landscape 16:9 di landscape, 4:3 di portrait
   const aspectStyle = isPortrait
@@ -335,7 +451,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     <div
       className="flex h-full select-none overflow-hidden"
       style={{
-        backgroundColor: primaryColor,
+        backgroundColor: bgColor,
         flexDirection: isPortrait ? "column" : "row",
       }}
     >
@@ -401,6 +517,32 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             className="w-full h-full object-cover"
             style={{ transform: mirror ? "scaleX(-1)" : "none" }}
           />
+
+          {/* Badge DSLR terhubung */}
+          {dslrAvailable && (
+            <div
+              className="absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-sm text-[11px] font-bold pointer-events-none"
+              style={{ background: "rgba(0,0,0,0.60)", color: "#4ade80" }}
+            >
+              📷 {dslrModel ?? "DSLR"} — aktif
+            </div>
+          )}
+
+          {booth.showTrialWatermark && (
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-20">
+              <div
+                className="rounded-full px-4 py-1.5 text-sm font-black uppercase tracking-[0.18em] shadow-lg"
+                style={{
+                  background: "rgba(17,24,39,0.62)",
+                  color: "#facc15",
+                  border: "1px solid rgba(250,204,21,0.35)",
+                  textShadow: "0 1px 8px rgba(0,0,0,0.4)",
+                }}
+              >
+                Trial
+              </div>
+            </div>
+          )}
 
           {/* ── Toolbar kanan atas: settings ── */}
           <div className="absolute top-3 right-3 flex flex-col gap-2">
@@ -511,7 +653,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const chromeUrl = `googlechrome://${typeof location !== "undefined" ? location.href.replace(/^https?:\/\//, "") : ""}`;
         return (
           <div className="absolute inset-0 flex items-center justify-center px-6"
-            style={{ backgroundColor: primaryColor }}>
+            style={{ backgroundColor: bgColor }}>
             <div className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
               style={{ backgroundColor: "rgba(128,128,128,0.15)", border: "1px solid rgba(128,128,128,0.25)" }}>
 
@@ -608,73 +750,102 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         </div>
       </div>{/* akhir kolom kiri */}
 
-      {/* ═══ KANAN/BAWAH: Frame Preview ═══ */}
+      {/* ═══ KANAN/BAWAH (landscape) / BAWAH (portrait): Preview ═══ */}
       <div
         className="shrink-0 flex items-center justify-center overflow-hidden"
         style={isPortrait
-          ? { width: "100%", height: "30vh", flexDirection: "row", gap: 16, paddingLeft: 16, paddingRight: 16, paddingBottom: 8 }
+          ? { width: "100%", height: "22vh", flexDirection: "row", gap: 10, paddingLeft: 12, paddingRight: 12, paddingBottom: 12 }
           : { width: "clamp(200px, 30vw, 400px)", flexDirection: "column", paddingTop: 24, paddingBottom: 24, paddingRight: 16, paddingLeft: 8 }
         }
       >
-        {!isPortrait && <p className="text-xs uppercase tracking-widest mb-3" style={{ color: textTertiary }}>Preview</p>}
-        {/* Kontainer frame — aspect ratio menyesuaikan frame */}
-        <div
-          className="relative overflow-hidden rounded-2xl shadow-2xl"
-          style={{
-            aspectRatio: String(frameAspect),
-            ...(isPortrait
-              ? { height: "100%", maxWidth: "100%" }
-              : { width: "100%", maxHeight: "calc(100vh - 8rem)" }
-            ),
-            backgroundColor: frame.backgroundColor || "#ffffff",
-          }}
-        >
-          {/* Canvas live composite — background + foto/video per slot + overlay PNG */}
-          <LivePreviewCanvas
-            stream={stream}
-            mirror={mirror}
-            frame={frame}
-            capturedPhotos={capturedPhotos}
-            isDuplicate={isDuplicate}
-            allPhotosDone={allPhotosDone}
-          />
-
-          {/* Tombol × retake — overlay di atas canvas saat semua foto sudah diambil */}
-          {allPhotosDone && frame.slots && frame.slots.map((slot) => {
-            // Untuk duplicate mode 2-kolom: col=pi%2, row=floor(pi/2), nRows=n/2
-            const n = frame.slots!.length;
-            const _nr = isDuplicate ? n / 2 : 0;
-            const captureIdx = isDuplicate
-              ? (slot.photoIndex % 2 === 0
-                  ? Math.floor(slot.photoIndex / 2)
-                  : _nr - 1 - Math.floor(slot.photoIndex / 2))
-              : slot.photoIndex;
-            const photo = capturedPhotos[captureIdx] || null;
-            if (!photo) return null;
-            return (
-              <button
-                key={slot.photoIndex}
-                className="absolute w-7 h-7 rounded-full flex items-center justify-center text-base font-bold shadow-lg"
-                style={{
-                  left:       `calc(${(slot.left + slot.width) * 100}% - 1.25rem)`,
-                  top:        `calc(${slot.top * 100}% - 0.75rem)`,
-                  background: "rgba(15,15,15,0.88)",
-                  color:      "white",
-                  border:     "2px solid rgba(255,255,255,0.4)",
-                  zIndex:     30,
-                }}
-                onClick={() => onRetakeSlot(captureIdx)}
-                title="Ulangi foto ini"
-              >
-                ×
-              </button>
-            );
-          })}
-        </div>
-        <p className="text-xs mt-3 text-center" style={{ color: textTertiary }}>
-          {capturedCount}/{totalPhotos} foto
-        </p>
-        {isPortrait && <p className="text-xs uppercase tracking-widest" style={{ color: textTertiary }}>Preview</p>}
+        {isPortrait ? (
+          /* Portrait: strip foto sederhana — tanpa frame, tanpa live canvas */
+          <>
+            {Array.from({ length: totalPhotos }).map((_, i) => {
+              const photo = capturedPhotos[i] ?? null;
+              return (
+                <div key={i} className="flex-1 h-full rounded-xl overflow-hidden relative"
+                  style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)" }}>
+                  {photo ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
+                      {allPhotosDone && (
+                        <button
+                          className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold shadow-lg"
+                          style={{ background: "rgba(15,15,15,0.88)", color: "white", border: "1.5px solid rgba(255,255,255,0.4)", zIndex: 10 }}
+                          onClick={() => onRetakeSlot(i)}
+                        >×</button>
+                      )}
+                    </>
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <span className="text-2xl opacity-20" style={{ color: textPrimary }}>{i + 1}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        ) : (
+          /* Landscape: frame + live canvas preview */
+          <>
+            <p className="text-xs uppercase tracking-widest mb-3" style={{ color: textTertiary }}>Preview</p>
+            {/* Kontainer frame — aspect ratio menyesuaikan frame */}
+            <div
+              className="relative overflow-hidden rounded-2xl shadow-2xl"
+              style={{
+                aspectRatio: String(frameAspect),
+                width: "100%",
+                maxHeight: "calc(100vh - 8rem)",
+                backgroundColor: frame.backgroundColor || "#ffffff",
+              }}
+            >
+              {/* Canvas live composite — background + foto/video per slot + overlay PNG */}
+              <LivePreviewCanvas
+                stream={stream}
+                mirror={mirror}
+                frame={frame}
+                slots={effectiveSlots}
+                capturedPhotos={capturedPhotos}
+                isDuplicate={isDuplicate}
+                allPhotosDone={allPhotosDone}
+                activeSlotIndex={capturedCount}
+              />
+              {/* Tombol × retake */}
+              {allPhotosDone && effectiveSlots.map((slot) => {
+                const n = effectiveSlots.length;
+                const _nr = isDuplicate ? n / 2 : 0;
+                const captureIdx = isDuplicate
+                  ? (slot.photoIndex % 2 === 0
+                      ? Math.floor(slot.photoIndex / 2)
+                      : _nr - 1 - Math.floor(slot.photoIndex / 2))
+                  : slot.photoIndex;
+                const photo = capturedPhotos[captureIdx] || null;
+                if (!photo) return null;
+                return (
+                  <button
+                    key={slot.photoIndex}
+                    className="absolute w-7 h-7 rounded-full flex items-center justify-center text-base font-bold shadow-lg"
+                    style={{
+                      left:       `calc(${(slot.left + slot.width) * 100}% - 1.25rem)`,
+                      top:        `calc(${slot.top * 100}% - 0.75rem)`,
+                      background: "rgba(15,15,15,0.88)",
+                      color:      "white",
+                      border:     "2px solid rgba(255,255,255,0.4)",
+                      zIndex:     30,
+                    }}
+                    onClick={() => onRetakeSlot(captureIdx)}
+                    title="Ulangi foto ini"
+                  >×</button>
+                );
+              })}
+            </div>
+            <p className="text-xs mt-3 text-center" style={{ color: textTertiary }}>
+              {capturedCount}/{totalPhotos} foto
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

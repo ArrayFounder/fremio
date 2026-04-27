@@ -21,11 +21,12 @@ export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
 /** Shape respons dari /api/payment/create */
 export interface CreatePaymentResponse {
   sessionId:    string;
-  orderId:      string;       // midtransOrderId yang kita generate
-  amount:       number;       // IDR
-  qrImageUrl:   string;       // URL gambar QR PNG dari Midtrans
-  qrString:     string;       // raw QR string jika ingin render sendiri
-  expiresAt:    string;       // ISO string — QR expire dalam 15 menit
+  orderId:      string;         // order ID yang kita generate (universal lintas gateway)
+  amount:       number;         // IDR
+  qrImageUrl:   string | null;  // URL gambar QR PNG (null jika gateway tidak support)
+  qrString:     string | null;  // raw QR string untuk render sendiri (null jika tidak tersedia)
+  expiresAt:    string;         // ISO string — QR expire dalam 15 menit
+  snapToken:    string | null;  // Midtrans Snap token (dipakai jika QRIS Core API tidak aktif)
 }
 
 /** Shape respons dari /api/payment/status/[orderId] */

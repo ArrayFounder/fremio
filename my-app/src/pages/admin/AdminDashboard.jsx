@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { isVPSMode } from "../../config/backend";
@@ -39,6 +39,11 @@ export default function AdminDashboard() {
     totalAffiliates: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [studioOwners, setStudioOwners] = useState([]);
+  const [studioLoading, setStudioLoading] = useState(true);
+  const [studioError, setStudioError] = useState(null);
+  const [ownerSearch, setOwnerSearch] = useState("");
+  const [expandedOwner, setExpandedOwner] = useState(null);
 
   // Load stats from VPS API and other sources
   const loadStats = async (forceRefresh = false) => {
@@ -123,10 +128,31 @@ export default function AdminDashboard() {
     }
   };
 
+  // Fetch studio owners
+  const loadStudioOwners = useCallback(async () => {
+    setStudioLoading(true);
+    setStudioError(null);
+    try {
+      const res = await fetch("/api/admin/studio/operators", {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("fremio_token") || localStorage.getItem("auth_token") || ""}`,
+        },
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message ?? "Gagal memuat data");
+      setStudioOwners(json.data ?? []);
+    } catch (e) {
+      setStudioError(e.message);
+    } finally {
+      setStudioLoading(false);
+    }
+  }, []);
+
   // Fetch dashboard stats
   useEffect(() => {
     loadStats();
-  }, []);
+    loadStudioOwners();
+  }, [loadStudioOwners]);
 
   if (loading) {
     return (
@@ -306,6 +332,13 @@ export default function AdminDashboard() {
             onClick={() => navigate("/admin/affiliates")}
             badge={stats.pendingAffiliates > 0}
           />
+          <StatCard
+            title="Studio Owners"
+            value={studioLoading ? "…" : studioOwners.length}
+            subtitle={studioLoading ? "Memuat..." : `${studioOwners.reduce((s, o) => s + (o.boothConfigs?.length ?? 0), 0)} booth aktif`}
+            icon={<Users size={24} />}
+            color="#f97316"
+          />
         </div>
 
         {/* Frame Management Section */}
@@ -446,6 +479,182 @@ export default function AdminDashboard() {
               </button>
             </div>
           </div>
+        </section>
+
+        {/* Studio Owners Section */}
+        <section
+          style={{
+            background: "#ffffff",
+            border: "1px solid #ecdeda",
+            borderRadius: "14px",
+            marginBottom: "24px",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "22px 24px",
+              borderBottom: "1px solid #f3ebe8",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "12px",
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <h2 style={{ margin: "0 0 4px", fontSize: "20px", fontWeight: "800", color: "#333" }}>
+                🎯 Studio Owners
+              </h2>
+              <p style={{ margin: 0, color: "#6b6b6b", fontSize: "14px" }}>
+                {studioLoading ? "Memuat..." : `${studioOwners.length} akun terdaftar · ${studioOwners.reduce((s, o) => s + (o.boothConfigs?.length ?? 0), 0)} booth aktif`}
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <input
+                type="text"
+                placeholder="Cari nama / email..."
+                value={ownerSearch}
+                onChange={(e) => setOwnerSearch(e.target.value)}
+                style={{
+                  padding: "8px 12px",
+                  border: "1px solid #e0b7a9",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                  outline: "none",
+                  width: "200px",
+                }}
+              />
+              <button
+                onClick={loadStudioOwners}
+                disabled={studioLoading}
+                style={{
+                  display: "flex", alignItems: "center", gap: "6px",
+                  padding: "8px 14px", background: studioLoading ? "#f0f0f0" : "#fff",
+                  border: "1px solid #e0b7a9", borderRadius: "8px",
+                  fontSize: "13px", fontWeight: "600", color: "#e0b7a9",
+                  cursor: studioLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                <RefreshCw size={13} style={{ animation: studioLoading ? "spin 1s linear infinite" : "none" }} />
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {studioError ? (
+            <div style={{ padding: "24px", textAlign: "center", color: "#ef4444", fontSize: "14px" }}>
+              ⚠️ {studioError}
+            </div>
+          ) : studioLoading ? (
+            <div style={{ padding: "40px", textAlign: "center" }}>
+              <div style={{ display: "inline-block", width: 32, height: 32, border: "3px solid #f3ebe8", borderTop: "3px solid #e0b7a9", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+            </div>
+          ) : (() => {
+            const filtered = studioOwners.filter(o =>
+              ownerSearch === "" ||
+              o.email?.toLowerCase().includes(ownerSearch.toLowerCase()) ||
+              o.businessName?.toLowerCase().includes(ownerSearch.toLowerCase())
+            );
+            if (!filtered.length) return (
+              <div style={{ padding: "32px", textAlign: "center", color: "#aaa", fontSize: "14px" }}>Tidak ada owner yang cocok.</div>
+            );
+            return (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                  <thead>
+                    <tr style={{ background: "#fdf7f4", borderBottom: "1px solid #f3ebe8" }}>
+                      {["#", "Nama Bisnis", "Email", "Tier", "Booth", "Terdaftar", ""].map((h) => (
+                        <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontWeight: "700", color: "#555", whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((owner, idx) => {
+                      const isExpanded = expandedOwner === owner.id;
+                      const tierColor = owner.subscriptionTier === "ENTERPRISE" ? "#7c3aed" : owner.subscriptionTier === "PRO" ? "#2563eb" : "#6b7280";
+                      const isSubActive = owner.subscriptionExpiry && new Date(owner.subscriptionExpiry) > new Date();
+                      return (
+                        <>
+                          <tr
+                            key={owner.id}
+                            style={{ borderBottom: "1px solid #f3ebe8", background: isExpanded ? "#fffaf9" : "white", cursor: "pointer" }}
+                            onClick={() => setExpandedOwner(isExpanded ? null : owner.id)}
+                          >
+                            <td style={{ padding: "12px 16px", color: "#aaa", width: 40 }}>{idx + 1}</td>
+                            <td style={{ padding: "12px 16px", fontWeight: "600", color: "#222" }}>
+                              {owner.businessName || <span style={{ color: "#aaa" }}>—</span>}
+                            </td>
+                            <td style={{ padding: "12px 16px", color: "#555" }}>{owner.email}</td>
+                            <td style={{ padding: "12px 16px" }}>
+                              <span style={{
+                                background: tierColor + "18", color: tierColor,
+                                borderRadius: "6px", padding: "2px 8px", fontWeight: "700", fontSize: "11px",
+                              }}>
+                                {owner.subscriptionTier}
+                              </span>
+                              {!isSubActive && (
+                                <span style={{ marginLeft: 4, fontSize: "10px", color: "#ef4444", fontWeight: "600" }}>EXPIRED</span>
+                              )}
+                            </td>
+                            <td style={{ padding: "12px 16px" }}>
+                              <span style={{
+                                background: owner.boothConfigs?.length ? "#dcfce7" : "#f3f4f6",
+                                color: owner.boothConfigs?.length ? "#16a34a" : "#9ca3af",
+                                borderRadius: "6px", padding: "2px 8px", fontWeight: "700", fontSize: "12px",
+                              }}>
+                                {owner.boothConfigs?.length ?? 0} booth
+                              </span>
+                            </td>
+                            <td style={{ padding: "12px 16px", color: "#888", whiteSpace: "nowrap" }}>
+                              {new Date(owner.createdAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+                            </td>
+                            <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                              <span style={{ color: "#e0b7a9", fontWeight: "700", fontSize: "18px", lineHeight: 1 }}>
+                                {isExpanded ? "▲" : "▼"}
+                              </span>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr key={owner.id + "_booths"} style={{ background: "#fffaf9" }}>
+                              <td colSpan={7} style={{ padding: "0 16px 16px 56px" }}>
+                                {owner.boothConfigs?.length ? (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", paddingTop: "8px" }}>
+                                    {owner.boothConfigs.map((booth) => (
+                                      <a
+                                        key={booth.id}
+                                        href={`https://studio.fremio.id/b/${booth.slug}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        style={{
+                                          display: "inline-flex", alignItems: "center", gap: "6px",
+                                          padding: "6px 12px", background: "white",
+                                          border: "1px solid #e0b7a9", borderRadius: "8px",
+                                          fontSize: "12px", color: "#333", textDecoration: "none",
+                                          fontWeight: "600",
+                                        }}
+                                      >
+                                        🎪 {booth.boothName}
+                                        <span style={{ color: "#e0b7a9", fontSize: "11px" }}>/{booth.slug}</span>
+                                        <span style={{ color: "#e0b7a9" }}>↗</span>
+                                      </a>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p style={{ margin: "8px 0 0", color: "#aaa", fontSize: "12px" }}>Belum ada booth.</p>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </section>
 
         {/* Quick Actions */}

@@ -26,7 +26,7 @@ import { promisify } from "util";
 const execAsync = promisify(exec);
 
 const PORT    = Number(process.env.AGENT_PORT ?? 3002);
-const VERSION = "1.0.0";
+const VERSION = "1.0.5";
 
 // ── App setup ────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ app.use(cors({
   origin: (origin, cb) => {
     if (!origin || /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
         /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) ||
-        /^https?:\/\/studio\.fremio\.id$/.test(origin)) {
+        /^https?:\/\/([a-z0-9-]+\.)*fremio\.id$/.test(origin)) {
       cb(null, true);
     } else {
       cb(new Error("Not allowed by CORS"));
@@ -56,15 +56,22 @@ app.use(express.json({ limit: "50mb" }));
 
 const isWin = process.platform === "win32";
 
-/** Tulis dataURL atau ambil dari URL ke file temp, return path */
+/** Tulis base64 image (raw/dataURL) atau ambil dari URL ke file temp, return path */
 async function resolveToTempFile(input: string): Promise<string> {
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `fremio-print-${Date.now()}.jpg`);
 
+  // base64 data URL
   if (input.startsWith("data:")) {
-    // base64 data URL
-    const base64 = input.split(",")[1];
+    const base64 = input.split(",")[1] ?? "";
     fs.writeFileSync(tmpFile, Buffer.from(base64, "base64"));
+    return tmpFile;
+  }
+
+  // raw base64 (tanpa prefix data URL)
+  const looksLikeRawBase64 = !input.startsWith("http://") && !input.startsWith("https://") && /^[A-Za-z0-9+/=\r\n]+$/.test(input);
+  if (looksLikeRawBase64) {
+    fs.writeFileSync(tmpFile, Buffer.from(input, "base64"));
     return tmpFile;
   }
 
@@ -84,38 +91,193 @@ async function resolveToTempFile(input: string): Promise<string> {
 
 /** Daftar printer via OS command */
 async function listPrinters(): Promise<string[]> {
-  try {
-    if (isWin) {
+  if (isWin) {
+    // Method 1: Get-Printer (Windows 8+ / Server 2012+, butuh Print Management module)
+    try {
       const { stdout } = await execAsync(
-        `powershell -Command "Get-Printer | Select-Object -ExpandProperty Name"`,
-        { timeout: 5000 }
+        `powershell -NoProfile -Command "Get-Printer | Select-Object -ExpandProperty Name"`,
+        { timeout: 6000 }
       );
-      return stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    } else {
-      // macOS / Linux
-      const { stdout } = await execAsync("lpstat -a 2>/dev/null | awk '{print $1}'", { timeout: 5000 });
-      return stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    }
+      const list = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (list.length > 0) return list;
+    } catch { /* lanjut ke fallback */ }
+
+    // Method 2: WMI Win32_Printer — tersedia di semua edisi Windows
+    try {
+      const { stdout } = await execAsync(
+        `powershell -NoProfile -Command "Get-WmiObject Win32_Printer | Select-Object -ExpandProperty Name"`,
+        { timeout: 6000 }
+      );
+      const list = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (list.length > 0) return list;
+    } catch { /* lanjut ke fallback */ }
+
+    // Method 3: wmic printer get name (kompatibel Windows XP–11, tanpa modul PS)
+    try {
+      const { stdout } = await execAsync(
+        `wmic printer get name /format:list`,
+        { timeout: 6000 }
+      );
+      const list = stdout.split(/\r?\n/)
+        .filter(line => /^Name=/i.test(line.trim()))
+        .map(line => line.trim().replace(/^Name=/i, "").trim())
+        .filter(Boolean);
+      if (list.length > 0) return list;
+    } catch { /* lanjut ke fallback */ }
+
+    // Method 4: CIM (PowerShell 3+) — terakhir coba
+    try {
+      const { stdout } = await execAsync(
+        `powershell -NoProfile -Command "Get-CimInstance Win32_Printer | Select-Object -ExpandProperty Name"`,
+        { timeout: 6000 }
+      );
+      const list = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (list.length > 0) return list;
+    } catch { /* no printers */ }
+
+    return [];
+  }
+
+  // macOS / Linux
+  try {
+    const { stdout } = await execAsync("lpstat -a 2>/dev/null | awk '{print $1}'", { timeout: 5000 });
+    return stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   } catch {
     return [];
   }
 }
 
-/** Print file ke printer */
-async function printFile(filePath: string, printerName?: string, copies = 1): Promise<void> {
-  if (isWin) {
-    // Windows: pakai PowerShell + Windows Photo Viewer / built-in print
-    const printer = printerName ? `-PrinterName "${printerName}"` : "";
-    await execAsync(
-      `powershell -Command "Start-Process -FilePath '${filePath}' -Verb Print -WindowStyle Hidden"`,
-      { timeout: 15000 }
-    );
-  } else {
-    // macOS / Linux: lp command
-    const dest    = printerName ? `-d "${printerName}"` : "";
-    const nCopies = copies > 1 ? `-n ${copies}` : "";
-    await execAsync(`lp ${dest} ${nCopies} "${filePath}"`, { timeout: 15000 });
+/**
+ * Buat PowerShell script untuk mencetak gambar pada ukuran fisik yang tepat.
+ *
+ * photoWidthMm / photoHeightMm adalah dimensi FOTO (mis. 4R = 102×152 mm),
+ * bukan ukuran kertas. Gambar akan ditempatkan di tengah halaman sehingga
+ * jika kertasnya A4 tetapi fotonya 4R, hasilnya adalah cetakan 4R di tengah A4.
+ */
+function buildPSPrintScript(
+  filePath: string,
+  printerName?: string,
+  copies = 1,
+  photoWidthMm = 102,
+  photoHeightMm = 152,
+): string {
+  const safeFilePath    = filePath.replace(/\\/g, "\\\\").replace(/'/g, "''");
+  const safePrinterName = (printerName ?? "").replace(/'/g, "''");
+
+  // Nilai mm di-embed langsung ke string PowerShell agar tidak ada masalah closure scope
+  const wMm = Number.isFinite(photoWidthMm)  && photoWidthMm  > 0 ? photoWidthMm  : 102;
+  const hMm = Number.isFinite(photoHeightMm) && photoHeightMm > 0 ? photoHeightMm : 152;
+
+  return `
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Drawing.Printing
+
+$filePath = '${safeFilePath}'
+$bitmap   = [System.Drawing.Image]::FromFile($filePath)
+
+$printDoc = New-Object System.Drawing.Printing.PrintDocument
+$printDoc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
+${safePrinterName ? `$printDoc.PrinterSettings.PrinterName = '${safePrinterName}'` : '# Using default printer'}
+
+if (-not $printDoc.PrinterSettings.IsValid) {
+  Write-Error "Printer tidak valid: '$($printDoc.PrinterSettings.PrinterName)'"
+  $bitmap.Dispose()
+  exit 1
+}
+
+# Sembunyikan notifikasi printer dari taskbar
+$printDoc.PrinterSettings.PrintToFile = $false
+try {
+  $regPath = 'HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows'
+  Set-ItemProperty -Path $regPath -Name 'PrintWhilePrintingError' -Value 0 -ErrorAction SilentlyContinue
+} catch {}
+
+$printDoc.add_PrintPage({
+  param($sender, $ev)
+
+  # System.Drawing.Printing PageBounds dan DrawImage menggunakan unit 1/100 inch.
+  # JANGAN gunakan DPI — itu untuk pixel, bukan untuk unit grafik PrintDocument.
+  # Konversi mm → 1/100 inch:  mm × (100 / 25.4) = mm × 3.93701
+  # Nilai foto di-embed: ${wMm} x ${hMm} mm
+  $photoW = [float](${wMm} * 100.0 / 25.4)
+  $photoH = [float](${hMm} * 100.0 / 25.4)
+
+  # Posisikan di tengah halaman (A4 = 827×1169, atau ukuran apapun)
+  $pageW = [float]$ev.PageBounds.Width
+  $pageH = [float]$ev.PageBounds.Height
+  $x     = [float](($pageW - $photoW) / 2.0)
+  $y     = [float](($pageH - $photoH) / 2.0)
+  if ($x -lt 0.0) { $x = 0.0 }
+  if ($y -lt 0.0) { $y = 0.0 }
+
+  $destRect = New-Object System.Drawing.RectangleF($x, $y, $photoW, $photoH)
+  $ev.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  # DrawImage dengan RectangleF: seluruh bitmap di-scale masuk ke destRect
+  $ev.Graphics.DrawImage($bitmap, $destRect)
+})
+
+for ($i = 0; $i -lt ${copies}; $i++) {
+  $printDoc.Print()
+}
+
+$bitmap.Dispose()
+Write-Output "OK: print job selesai (${copies} copy, ${wMm}x${hMm}mm)"
+`;
+}
+
+async function printWindows(
+  filePath: string,
+  printerName?: string,
+  copies = 1,
+  photoWidthMm = 102,
+  photoHeightMm = 152,
+): Promise<void> {
+  const psFile = path.join(os.tmpdir(), `fremio-print-${Date.now()}.ps1`);
+  fs.writeFileSync(psFile, buildPSPrintScript(filePath, printerName, copies, photoWidthMm, photoHeightMm), "utf8");
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        "powershell",
+        ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", psFile],
+        { timeout: 30000, windowsHide: true },
+        (err, _stdout, stderr) => {
+          if (err) {
+            reject(new Error(stderr || err.message));
+            return;
+          }
+          resolve();
+        }
+      );
+    });
+  } finally {
+    fs.unlink(psFile, () => {});
   }
+}
+
+/** Print file ke printer */
+async function printFile(
+  filePath: string,
+  printerName?: string,
+  copies = 1,
+  photoWidthMm = 102,
+  photoHeightMm = 152,
+): Promise<void> {
+  if (isWin) {
+    await printWindows(filePath, printerName, copies, photoWidthMm, photoHeightMm);
+    return;
+  }
+
+  // macOS / Linux: lp command
+  // -o media=Custom.WxHmm  → minta ukuran kertas sesuai foto (bukan A4)
+  // -o fit-to-page=false   → jangan scale gambar
+  // -o scaling=100         → cetak 100% (actual size)
+  const dest     = printerName ? `-d "${printerName}"` : "";
+  const nCopies  = copies > 1  ? `-n ${copies}` : "";
+  const wMm = Number.isFinite(photoWidthMm)  && photoWidthMm  > 0 ? Math.round(photoWidthMm)  : 102;
+  const hMm = Number.isFinite(photoHeightMm) && photoHeightMm > 0 ? Math.round(photoHeightMm) : 152;
+  const mediaOpt = `-o media=Custom.${wMm}x${hMm}mm -o fit-to-page=false -o scaling=100`;
+  await execAsync(`lp ${dest} ${nCopies} ${mediaOpt} "${filePath}"`, { timeout: 15000 });
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -136,21 +298,31 @@ app.get("/printers", async (_req: Request, res: Response) => {
 });
 
 app.post("/print", async (req: Request, res: Response) => {
-  const { imageUrl, printerName, copies } = req.body as {
-    imageUrl:     string;
-    printerName?: string;
-    copies?:      number;
+  const { image, imageUrl, printerName, copies, paperWidthMm, paperHeightMm } = req.body as {
+    image?:         string;
+    imageUrl?:      string;
+    printerName?:   string;
+    copies?:        number;
+    paperWidthMm?:  number;  // dimensi FOTO aktual (bukan ukuran kertas fisik)
+    paperHeightMm?: number;
   };
 
-  if (!imageUrl) {
-    res.status(400).json({ ok: false, error: "imageUrl wajib diisi" });
+  const imageInput = typeof image === "string" && image.trim().length > 0
+    ? image.trim()
+    : (typeof imageUrl === "string" ? imageUrl.trim() : "");
+
+  if (!imageInput) {
+    res.status(400).json({ ok: false, error: "image atau imageUrl wajib diisi" });
     return;
   }
 
+  const photoW = typeof paperWidthMm  === "number" && paperWidthMm  > 0 ? paperWidthMm  : 102;
+  const photoH = typeof paperHeightMm === "number" && paperHeightMm > 0 ? paperHeightMm : 152;
+
   let tmpFile: string | null = null;
   try {
-    tmpFile = await resolveToTempFile(imageUrl);
-    await printFile(tmpFile, printerName, copies ?? 1);
+    tmpFile = await resolveToTempFile(imageInput);
+    await printFile(tmpFile, printerName, copies ?? 1, photoW, photoH);
     res.json({ ok: true });
   } catch (err) {
     console.error("[agent] Print error:", err);

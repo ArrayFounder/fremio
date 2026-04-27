@@ -1,0 +1,43 @@
+/* PropertiesPanel.css — scoped styles only (global resets removed) */
+
+/* Custom styling for select dropdown options */
+select option {
+  padding: 10px 14px;
+  background: #ffffff;
+  color: #4a302b;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+select option:hover,
+select option:focus,
+select option:checked {
+  background: linear-gradient(135deg, #f7e3da, #f1cfc0);
+  color: #4a302b;
+  font-weight: 600;
+}
+
+/* Enhance select dropdown appearance */
+select::-ms-expand {
+  display: none;
+}
+
+/* Custom scrollbar for dropdown */
+select::-webkit-scrollbar {
+  width: 8px;
+}
+
+select::-webkit-scrollbar-track {
+  background: #fdf7f4;
+  border-radius: 10px;
+}
+
+select::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #e0b7a9, #d4a99a);
+  border-radius: 10px;
+  border: 2px solid #fdf7f4;
+}
+
+select::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #d4a99a, #c89585);
+}

@@ -10,6 +10,7 @@ interface Tx {
   paidAt: string | null; createdAt: string;
   boothName: string; frameName: string; midtransOrderId: string | null;
 }
+interface BoothItem { id: string; boothName: string; isActive: boolean; }
 interface TxData {
   transactions: Tx[];
   pagination: { page: number; limit: number; total: number; pages: number };
@@ -93,14 +94,19 @@ export default function SessionsPage() {
   const [from,      setFrom]      = useState(today30);
   const [to,        setTo]        = useState(todayStr);
   const [status,    setStatus]    = useState("");
+  const [boothId,   setBoothId]   = useState("");
   const [search,    setSearch]    = useState("");
   const [page,      setPage]      = useState(1);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
 
+  const { data: boothData } = useSWR<{ success: boolean; data: BoothItem[] }>("/api/dashboard/booths");
+  const booths = boothData?.data ?? [];
+
   // Build query
   const params = new URLSearchParams({ from, to, page: String(page), limit: "20" });
-  if (status) params.set("status", status);
+  if (status)  params.set("status", status);
+  if (boothId) params.set("boothId", boothId);
   const key = `/api/dashboard/transactions?${params}`;
   const { data, isLoading } = useSWR<{ success: boolean; data: TxData }>(key);
 
@@ -116,9 +122,11 @@ export default function SessionsPage() {
     : txs;
 
   // Active filter tags
+  const activeBoothName = booths.find((b) => b.id === boothId)?.boothName;
   const tags: { label: string; clear: () => void }[] = [
     { label: `Date range : ${from} - ${to}`, clear: () => { setFrom(today30); setTo(todayStr); setPage(1); } },
-    ...(status ? [{ label: `Status : ${STATUS_LABEL[status] ?? status}`, clear: () => { setStatus(""); setPage(1); } }] : []),
+    ...(status  ? [{ label: `Status : ${STATUS_LABEL[status] ?? status}`, clear: () => { setStatus("");  setPage(1); } }] : []),
+    ...(boothId ? [{ label: `Booth : ${activeBoothName ?? boothId}`,       clear: () => { setBoothId(""); setPage(1); } }] : []),
   ];
 
   function applyPreset(p: Preset) {
@@ -159,6 +167,20 @@ export default function SessionsPage() {
         {/* ── Filter row ── */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
           <div className="flex flex-wrap gap-2 items-center">
+            {/* Booth filter */}
+            {booths.length > 1 && (
+              <select
+                value={boothId}
+                onChange={(e) => { setBoothId(e.target.value); setPage(1); }}
+                className="border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-300 bg-white"
+              >
+                <option value="">Semua Booth</option>
+                {booths.map((b) => (
+                  <option key={b.id} value={b.id}>{b.boothName}</option>
+                ))}
+              </select>
+            )}
+
             {/* Status dropdown */}
             <select
               value={status}
@@ -234,7 +256,7 @@ export default function SessionsPage() {
                 </span>
               )}
               <span className="text-gray-300">|</span>
-              <button onClick={() => { setFrom(today30); setTo(todayStr); setStatus(""); setSearch(""); setPage(1); }}
+              <button onClick={() => { setFrom(today30); setTo(todayStr); setStatus(""); setBoothId(""); setSearch(""); setPage(1); }}
                 className="text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2">
                 Clear filter
               </button>

@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { ApiResponse } from "@/types";
 
+const TRIAL_ONLY_MODE = true;
+const TRIAL_DOWNLOAD_EXPIRY_MINUTES = 5;
+const DEFAULT_DOWNLOAD_EXPIRY_HOURS = 24;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/sessions/[id]/complete
 //
@@ -36,6 +40,11 @@ export async function POST(
   const photoUrl = (form.get("photoUrl") as string | null) ?? session.photoUrl;
   const requestedFrameId = (form.get("frameId") as string | null) ?? session.frameId;
   const videoUrl = (form.get("videoUrl") as string | null) ?? session.videoUrl ?? null;
+  const gifUrl   = (form.get("gifUrl")   as string | null) ?? session.gifUrl   ?? null;
+  const rawPhotoUrlsStr = form.get("rawPhotoUrls") as string | null;
+  const rawPhotoUrls: string[] = rawPhotoUrlsStr
+    ? (() => { try { return JSON.parse(rawPhotoUrlsStr) as string[]; } catch { return []; } })()
+    : [];
 
   if (!photoUrl) {
     return NextResponse.json<ApiResponse>(
@@ -48,6 +57,10 @@ export async function POST(
   const { randomUUID } = await import("crypto");
   const qrCode  = randomUUID();
   const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? "https://studio.fremio.id";
+  const completedAt = new Date();
+  const downloadExpiry = TRIAL_ONLY_MODE
+    ? new Date(completedAt.getTime() + TRIAL_DOWNLOAD_EXPIRY_MINUTES * 60 * 1000)
+    : new Date(completedAt.getTime() + DEFAULT_DOWNLOAD_EXPIRY_HOURS * 60 * 60 * 1000);
 
   let safeFrameId: string | null | undefined = undefined;
   if (requestedFrameId) {
@@ -61,12 +74,15 @@ export async function POST(
   const updated = await prisma.boothSession.update({
     where: { id: params.id },
     data: {
-      status:      "COMPLETED",
+      status:       "COMPLETED",
       photoUrl,
-      frameId:     safeFrameId,
-      videoUrl:    videoUrl ?? undefined,
+      frameId:      safeFrameId,
+      videoUrl:     videoUrl ?? undefined,
+      gifUrl:       gifUrl   ?? undefined,
+      rawPhotoUrls: rawPhotoUrls.length > 0 ? rawPhotoUrls : undefined,
       qrCode,
-      completedAt: new Date(),
+      completedAt,
+      expiresAt:    downloadExpiry,
     },
   });
 
@@ -75,6 +91,7 @@ export async function POST(
     data: {
       photoUrl:    updated.photoUrl,
       videoUrl:    updated.videoUrl ?? null,
+      gifUrl:      updated.gifUrl   ?? null,
       qrCode:      updated.qrCode,
       downloadUrl: `${appUrl}/download/${qrCode}`,
     },

@@ -4,6 +4,8 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { loginSchema } from "@/lib/validations/auth";
 
+const TRIAL_ONLY_MODE = true;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NextAuth Configuration
 // Strategy: JWT (tidak perlu tabel Session di DB)
@@ -53,7 +55,7 @@ export const authOptions: NextAuthOptions = {
           name:               operator.businessName,
           businessName:       operator.businessName,
           subscriptionTier:   operator.subscriptionTier,
-          subscriptionStatus: null,
+          subscriptionStatus: TRIAL_ONLY_MODE ? "TRIAL" : null,
         };
       },
     }),

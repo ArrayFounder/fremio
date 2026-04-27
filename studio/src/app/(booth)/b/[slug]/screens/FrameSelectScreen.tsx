@@ -28,7 +28,10 @@ interface FrameSelectScreenProps {
  */
 export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreenProps) {
   const { primaryColor, accentColor } = booth;
-  const { textPrimary, textSecondary } = getAdaptiveColors(primaryColor);
+  const bgColor    = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.frameSelectBgColor as string | undefined ?? primaryColor;
+  const panelColor  = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.frameSelectPanelColor as string | undefined;
+  const { textPrimary, textSecondary } = getAdaptiveColors(bgColor);
+  const { textPrimary: panelTP, textSecondary: panelTS } = getAdaptiveColors(panelColor ?? bgColor);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const isPortrait = useIsPortrait();
 
@@ -44,8 +47,9 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
   const streamRef = useRef<MediaStream | null>(null);
 
   // Regular frames + scanned frames merged
+  // Include all frames regardless of thumbnail — custom frames may have no thumbnail yet
   const regularFrames = frames.filter(
-    (f) => f.thumbnailUrl && !f.thumbnailUrl.includes("placehold") && !f.thumbnailUrl.includes("placeholder")
+    (f) => !f.thumbnailUrl?.includes("placeholder.com")
   );
   const allFrames = [...regularFrames, ...extraFrames];
 
@@ -194,7 +198,7 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
     <div
       className="flex h-full overflow-hidden"
       style={{
-        backgroundColor: primaryColor,
+        backgroundColor: bgColor,
         flexDirection: isPortrait ? "column" : "row",
         gap: 12,
         padding: 12,
@@ -227,6 +231,31 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
               </button>
             );
           })}
+          {/* Tombol Scan QR — portrait */}
+          <button
+            onClick={startScanner}
+            disabled={scanStatus === "loading" || scanStatus === "scanning"}
+            className="shrink-0 flex flex-col items-center justify-center rounded-xl overflow-hidden active:scale-95 transition-transform disabled:opacity-40"
+            style={{ width: 72, height: 108, backgroundColor: "rgba(255,255,255,0.12)" }}
+          >
+            {scanStatus === "loading" ? (
+              <svg className="animate-spin h-5 w-5 mb-1" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 mb-1" style={{ color: "rgba(255,255,255,0.8)" }}>
+                <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="2" height="2" />
+                <rect x="17" y="14" width="4" height="2" /><rect x="14" y="17" width="2" height="4" />
+                <rect x="17" y="17" width="4" height="4" />
+              </svg>
+            )}
+            <p className="text-[10px] font-semibold text-center px-1 leading-tight"
+              style={{ color: "rgba(255,255,255,0.8)" }}>
+              {scanStatus === "loading" ? "Memuat..." : scanStatus === "error" ? "Gagal ✕" : "Scan QR"}
+            </p>
+          </button>
         </div>
       )}
 
@@ -234,12 +263,12 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
       {!isPortrait && (
         <div
           className="w-44 shrink-0 flex flex-col rounded-2xl overflow-hidden"
-          style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
+          style={{ backgroundColor: panelColor ?? "rgba(255,255,255,0.12)" }}
         >
           {/* Header */}
           <div className="shrink-0 px-3 pt-3 pb-2">
-            <p className="font-bold text-sm leading-tight" style={{ color: textPrimary }}>Pilih Kategori</p>
-            <p className="text-[10px] mt-0.5" style={{ color: textSecondary }}>Klik Icon untuk memilih</p>
+            <p className="font-bold text-sm leading-tight" style={{ color: panelColor ? panelTP : textPrimary }}>Pilih Kategori</p>
+            <p className="text-[10px] mt-0.5" style={{ color: panelColor ? panelTS : textSecondary }}>Klik Icon untuk memilih</p>
           </div>
 
           {/* Category list */}
@@ -321,12 +350,14 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
       {/* ─── TENGAH: Pilih Frame ──────────────────────────────────────────── */}
       <div
         className="flex-1 min-w-0 flex flex-col rounded-2xl overflow-hidden"
-        style={{ backgroundColor: "rgba(0,0,0,0.35)" }}
+        style={{ backgroundColor: panelColor ?? "rgba(0,0,0,0.35)" }}
       >
         {/* Header */}
         <div className="shrink-0 px-3 pt-3 pb-2">
-          <p className="font-bold text-sm" style={{ color: textPrimary }}>Pilih Frame</p>
-          <p className="text-[10px] mt-0.5" style={{ color: textSecondary }}>{selectedCategory ?? "Semua frame"}</p>
+          <p className="font-bold text-sm" style={{ color: panelColor ? panelTP : textPrimary }}>
+            {(booth.welcomeScreenPrefs as Record<string, unknown> | null)?.frameSelectHeaderText as string | undefined ?? "Pilih Frame"}
+          </p>
+          <p className="text-[10px] mt-0.5" style={{ color: panelColor ? panelTS : textSecondary }}>{selectedCategory ?? "Semua frame"}</p>
         </div>
 
         {/* Frame grid */}
@@ -372,15 +403,6 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
                       {frame.name}
                     </p>
 
-                    {frame.isPremium && (
-                      <span
-                        className="absolute top-1 right-1 px-1 py-0.5 rounded text-[9px] font-bold"
-                        style={{ backgroundColor: accentColor, color: primaryColor }}
-                      >
-                        Pro
-                      </span>
-                    )}
-
                     {isSelected && (
                       <span
                         className="absolute top-1 left-1 h-5 w-5 rounded-full flex items-center
@@ -402,7 +424,7 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
       {!isPortrait && (
         <div
           className="w-80 shrink-0 flex flex-col rounded-2xl overflow-hidden"
-          style={{ backgroundColor: "rgba(255,255,255,0.10)" }}
+          style={{ backgroundColor: panelColor ?? "rgba(255,255,255,0.10)" }}
         >
         {/* Area preview */}
         <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
@@ -431,7 +453,7 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
         {/* Bottom bar: nama + harga + tombol konfirmasi */}
         <div
           className="shrink-0 flex items-center gap-2 px-3 py-3 rounded-b-2xl"
-          style={{ backgroundColor: "rgba(0,0,0,0.3)" }}
+          style={{ backgroundColor: panelColor ? panelColor : "rgba(0,0,0,0.3)", filter: panelColor ? "brightness(0.80)" : undefined }}
         >
           {/* Icon frame */}
           <div className="shrink-0 relative h-8 w-6">
@@ -440,11 +462,11 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
           </div>
 
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold leading-tight truncate" style={{ color: textPrimary }}>
+            <p className="text-xs font-semibold leading-tight truncate" style={{ color: panelColor ? panelTP : textPrimary }}>
               {selectedFrame ? selectedFrame.name : "Belum dipilih"}
             </p>
             {selectedFrame && (
-              <p className="text-[11px] mt-0.5" style={{ color: textSecondary }}>
+              <p className="text-[11px] mt-0.5" style={{ color: panelColor ? panelTS : textSecondary }}>
                 Rp {booth.pricePerSession.toLocaleString("id-ID")}
               </p>
             )}
@@ -467,7 +489,7 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
       {isPortrait && (
         <div
           className="shrink-0 flex items-center gap-3 px-3 py-3 rounded-2xl"
-          style={{ backgroundColor: "rgba(0,0,0,0.3)" }}
+          style={{ backgroundColor: panelColor ?? "rgba(0,0,0,0.3)" }}
         >
           {selectedFrame && (
             // eslint-disable-next-line @next/next/no-img-element

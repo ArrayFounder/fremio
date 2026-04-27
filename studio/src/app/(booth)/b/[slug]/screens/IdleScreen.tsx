@@ -42,10 +42,13 @@ export function getEffectivePrefs(booth: BoothConfigData, override?: WelcomeScre
     tutorialBackgroundType:     stored?.tutorialBackgroundType     ?? "color",
     tutorialBackgroundColor:    stored?.tutorialBackgroundColor    ?? booth.primaryColor,
     tutorialBackgroundImageUrl: stored?.tutorialBackgroundImageUrl ?? null,
-    tutorialStyle:              stored?.tutorialStyle              ?? "card",
+    tutorialStyle:              stored?.tutorialStyle              ?? "bold",
     paymentBgColor:    stored?.paymentBgColor    ?? booth.primaryColor,
     paymentHeaderText: stored?.paymentHeaderText ?? "Pilih Metode Pembayaran",
     paymentStyle:      (stored?.paymentStyle as "card" | "minimal" | "colorful" | "columns" | "bold") ?? "card",
+    promoBanners:      stored?.promoBanners      ?? [],
+    promoIdleSeconds:  stored?.promoIdleSeconds  ?? 120,
+    promoSlideSeconds: stored?.promoSlideSeconds ?? 8,
   };
 }
 

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getStudioManagedFramesConfig } from "@/lib/studioManagedFrames";
+import { normalizeImportedSlots } from "@/lib/fremioSlots";
 import type { ApiResponse } from "@/types";
 
 // Category mapping: fremio.id free-text → studio FrameCategory enum
@@ -44,8 +46,8 @@ function extractBackgroundUrl(frame: Record<string, unknown>): string {
   } catch {
     // fall through
   }
-  // Fallback: thumbnail / imageUrl composite
-  return (frame.thumbnailUrl ?? frame.imageUrl ?? "") as string;
+  // Fallback: thumbnail / imageUrl / imagePath
+  return (frame.thumbnailUrl ?? frame.imageUrl ?? frame.imagePath ?? "") as string;
 }
 
 /** URL overlay PNG dekorasi (stiker, watermark) — null jika tidak ada. */
@@ -68,35 +70,38 @@ function extractOverlayUrl(frame: Record<string, unknown>): string | null {
 }
 
 // GET /api/dashboard/frames/import-preview
-// Server-side proxy ke fremio.id/api/frames — hindari CORS dari browser
-// Hanya menampilkan frame format 4R (2:3 rasio, canvasWidth=1080 canvasHeight=1620)
+// Sumber frame import studio booth adalah katalog khusus admin studio-booths.
 export async function GET(req: Request): Promise<Response> {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json<ApiResponse>({ success: false, error: "Unauthorized" }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
   const boothId = searchParams.get("boothId");
+  const managedConfig = await getStudioManagedFramesConfig();
+  const allowedIdsSet = new Set(managedConfig.allowedFrameIds);
+  const whitelistActive =
+    managedConfig.enforceWhitelist || managedConfig.allowedFrameIds.length > 0;
 
-  // Fetch dari fremio.id
-  let fremioFrames: Record<string, unknown>[];
+  // Fetch dari katalog source=studio_booth
+  let sourceFrames: Record<string, unknown>[];
   try {
-    const res = await fetch("https://fremio.id/api/frames?limit=500", {
+    const res = await fetch("https://fremio.id/api/frames?source=studio_booth&limit=1000", {
       cache: "no-store",
       headers: { "Accept": "application/json" },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-    fremioFrames = json?.frames ?? json ?? [];
+    sourceFrames = json?.frames ?? json ?? [];
   } catch (err) {
     return NextResponse.json<ApiResponse>(
-      { success: false, error: `Gagal mengambil frame dari fremio.id: ${(err as Error).message}` },
+      { success: false, error: `Gagal mengambil katalog studio booth dari fremio.id: ${(err as Error).message}` },
       { status: 502 }
     );
   }
 
   // Ambil ID studio yang sudah diimport + status isActive
   const existing = await prisma.frame.findMany({
-    where: { id: { startsWith: "fremio_" } },
+    where: { id: { startsWith: "fremio_sb_" } },
     select: { id: true, isActive: true },
   });
   const importedMap = new Map(existing.map((f) => [f.id, f.isActive]));
@@ -116,10 +121,10 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   // Transform ke format preview, lalu filter hanya 4R
-  const frames = fremioFrames
+  const frames = sourceFrames
     .map((f) => {
-      const fremioId = f.id as string;
-      const studioId = `fremio_${fremioId}`;
+      const sourceId = String(f.id ?? "").trim();
+      const studioId = `fremio_sb_${sourceId}`;
       const layout = f.layout as Record<string, unknown> | null;
       const aspectRatio = (layout?.aspectRatio as string | null) ?? "9:16";
       const canvasWidth  = (f.canvasWidth  as number | null) ?? 1080;
@@ -138,12 +143,12 @@ export async function GET(req: Request): Promise<Response> {
       }
 
       return {
-        fremioId,
+        fremioId: sourceId,
         studioId,
         name:           f.name as string,
-        category:       mapCategory(f.category as string),
-        fremioCategory: f.category as string,
-        thumbnailUrl:   (f.thumbnailUrl ?? f.imageUrl) as string,
+        category:       mapCategory(String(f.category ?? "")),
+        fremioCategory: String(f.category ?? "CUSTOM"),
+        thumbnailUrl:   (f.thumbnailUrl ?? f.imageUrl ?? f.imagePath) as string,
         assetUrl:       extractBackgroundUrl(f),
         overlayUrl:     extractOverlayUrl(f),
         aspectRatio,
@@ -151,7 +156,7 @@ export async function GET(req: Request): Promise<Response> {
         canvasHeight,
         maxCaptures:    Math.max(1, (f.maxCaptures as number | null) ?? 1),
         isPremium:      (f.isPremium as boolean | null) ?? false,
-        slots:          (f.slots as unknown[] | null) ?? null,
+        slots:          normalizeImportedSlots((f.slots as unknown[] | null) ?? null, Math.max(1, (f.maxCaptures as number | null) ?? 1)),
         // alreadyImported: frame aktif DAN sudah di booth (hijau, non-selectable)
         alreadyImported: isInBooth,
         // isDeactivated: frame ada di DB tapi belum/tidak aktif di booth (kuning, bisa dipilih ulang)
@@ -159,6 +164,10 @@ export async function GET(req: Request): Promise<Response> {
       };
     })
     .filter((f) => {
+      if (!f.fremioId) return false;
+      if (whitelistActive && !allowedIdsSet.has(f.fremioId)) {
+        return false;
+      }
       // Hanya 4R: rasio tinggi/lebar ≈ 1.5 (2:3 = canvasHeight 1620 untuk lebar 1080)
       const ratio = f.canvasHeight / f.canvasWidth;
       return ratio >= 1.45 && ratio <= 1.55;

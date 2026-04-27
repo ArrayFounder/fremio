@@ -35,6 +35,7 @@ import {
   ChevronLeft,
   Import as ImportIcon,
   Download,
+  Trash2,
 } from "lucide-react";
 import CanvasPreview from "../components/creator/CanvasPreview.jsx";
 import PropertiesPanel from "../components/creator/PropertiesPanel.jsx";
@@ -744,6 +745,11 @@ export default function Create() {
     if (ratio === "1200:1800" || ratio === "photostrip") {
       return { width: 1200, height: 1800 };
     }
+
+    // A-paper sizes (portrait, 1:√2 ratio — each at its own reference resolution)
+    if (ratio === "A5") return { width: 1080, height: 1529 };  // 148×210mm
+    if (ratio === "A4") return { width: 1240, height: 1754 };  // 210×297mm
+    if (ratio === "A3") return { width: 1754, height: 2480 };  // 297×420mm
 
     const [rawWidth, rawHeight] = ratio.split(":").map(Number);
     const ratioWidth = Number.isFinite(rawWidth) && rawWidth > 0 ? rawWidth : null;
@@ -3499,9 +3505,10 @@ export default function Create() {
       content = (
         <div className="create-mobile-property-panel__actions">
           {[
-            { value: "9:16", label: "Story Instagram", desc: "1080 × 1920" },
-            { value: "2:3", label: "4R", desc: "1200 × 1800" },
-            { value: "1:3", label: "2R", desc: "600 × 1800" },
+            { value: "9:16", label: "Story Instagram", desc: "1080 × 1920"   },
+            { value: "2:3",  label: "4R",              desc: "1200 × 1800"   },
+            { value: "1:3",  label: "2R",              desc: "600 × 1800"    },
+            { value: "A4",   label: "A3/A4/A5",        desc: "1240 × 1754 px" },
           ].map((opt) => (
             <button
               key={opt.value}
@@ -3511,7 +3518,7 @@ export default function Create() {
                 setActiveMobileProperty(null);
               }}
               className={`create-mobile-property-panel__action${
-                canvasAspectRatio === opt.value
+                (opt.value === "A4" ? ["A3","A4","A5"].includes(canvasAspectRatio) : canvasAspectRatio === opt.value)
                   ? " create-mobile-property-panel__action--active"
                   : ""
               }`}
@@ -3519,6 +3526,25 @@ export default function Create() {
               {opt.label} — {opt.desc}
             </button>
           ))}
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 0' }}>
+            <input type="number" min="100" max="9999" placeholder="Lebar"
+              style={{ flex: 1, padding: '8px', borderRadius: '8px', border: '1px solid #e0b7a9', fontSize: '13px', color: '#4a302b' }}
+              id="mobile-custom-w"
+            />
+            <span style={{ color: '#c89585', fontWeight: 700 }}>×</span>
+            <input type="number" min="100" max="9999" placeholder="Tinggi"
+              style={{ flex: 1, padding: '8px', borderRadius: '8px', border: '1px solid #e0b7a9', fontSize: '13px', color: '#4a302b' }}
+              id="mobile-custom-h"
+            />
+            <button type="button"
+              style={{ padding: '8px 12px', borderRadius: '8px', background: '#d4a99a', color: '#fff', fontWeight: 700, border: 'none', fontSize: '13px', cursor: 'pointer' }}
+              onClick={() => {
+                const w = parseInt(document.getElementById('mobile-custom-w')?.value, 10);
+                const h = parseInt(document.getElementById('mobile-custom-h')?.value, 10);
+                if (w >= 100 && h >= 100) { setCanvasAspectRatio(`${w}:${h}`); setActiveMobileProperty(null); }
+              }}
+            >Custom</button>
+          </div>
         </div>
       );
     } else if (isBackgroundSelected) {

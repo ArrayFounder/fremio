@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fremio Studio Setup</title>
+  <link rel="stylesheet" href="./setup.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Fremio Studio Setup</h1>
+    <p class="subtitle">Atur URL studio dan slug booth agar app membuka flow booth yang sama dengan web.</p>
+
+    <form id="setup-form">
+      <label>
+        Studio URL
+        <input id="studioBaseUrl" type="url" placeholder="https://studio.fremio.id" required />
+      </label>
+
+      <label>
+        Booth Slug
+        <input id="boothSlug" type="text" placeholder="contoh: booth-ajeng" required />
+      </label>
+
+      <label class="switch-row">
+        <input id="kiosk" type="checkbox" checked />
+        <span>Buka dalam mode kiosk fullscreen</span>
+      </label>
+
+      <button type="submit">Simpan dan Jalankan Studio</button>
+      <p id="status" class="status"></p>
+    </form>
+
+    <p class="hint">Shortcut saat app berjalan: <strong>Ctrl+Shift+S</strong> untuk buka setup.</p>
+  </main>
+
+  <script src="./setup.js"></script>
+</body>
+</html>

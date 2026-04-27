@@ -45,12 +45,36 @@ export interface WelcomeScreenPrefs {
   timerY?:         number   // center Y %, default 8
   timerRingColor?: string   // hex, default "#ffffff"
   timerBgColor?:   string   // hex, default "#000000"
+  /** Promo banner popup — muncul saat idle di welcome screen */
+  promoBanners:     { imageUrl: string }[]  // daftar banner (PNG/JPG)
+  promoIdleSeconds: number                  // detik idle sebelum popup muncul (default 120)
+  promoSlideSeconds: number                 // detik per slide (default 8)
+  /** Metode pembayaran yang diaktifkan operator (selain CASH yang selalu aktif) */
+  enabledPaymentMethods?: ("TICKET" | "CASHLESS" | "VOUCHER")[]  // default: semua aktif
+  /** Pengiriman hasil foto ke customer */
+  deliveryEmailEnabled?: boolean   // kirim link via email (default true)
+  deliveryWaEnabled?:    boolean   // kirim link via WhatsApp via Fonnte (default false)
+  deliveryFonnteToken?:  string    // API token Fonnte milik operator
+  deliveryWaMessage?:    string    // custom WA message, gunakan [url] sebagai placeholder
+  /** Auto-download semua hasil (foto, GIF, video, foto original) ke device booth setelah preview selesai */
+  autoDownloadEnabled?:  boolean
+  /** Proteksi akses URL booth dengan PIN 6 digit */
+  boothAccessPinEnabled?: boolean
+  boothAccessPin?: string | null
+  /** Per-screen background & teks */
+  frameSelectBgColor?:    string   // background layar pilih frame, default = primaryColor
+  frameSelectHeaderText?: string   // judul layar pilih frame, default "Pilih Frame"
+  frameSelectPanelColor?: string   // warna panel/wadah di layar pilih frame (grid, kategori, info harga)
+  cameraBgColor?:         string   // background layar kamera, default = primaryColor
+  deliveryBgColor?:       string   // background layar hasil akhir, default = primaryColor
+  deliveryHeaderText?:    string   // judul di atas QR code, default "Foto Siap Diunduh"
 }
 
 export interface BoothConfigData {
   id: string
   boothName: string
   slug: string
+  showTrialWatermark?: boolean
   /** Harga dasar per sesi termasuk 1 lembar cetak (IDR) */
   pricePerSession: number
   /** Harga per lembar cetak tambahan (lembar ke-2 dst) dalam IDR */
@@ -140,13 +164,14 @@ export type BoothScreen =
   | "PREVIEW"
   | "DELIVERY"
 
-export type PaymentMethod = "TICKET" | "CASHLESS" | "VOUCHER"
+export type PaymentMethod = "TICKET" | "CASHLESS" | "VOUCHER" | "CASH"
 
 /** Pengaturan hardware booth — disimpan di localStorage */
 export interface BoothHardwareSettings {
   cameraDeviceId:   string | null   // null = default
   cameraMirror:     boolean
   printerName:      string | null   // null = tanpa printer / dialog browser
+  paperSize?:       string | null   // null/undefined = auto-detect dari canvas dimensions
   setupCompleted:   boolean
 }
 
@@ -166,6 +191,7 @@ export interface BoothSessionState {
   amount:              number
   qrImageUrl:          string | null
   qrString:            string | null
+  snapToken:           string | null
   paymentExpiresAt:    Date | null
   selectedFrame:       FrameData | null
   paymentMethod:       PaymentMethod | null
@@ -191,6 +217,7 @@ export const EMPTY_SESSION: BoothSessionState = {
   amount:           0,
   qrImageUrl:       null,
   qrString:         null,
+  snapToken:        null,
   paymentExpiresAt: null,
   selectedFrame:    null,
   paymentMethod:    null,

@@ -1,5 +1,28 @@
 import React from 'react';
 
+// Send error report to backend silently (best-effort, non-blocking)
+function reportClientError(error, errorInfo) {
+  try {
+    const payload = JSON.stringify({
+      message: error?.message || String(error),
+      stack: error?.stack || '',
+      componentStack: errorInfo?.componentStack || '',
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      url: typeof window !== 'undefined' ? window.location.href : '',
+      timestamp: new Date().toISOString(),
+    });
+    const url = '/api/client-error';
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+    } else {
+      fetch(url, { method: 'POST', body: payload, headers: { 'Content-Type': 'application/json' } })
+        .catch(() => {});
+    }
+  } catch (_) {
+    // Never let the reporter itself crash
+  }
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -16,11 +39,10 @@ class ErrorBoundary extends React.Component {
       errorInfo: errorInfo
     });
     
-    // Log error to console in development
     console.error('ErrorBoundary caught an error:', error, errorInfo);
     
-    // In production, you could send this to an error tracking service
-    // Example: Sentry.captureException(error);
+    // Report to backend regardless of environment
+    reportClientError(error, errorInfo);
   }
 
   handleReset = () => {
@@ -104,15 +126,15 @@ class ErrorBoundary extends React.Component {
               </button>
             </div>
 
-            {/* Show error details in development */}
-            {process.env.NODE_ENV === 'development' && this.state.error && (
+            {/* Always show error details so users can screenshot and report */}
+            {this.state.error && (
               <details style={{ 
                 marginTop: '24px', 
                 textAlign: 'left',
                 padding: '16px',
                 background: '#fef2f2',
                 borderRadius: '8px',
-                fontSize: '12px'
+                fontSize: '11px'
               }}>
                 <summary style={{ 
                   cursor: 'pointer', 
@@ -120,15 +142,19 @@ class ErrorBoundary extends React.Component {
                   color: '#dc2626',
                   marginBottom: '8px'
                 }}>
-                  Detail Error (Development Only)
+                  Detail Error (screenshot &amp; kirim ke tim)
                 </summary>
                 <pre style={{ 
                   overflow: 'auto', 
                   whiteSpace: 'pre-wrap',
-                  color: '#7f1d1d'
+                  color: '#7f1d1d',
+                  maxHeight: '200px',
+                  fontSize: '10px',
                 }}>
                   {this.state.error.toString()}
-                  {this.state.errorInfo?.componentStack}
+                  {'\n\nURL: '}{typeof window !== 'undefined' ? window.location.href : ''}
+                  {'\nUA: '}{typeof navigator !== 'undefined' ? navigator.userAgent : ''}
+                  {'\n\nComponent Stack:'}{this.state.errorInfo?.componentStack}
                 </pre>
               </details>
             )}

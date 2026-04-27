@@ -124,6 +124,21 @@ export default function AdminDesignerSubmissions() {
   const [feedback, setFeedback] = useState([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
+  // Certificate done checkboxes — persisted in localStorage
+  const [certChecks, setCertChecks] = useState(() => {
+    try {
+      const saved = localStorage.getItem("fremio_cert_checks");
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+  const toggleCertCheck = (designerId) => {
+    setCertChecks((prev) => {
+      const next = { ...prev, [designerId]: !prev[designerId] };
+      try { localStorage.setItem("fremio_cert_checks", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
   // Preview modal
   const [previewSub, setPreviewSub] = useState(null);
   const [previewSubDetail, setPreviewSubDetail] = useState(null);
@@ -580,20 +595,22 @@ export default function AdminDesignerSubmissions() {
             </div>
           ) : (
             <div style={S.designerTable}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "#f9fafb" }}>
-                    {["Designer", "Email", "Total", "Pending", "Approved", "Rejected", "Bergabung", "Sertifikat"].map(
+                    {["Designer", "Email", "Total", "Pending", "Approved", "Rejected", "Bergabung", "Sertifikat", "✓ Selesai"].map(
                       (h) => (
                         <th
                           key={h}
                           style={{
                             padding: "10px 16px",
-                            textAlign: "left",
+                            textAlign: h === "✓ Selesai" ? "center" : "left",
                             fontSize: "12px",
                             fontWeight: "600",
                             color: "#6b7280",
                             borderBottom: "1px solid #e5e7eb",
+                            whiteSpace: "nowrap",
+                            ...(h === "Designer" ? { minWidth: "160px" } : {}),
                           }}
                         >
                           {h}
@@ -608,7 +625,7 @@ export default function AdminDesignerSubmissions() {
                       key={d.id}
                       style={{ borderBottom: "1px solid #f3f4f6" }}
                     >
-                      <td style={S.td}>{d.display_name || "—"}</td>
+                      <td style={{ ...S.td, minWidth: "160px", fontWeight: "600", color: "#1a1a2e" }}>{d.display_name || "—"}</td>
                       <td style={S.td}>{d.email}</td>
                       <td style={{ ...S.td, fontWeight: "700" }}>{d.total_submissions}</td>
                       <td style={{ ...S.td, color: "#f59e0b" }}>{d.pending}</td>
@@ -617,19 +634,33 @@ export default function AdminDesignerSubmissions() {
                       <td style={{ ...S.td, color: "#9ca3af" }}>
                         {new Date(d.created_at).toLocaleDateString("id-ID")}
                       </td>
-                      <td style={S.td}>
+                      <td style={{ ...S.td, minWidth: "160px" }}>
                         {d.certificate_name ? (
                           <div>
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b", borderRadius: "8px", padding: "3px 8px", fontSize: "12px", fontWeight: "700" }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b", borderRadius: "8px", padding: "3px 8px", fontSize: "12px", fontWeight: "700", whiteSpace: "nowrap" }}>
                               🎖️ {d.certificate_name}
                             </span>
-                            <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: "3px" }}>
+                            <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: "3px", whiteSpace: "nowrap" }}>
                               {new Date(d.certificate_claimed_at).toLocaleDateString("id-ID")}
                             </div>
                           </div>
                         ) : (
                           <span style={{ color: "#d1d5db", fontSize: "12px" }}>—</span>
                         )}
+                      </td>
+                      <td style={{ ...S.td, textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={!!certChecks[d.id]}
+                          onChange={() => toggleCertCheck(d.id)}
+                          title={certChecks[d.id] ? "Sudah dibuatkan sertifikat" : "Belum dibuatkan sertifikat"}
+                          style={{
+                            width: "18px",
+                            height: "18px",
+                            cursor: "pointer",
+                            accentColor: "#10b981",
+                          }}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -946,7 +977,7 @@ export default function AdminDesignerSubmissions() {
 }
 
 const S = {
-  page: { maxWidth: "1000px", margin: "0 auto", fontFamily: "'Inter', sans-serif" },
+  page: { maxWidth: "1300px", margin: "0 auto", fontFamily: "'Inter', sans-serif" },
   pageHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" },
   pageTitle: { margin: "0 0 4px", fontSize: "22px", fontWeight: "700", color: "#1a1a2e" },
   pageSubtitle: { margin: 0, fontSize: "14px", color: "#6b7280" },
@@ -977,7 +1008,7 @@ const S = {
   statusBadge: { display: "inline-flex", alignItems: "center", gap: "5px", padding: "4px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "600", whiteSpace: "nowrap" },
   btnSecondary: { display: "flex", alignItems: "center", gap: "4px", padding: "6px 12px", border: "1px solid #e5e7eb", background: "#fff", borderRadius: "6px", cursor: "pointer", fontSize: "13px", color: "#374151" },
   btnReview: { padding: "7px 16px", background: "#6366f1", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: "600" },
-  designerTable: { background: "#fff", borderRadius: "12px", overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.07)" },
+  designerTable: { background: "#fff", borderRadius: "12px", overflowX: "auto", boxShadow: "0 1px 4px rgba(0,0,0,0.07)" },
   td: { padding: "12px 16px", fontSize: "13px", color: "#374151" },
   // Modals
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" },

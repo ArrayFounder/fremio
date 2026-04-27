@@ -1,4 +1,4 @@
-// File: /Users/salwa/Documents/fremio/studio/src/app/api/dashboard/settings/payment/route.ts
+// File: /Users/salwa/Documents/fremio copy/studio/src/app/api/dashboard/settings/payment/route.ts
 import * as entry from '../../../../../../../src/app/api/dashboard/settings/payment/route.js'
 import type { NextRequest } from 'next/server.js'
 

@@ -1,4 +1,4 @@
-// File: /Users/salwa/Documents/fremio/studio/src/app/api/booths/route.ts
+// File: /Users/salwa/Documents/fremio copy/studio/src/app/api/booths/route.ts
 import * as entry from '../../../../../src/app/api/booths/route.js'
 import type { NextRequest } from 'next/server.js'
 

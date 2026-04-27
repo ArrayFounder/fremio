@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import type { ApiResponse } from "@/types";
 
+const TRIAL_ONLY_MODE = true;
+
 const schema = z.object({
   boothConfigId: z.string().min(1),
   voucherId:     z.string().min(1),
@@ -49,7 +51,12 @@ export async function POST(req: Request): Promise<Response> {
   ]);
 
   if (!booth) return NextResponse.json<ApiResponse>({ success: false, error: "Booth tidak ditemukan" }, { status: 404 });
-  if (!booth.operator.isActive || (booth.operator.subscriptionExpiry && booth.operator.subscriptionExpiry < new Date())) {
+  if (
+    !booth.operator.isActive ||
+    (!TRIAL_ONLY_MODE &&
+      booth.operator.subscriptionExpiry &&
+      booth.operator.subscriptionExpiry < new Date())
+  ) {
     return NextResponse.json<ApiResponse>({ success: false, error: "Operator tidak aktif" }, { status: 403 });
   }
   if (!voucher || voucher.boothConfigId !== boothConfigId || voucher.code !== code || !voucher.isActive) {

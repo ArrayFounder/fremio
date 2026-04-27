@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Image from "next/image";
+import { getAdaptiveColors } from "../colorUtils";
+import { getAllPaperSizes } from "../paperSize";
 import type { BoothConfigData, BoothHardwareSettings } from "../types";
 
 interface VideoDevice { deviceId: string; label: string }
@@ -14,11 +16,11 @@ interface BoothSetupScreenProps {
 const STORAGE_KEY = "fremio_booth_hw_settings";
 
 /**
- * Chrome allows mixed-content requests to http://localhost from HTTPS pages,
- * so we always try reaching the local agent regardless of protocol/hostname.
+ * Booth app sekarang berjalan native tanpa local agent.
+ * Selalu gunakan alur kamera/printer bawaan browser atau sistem.
  */
 function canUseLocalAgent(): boolean {
-  return typeof window !== "undefined";
+  return false;
 }
 
 /** Detect iOS / iPadOS */
@@ -55,6 +57,7 @@ function saveHardwareSettings(slug: string, s: BoothHardwareSettings) {
 
 export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   const { primaryColor, accentColor } = booth;
+  const { textPrimary, textSecondary, textTertiary, surfaceBg, surfaceBorder } = getAdaptiveColors(primaryColor);
 
   // ── Camera state ──────────────────────────────────────────────────────────
   const [devices,    setDevices]    = useState<VideoDevice[]>([]);
@@ -71,6 +74,15 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   const [agentOnline,    setAgentOnline]     = useState<boolean | null>(null); // null=checking
   const [agentChecking,  setAgentChecking]   = useState(false);
   const [manualPrinter,  setManualPrinter]   = useState(""); // manual input when agent offline
+  // Native mode (tanpa agent): tampilkan panduan print sistem.
+  const isTabletMode = true;
+
+  // ── DSLR state ────────────────────────────────────────────────────
+  const [dslrCameras, setDslrCameras] = useState<{ model: string; port: string }[]>([]);
+
+  // ── Paper size state ──────────────────────────────────────────────────────
+  // null = auto-detect dari canvas frame dimensions
+  const [paperSizeOverride, setPaperSizeOverride] = useState<string | null>(null);
 
   // ── Load saved settings once ───────────────────────────────────────────────
   useEffect(() => {
@@ -80,6 +92,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       setMirror(saved.cameraMirror);
       setPrinterName(saved.printerName);
       if (saved.printerName) setManualPrinter(saved.printerName);
+      setPaperSizeOverride(saved.paperSize ?? null);
     }
   }, [booth.slug]);
 
@@ -148,34 +161,12 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   };
 
   // ── Check Local Agent & get printers ──────────────────────────────────────
-  // Mac agent → HTTPS; Windows agent → HTTP. Try https first, fallback to http.
+  // Semua kandidat dicoba PARALLEL (Promise.any) agar tidak ada waktu terbuang
+  // menunggu satu-per-satu timeout. Yang pertama OK langsung dipakai.
   const checkAgent = useCallback(async () => {
     if (!canUseLocalAgent()) { setAgentOnline(false); return; }
     setAgentChecking(true);
     try {
-      let res: Response;
-      try {
-        res = await fetch("https://127.0.0.1:3002/status", {
-          signal: AbortSignal.timeout(3000),
-        });
-      } catch {
-        res = await fetch("http://127.0.0.1:3002/status", {
-          signal: AbortSignal.timeout(3000),
-        });
-      }
-      if (res.ok) {
-        const data = await res.json() as { ok: boolean; printers: string[] };
-        setAgentOnline(true);
-        const list = data.printers ?? [];
-        setPrinters(list);
-        // Auto-select first printer if none selected yet
-        if (printerName === null && list.length > 0) {
-          // keep null (= dialog browser) as default; let user pick
-        }
-      } else {
-        setAgentOnline(false);
-      }
-    } catch {
       setAgentOnline(false);
     } finally {
       setAgentChecking(false);
@@ -187,14 +178,12 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   // ── Done ──────────────────────────────────────────────────────────────────
   const handleDone = () => {
     stream?.getTracks().forEach(t => t.stop());
-    // When agent is offline, use manual printer input if provided; otherwise null
-    const resolvedPrinter = agentOnline
-      ? printerName
-      : (manualPrinter.trim() || null);
+    const resolvedPrinter = printerName ?? (manualPrinter.trim() || null);
     const settings: BoothHardwareSettings = {
       cameraDeviceId: deviceId,
       cameraMirror:   mirror,
       printerName:    resolvedPrinter,
+      paperSize:      paperSizeOverride,
       setupCompleted: true,
     };
     saveHardwareSettings(booth.slug, settings);
@@ -208,6 +197,13 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   const handleReset = () => {
     localStorage.removeItem(`${STORAGE_KEY}_${booth.slug}`);
     window.location.reload();
+  };
+
+  const handleRefreshPrinter = () => {
+    if (!printerName && printers.length > 0) {
+      setPrinterName(printers[0]);
+    }
+    window.print();
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -228,24 +224,23 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               className="h-7 w-auto object-contain" />
           )}
           <div>
-            <p className="text-white/50 text-[10px] uppercase tracking-widest">Setup Booth</p>
-            <h1 className="text-white text-lg font-bold leading-tight">{booth.boothName}</h1>
+            <p className="text-[10px] uppercase tracking-widest" style={{ color: textTertiary }}>Setup Booth</p>
+            <h1 className="text-lg font-bold leading-tight" style={{ color: textPrimary }}>{booth.boothName}</h1>
           </div>
         </div>
 
-        {/* ── Two-column: Kamera (kiri) + Printer (kanan) ─────────────────── */}
-        <div className="grid grid-cols-2 gap-3">
+        {/* ── Kamera ───────────────────────────────────────────────────────── */}
+        <div>
 
-          {/* ── Kamera ────────────────────────────────────────────────────── */}
           <div className="rounded-2xl overflow-hidden"
-            style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)" }}>
+            style={{ background: surfaceBg, border: `1px solid ${surfaceBorder}` }}>
 
             {/* Preview — fixed height */}
             <div className="relative bg-black" style={{ height: "200px" }}>
               {camError ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
                   <span className="text-2xl">📷</span>
-                  <p className="text-white/60 text-xs">{camError}</p>
+                  <p className="text-xs" style={{ color: textSecondary }}>{camError}</p>
                   <button onClick={() => startCamera(deviceId)}
                     className="px-3 py-1.5 rounded-xl text-xs font-bold"
                     style={{ backgroundColor: accentColor, color: primaryColor }}>
@@ -262,13 +257,13 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               )}
               {camLoading && !camError && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-                  <p className="text-white animate-pulse text-xs">Memuat kamera…</p>
+                  <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Memuat kamera…</p>
                 </div>
               )}
               <div className="absolute top-2 right-2">
                 <button onClick={() => setMirror(v => !v)}
                   className="px-2 py-0.5 rounded-lg text-[10px] font-bold backdrop-blur-sm"
-                  style={{ background: "rgba(0,0,0,0.5)", color: mirror ? accentColor : "rgba(255,255,255,0.4)" }}>
+                  style={{ background: "rgba(0,0,0,0.5)", color: mirror ? accentColor : textTertiary }}>
                   {mirror ? "⟷ Mirror ON" : "⟷ Mirror OFF"}
                 </button>
               </div>
@@ -276,20 +271,20 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
             {/* Camera selector */}
             <div className="p-3 space-y-2">
-              <p className="text-white/60 text-[10px] font-semibold uppercase tracking-wide">
+              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>
                 Kamera {devices.length > 1 ? `(${devices.length} terdeteksi)` : ""}
               </p>
               {devices.length === 0 && !camError && (
-                <p className="text-white/40 text-xs">Mendeteksi kamera…</p>
+                <p className="text-xs" style={{ color: textTertiary }}>Mendeteksi kamera…</p>
               )}
               <div className="space-y-1.5">
                 {devices.map(d => (
                   <button key={d.deviceId} onClick={() => switchCamera(d.deviceId)}
                     className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
                     style={{
-                      background: d.deviceId === deviceId ? `${accentColor}22` : "rgba(255,255,255,0.04)",
+                      background: d.deviceId === deviceId ? `${accentColor}22` : surfaceBg,
                       border:     d.deviceId === deviceId ? `1.5px solid ${accentColor}` : "1.5px solid transparent",
-                      color:      d.deviceId === deviceId ? accentColor : "rgba(255,255,255,0.7)",
+                      color:      d.deviceId === deviceId ? accentColor : textPrimary,
                     }}>
                     <span>🎥</span>
                     <span className="flex-1 truncate">{d.label}</span>
@@ -298,153 +293,160 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                 ))}
                 {/* Tip DSLR */}
                 <div className="rounded-xl px-2.5 py-2 text-[10px] leading-relaxed"
-                  style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.4)" }}>
+                  style={{ background: surfaceBg, color: textTertiary }}>
                   💡 DSLR tidak muncul? Install{" "}
-                  <span style={{ color: "rgba(255,255,255,0.6)" }}>Canon EOS Webcam Utility / Nikon Webcam / Sony Imaging Edge / OBS</span>
+                  <span style={{ color: textSecondary }}>Canon EOS Webcam Utility / Nikon Webcam / Sony Imaging Edge / OBS</span>
                 </div>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* ── Printer ───────────────────────────────────────────────────── */}
-          <div className="rounded-2xl p-3 space-y-2"
-            style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)" }}>
-
+        {/* ── Kamera DSLR / Mirrorless ────────────────────────────────────── */}
+        {!isTabletMode && (
+          <div className="rounded-2xl p-3 space-y-2" style={{ background: surfaceBg, border: `1px solid ${surfaceBorder}` }}>
             <div className="flex items-center justify-between">
-              <p className="text-white/60 text-[10px] font-semibold uppercase tracking-wide">PRINTER</p>
-              <div className="flex items-center gap-1.5">
-                {!isNoAgentDevice() && agentOnline === null && <span className="text-white/30 text-[10px] animate-pulse">Mengecek…</span>}
-                {!isNoAgentDevice() && agentOnline === true  && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/50 text-green-400">✓ Aktif</span>
-                )}
-                {!isNoAgentDevice() && agentOnline === false && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white/5 text-white/30">Tidak aktif</span>
-                )}
-                {isIOSDevice() && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-900/50 text-blue-300">📲 AirPrint</span>
-                )}
-                {isAndroidDevice() && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/50 text-green-300">🖨️ Print Dialog</span>
-                )}
-                {!isNoAgentDevice() && (
-                  <button
-                    onClick={checkAgent}
-                    disabled={agentChecking || agentOnline === null}
-                    className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold transition-opacity disabled:opacity-40"
-                    style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)" }}
-                    title="Cek ulang status agent">
-                    {agentChecking ? "…" : "🔄 Coba Lagi"}
-                  </button>
-                )}
-              </div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>KAMERA DSLR / MIRRORLESS</p>
+              {agentOnline === true && dslrCameras.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/50 text-green-400">
+                  ✓ {dslrCameras.length} Terdeteksi
+                </span>
+              )}
+              {agentOnline === true && dslrCameras.length === 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: surfaceBg, color: textTertiary }}>Belum ada</span>
+              )}
             </div>
 
-            {/* iOS AirPrint info */}
-            {isIOSDevice() && (
-              <div className="rounded-xl px-2.5 py-2 text-[11px] leading-relaxed space-y-1"
-                style={{ background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.25)", color: "rgba(255,255,255,0.75)" }}>
-                <p className="font-semibold text-blue-300">✅ Tidak perlu agent di iPad/iPhone</p>
-                <p className="text-white/50">Pastikan printer WiFi tersambung ke jaringan yang sama. Dialog print muncul otomatis saat sesi selesai.</p>
-              </div>
-            )}
-
-            {/* Android Print Dialog info */}
-            {isAndroidDevice() && (
-              <div className="rounded-xl px-2.5 py-2 text-[11px] leading-relaxed space-y-1"
-                style={{ background: "rgba(34,197,94,0.10)", border: "1px solid rgba(34,197,94,0.25)", color: "rgba(255,255,255,0.75)" }}>
-                <p className="font-semibold text-green-300">✅ Tidak perlu agent di Android</p>
-                <p className="text-white/50">Install <strong className="text-white/70">Mopria Print Service</strong> (Play Store), pastikan printer di WiFi yang sama. Dialog print muncul otomatis.</p>
-              </div>
-            )}
-
-            {/* Desktop: download buttons — 3 kolom horizontal */}
-            {!isNoAgentDevice() && agentOnline !== true && (
-              <div className="space-y-1.5">
-                <p className="text-white/40 text-[10px]">Download agent untuk cetak silent:</p>
-                <div className="flex gap-1.5">
-                  <a href="/downloads/fremio-agent-mac-arm64" download="fremio-agent-mac-arm64"
-                    className="flex-1 flex flex-col items-center gap-0.5 px-1.5 py-2 rounded-xl text-[10px] font-bold transition-opacity hover:opacity-80 text-center"
-                    style={{ background: "rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.85)", border: "1.5px solid rgba(255,255,255,0.18)" }}>
-                    <span>🍎</span><span>Mac Silicon</span>
-                  </a>
-                  <a href="/downloads/fremio-agent-mac-x64" download="fremio-agent-mac-x64"
-                    className="flex-1 flex flex-col items-center gap-0.5 px-1.5 py-2 rounded-xl text-[10px] font-bold transition-opacity hover:opacity-80 text-center"
-                    style={{ background: "rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.85)", border: "1.5px solid rgba(255,255,255,0.18)" }}>
-                    <span>🍎</span><span>Mac Intel</span>
-                  </a>
-                  <a href="/downloads/fremio-agent-win.exe" download="fremio-agent-win.exe"
-                    className="flex-1 flex flex-col items-center gap-0.5 px-1.5 py-2 rounded-xl text-[10px] font-bold transition-opacity hover:opacity-80 text-center"
-                    style={{ background: "rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.85)", border: "1.5px solid rgba(255,255,255,0.18)" }}>
-                    <span>🪟</span><span>Windows</span>
-                  </a>
-                </div>
-                <p className="text-white/25 text-[10px]">
-                  Setelah dijalankan, klik 🔄 Coba Lagi di atas.
-                </p>
-                <div className="rounded-xl px-2.5 py-2 text-[10px] leading-relaxed"
-                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.35)" }}>
-                  💡 Pakai tablet Android atau iPad? Tidak perlu agent — buka link booth dari browser tablet.
-                </div>
-              </div>
-            )}
-
-            {/* Manual printer input (desktop, agent offline) */}
-            {!isNoAgentDevice() && agentOnline === false && (
+            {/* Daftar kamera terdeteksi */}
+            {agentOnline === true && dslrCameras.length > 0 && (
               <div className="space-y-1">
-                <p className="text-white/40 text-[10px] px-0.5">Atau ketik nama printer manual:</p>
-                <input
-                  type="text"
-                  value={manualPrinter}
-                  onChange={e => setManualPrinter(e.target.value)}
-                  placeholder="Contoh: Canon SELPHY CP1500"
-                  className="w-full px-2.5 py-2 rounded-xl text-xs outline-none"
-                  style={{
-                    background:  "rgba(255,255,255,0.07)",
-                    border:      manualPrinter.trim() ? `1.5px solid ${accentColor}` : "1.5px solid rgba(255,255,255,0.15)",
-                    color:       "rgba(255,255,255,0.85)",
-                  }}
-                />
-                {manualPrinter.trim() && (
-                  <p className="text-[10px] px-0.5" style={{ color: accentColor }}>
-                    🖨️ "{manualPrinter.trim()}" akan disimpan.
-                  </p>
-                )}
+                {dslrCameras.map((cam, i) => (
+                  <div key={i} className="flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs"
+                    style={{ background: `${accentColor}15`, border: `1.5px solid ${accentColor}44`, color: textPrimary }}>
+                    <span>📷</span>
+                    <span className="flex-1">{cam.model}</span>
+                    <span className="text-[10px] opacity-60">{cam.port}</span>
+                    <span className="text-[10px] font-bold text-green-400">✓ Siap</span>
+                  </div>
+                ))}
               </div>
             )}
 
-            {/* Agent active: printer list */}
-            {agentOnline === true && (
-              <div className="space-y-1.5">
-                <button onClick={() => setPrinterName(null)}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
-                  style={{
-                    background: printerName === null ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
-                    border:     printerName === null ? "1.5px solid rgba(255,255,255,0.25)" : "1.5px solid transparent",
-                    color:      printerName === null ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.4)",
-                  }}>
-                  <span>🚫</span>
-                  <span className="flex-1">Tanpa printer</span>
-                  {printerName === null && <span className="font-bold text-[10px]">✓</span>}
-                </button>
-                {printers.map(p => (
-                  <button key={p} onClick={() => setPrinterName(p)}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
-                    style={{
-                      background: p === printerName ? `${accentColor}22` : "rgba(255,255,255,0.04)",
-                      border:     p === printerName ? `1.5px solid ${accentColor}` : "1.5px solid transparent",
-                      color:      p === printerName ? accentColor : "rgba(255,255,255,0.7)",
-                    }}>
-                    <span>🖨️</span>
-                    <span className="flex-1 truncate">{p}</span>
-                    {p === printerName && <span className="font-bold text-[10px]">✓ Aktif</span>}
-                  </button>
-                ))}
-                {printers.length === 0 && (
-                  <p className="text-white/30 text-[10px] px-0.5">Tidak ada printer terdeteksi di OS.</p>
-                )}
+            {/* Tutorial cara hubungkan DSLR */}
+            <div className="rounded-xl px-3 py-3 space-y-2.5"
+              style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${surfaceBorder}` }}>
+              <p className="text-xs font-bold" style={{ color: textPrimary }}>📸 Cara Hubungkan Kamera DSLR / Mirrorless</p>
+              <ol className="space-y-2 text-[11px] leading-relaxed" style={{ color: textSecondary }}>
+                <li>
+                  <span className="font-semibold" style={{ color: textPrimary }}>1. Jalankan Local Agent</span><br/>
+                  Download dari panel Printer di atas. Jalankan sekali di komputer booth — berjalan di background. Cek badge “Agent Aktif” muncul.
+                </li>
+                <li>
+                  <span className="font-semibold" style={{ color: textPrimary }}>2. Hubungkan kamera via kabel USB</span><br/>
+                  Gunakan kabel USB bawaan kamera (biasanya USB-A ke Mini-USB atau Micro-USB).
+                </li>
+                <li>
+                  <span className="font-semibold" style={{ color: textPrimary }}>3. Set mode kamera ke PTP / PC Remote</span><br/>
+                  Di menu kamera: <em>Connection → PC Remote</em> atau <em>USB → PTP / Transfer Mode</em>.<br/>
+                  <span style={{ color: textTertiary }}>&#9888; Jangan pilih MTP / Mass Storage — mode itu tidak didukung.</span>
+                </li>
+                <li>
+                  <span className="font-semibold" style={{ color: textPrimary }}>4. Khusus Mac — matikan PTPCamera daemon</span><br/>
+                  macOS secara otomatis mengklaim kamera. Buka Terminal, ketik:<br/>
+                  <code className="px-1.5 py-0.5 rounded text-[10px] font-mono" style={{ background: "rgba(255,255,255,0.1)", color: textPrimary }}>sudo killall PTPCamera</code>
+                </li>
+                <li>
+                  <span className="font-semibold" style={{ color: textPrimary }}>5. Klik “Coba Lagi” di panel Printer</span><br/>
+                  Agent akan mendeteksi ulang kamera. Nama model kamera akan muncul di atas.
+                </li>
+              </ol>
+              <div className="pt-1 space-y-1.5">
+                <p className="text-[10px] font-semibold" style={{ color: textTertiary }}>Kamera yang didukung (via gphoto2):</p>
+                <div className="flex flex-wrap gap-1">
+                  {["Canon EOS", "Canon PowerShot", "Nikon D / Z", "Fujifilm X", "Sony Alpha", "Olympus OM-D", "Panasonic Lumix"].map(brand => (
+                    <span key={brand} className="px-2 py-0.5 rounded-full text-[10px]"
+                      style={{ background: "rgba(255,255,255,0.08)", color: textSecondary }}>
+                      {brand}
+                    </span>
+                  ))}
+                </div>
               </div>
-            )}
+              {agentOnline === false && (
+                <div className="rounded-xl px-2.5 py-2 text-[10px]"
+                  style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.3)", color: "#fde047" }}>
+                  ⚠️ Agent belum aktif. Download & jalankan agent dari panel Printer di atas, lalu klik Coba Lagi.
+                </div>
+              )}
+              {agentOnline === true && dslrCameras.length === 0 && (
+                <div className="rounded-xl px-2.5 py-2 text-[10px]"
+                  style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.3)", color: "#fde047" }}>
+                  ⚠️ Agent aktif tapi kamera belum terdeteksi. Pastikan kabel USB terpasang, kamera menyala, dan mode diset ke PTP.
+                </div>
+              )}
+            </div>
           </div>
+        )}
+
+        {/* ── Ukuran Kertas ────────────────────────────────────────────────── */}
+        <div className="rounded-2xl p-3 space-y-2" style={{ background: surfaceBg, border: `1px solid ${surfaceBorder}` }}>
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-bold uppercase tracking-wide" style={{ color: textSecondary }}>PRINTER</p>
+              <button
+                onClick={handleRefreshPrinter}
+                className="px-2.5 py-1 rounded-xl text-[11px] font-bold transition-opacity active:opacity-60"
+                style={{ background: `${accentColor}22`, color: accentColor, border: `1px solid ${accentColor}55` }}
+              >
+                🔄 Refresh Printer
+              </button>
+            </div>
+
+            <div className="rounded-xl px-2.5 py-2 text-xs" style={{ background: surfaceBg, border: `1.5px solid ${surfaceBorder}`, color: textSecondary }}>
+              {printerName
+                ? `Printer aktif: ${printerName}`
+                : printers.length > 0
+                  ? `Printer terdeteksi: ${printers[0]}`
+                  : "Belum ada printer terdeteksi."}
+            </div>
+          </div>
+
+          <div className="pt-1" />
+          <p className="text-xs font-bold uppercase tracking-wide" style={{ color: textSecondary }}>UKURAN KERTAS</p>
+          <div className="flex flex-wrap gap-1.5">
+            {/* Opsi Otomatis */}
+            <button
+              onClick={() => setPaperSizeOverride(null)}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
+              style={{
+                background: paperSizeOverride === null ? `${accentColor}22` : "transparent",
+                border:     paperSizeOverride === null ? `1.5px solid ${accentColor}` : `1.5px solid ${surfaceBorder}`,
+                color:      paperSizeOverride === null ? accentColor : textTertiary,
+              }}
+            >
+              Otomatis
+            </button>
+            {/* Ukuran manual */}
+            {getAllPaperSizes().map(ps => (
+              <button
+                key={ps.name}
+                onClick={() => setPaperSizeOverride(ps.name)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
+                style={{
+                  background: paperSizeOverride === ps.name ? `${accentColor}22` : "transparent",
+                  border:     paperSizeOverride === ps.name ? `1.5px solid ${accentColor}` : `1.5px solid ${surfaceBorder}`,
+                  color:      paperSizeOverride === ps.name ? accentColor : textTertiary,
+                }}
+              >
+                {ps.name}
+                <span className="ml-1 opacity-60 font-normal">{ps.widthMm}×{ps.heightMm}mm</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px]" style={{ color: textTertiary }}>
+            {paperSizeOverride === null
+              ? "Ukuran kertas terdeteksi otomatis dari frame yang dipilih."
+              : `Semua cetak akan menggunakan ukuran ${paperSizeOverride}.`}
+          </p>
         </div>
 
         {/* ── CTA ──────────────────────────────────────────────────────────── */}
@@ -458,7 +460,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         </button>
 
         <button onClick={handleReset}
-          className="w-full text-center text-white/25 text-xs py-1 hover:text-white/50 transition-colors">
+          className="w-full text-center text-xs py-1 transition-colors" style={{ color: textTertiary }}>
           Reset pengaturan ini
         </button>
       </div>

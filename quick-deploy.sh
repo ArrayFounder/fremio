@@ -16,6 +16,24 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 NEW_SERVER="76.13.192.32"
+SSH_CONTROL_PATH="/tmp/fremio-${NEW_SERVER}.sock"
+SSH_OPTS=(
+    -o ControlMaster=auto
+    -o ControlPersist=20m
+    -o ControlPath="$SSH_CONTROL_PATH"
+)
+
+init_ssh_control() {
+    if ssh "${SSH_OPTS[@]}" -O check "root@${NEW_SERVER}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "   Opening persistent SSH connection (one-time authentication)..."
+    if ! ssh "${SSH_OPTS[@]}" -MNf "root@${NEW_SERVER}" 2>/dev/null; then
+        rm -f "$SSH_CONTROL_PATH"
+        ssh "${SSH_OPTS[@]}" -MNf "root@${NEW_SERVER}"
+    fi
+}
 
 clear
 
@@ -58,7 +76,9 @@ fi
 
 # Check SSH connection
 echo -n "   Testing SSH connection to $NEW_SERVER... "
-if ssh -o ConnectTimeout=5 root@$NEW_SERVER exit 2>/dev/null; then
+if ssh "${SSH_OPTS[@]}" -o ConnectTimeout=5 root@$NEW_SERVER exit 2>/dev/null; then
+    init_ssh_control
+    export FREMIO_SSH_CONTROL_PATH="$SSH_CONTROL_PATH"
     echo -e "${GREEN}✅${NC}"
 else
     echo -e "${RED}❌${NC}"

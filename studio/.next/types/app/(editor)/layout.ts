@@ -1,4 +1,4 @@
-// File: /Users/salwa/Documents/fremio/studio/src/app/(editor)/layout.tsx
+// File: /Users/salwa/Documents/fremio copy/studio/src/app/(editor)/layout.tsx
 import * as entry from '../../../../src/app/(editor)/layout.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

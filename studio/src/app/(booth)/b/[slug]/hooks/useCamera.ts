@@ -69,8 +69,10 @@ export function useCamera({
   const [devices, setDevices]           = useState<VideoDevice[]>([]);
 
   // ── Live recording refs ───────────────────────────────────────────────────
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef   = useRef<Blob[]>([]);
+  const recorderRef     = useRef<MediaRecorder | null>(null);
+  const chunksRef       = useRef<Blob[]>([]);
+  const audioCtxRef     = useRef<AudioContext | null>(null);
+  const reqDataTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /** Enumerate semua video input — dipanggil setelah izin diberikan */
   const refreshDevices = useCallback(async () => {
@@ -168,58 +170,82 @@ export function useCamera({
   const startRecording = useCallback(() => {
     const stream = streamRef.current;
     if (!stream) return;
-    // Stop any previous recorder
+    // Stop any previous recorder + interval
+    if (reqDataTimerRef.current) { clearInterval(reqDataTimerRef.current); reqDataTimerRef.current = null; }
     if (recorderRef.current && recorderRef.current.state !== "inactive") {
       recorderRef.current.stop();
     }
+    // Close any lingering AudioContext
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
     const mimeType = getBestVideoMime();
     chunksRef.current = [];
-    try {
-      const recorder = new MediaRecorder(stream, {
-        mimeType,
-        videoBitsPerSecond: 2_500_000,
-      });
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      recorder.onerror = (e) => { console.warn("[useCamera] recorder error:", e); };
-      recorder.start(100); // collect data every 100ms
-      recorderRef.current = recorder;
-    } catch (err) {
-      console.warn("[useCamera] MediaRecorder niet aangemaakt:", err);
+    // Try multiple constructor options as fallback for cross-browser compatibility
+    const tryCreate = (opts: MediaRecorderOptions) => {
+      try { return new MediaRecorder(stream, opts); } catch { return null; }
+    };
+    const recorder =
+      tryCreate({ mimeType, videoBitsPerSecond: 2_500_000 }) ??
+      tryCreate({ mimeType }) ??
+      tryCreate({});   // last resort: let browser choose mimeType
+    if (!recorder) {
+      console.warn("[useCamera] MediaRecorder tidak dapat dibuat di perangkat ini");
+      return;
     }
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    recorder.onerror = (e) => { console.warn("[useCamera] recorder error:", e); };
+    // Use 1000ms timeslice + periodic requestData for cross-browser compatibility
+    try { recorder.start(1000); } catch { try { recorder.start(); } catch { return; } }
+    // Also poll requestData every 1s as safety net (some browsers don't honor timeslice)
+    reqDataTimerRef.current = setInterval(() => {
+      if (recorderRef.current && recorderRef.current.state === "recording") {
+        try { recorderRef.current.requestData(); } catch { /* ignore */ }
+      }
+    }, 1000);
+    recorderRef.current = recorder;
   }, []);
 
   // ── stopRecording ─────────────────────────────────────────────────────────
   const stopRecording = useCallback((): Promise<Blob | null> => {
     return new Promise((resolve) => {
+      // Stop periodic requestData timer
+      if (reqDataTimerRef.current) { clearInterval(reqDataTimerRef.current); reqDataTimerRef.current = null; }
       const recorder = recorderRef.current;
       if (!recorder) {
         resolve(null);
         return;
       }
-      // Recorder already stopped (e.g. stream tracks were closed on component unmount)
-      // but chunksRef may still have all data — build blob from available chunks
-      if (recorder.state === "inactive") {
-        const chunks = chunksRef.current;
-        const blob = chunks.length > 0
-          ? new Blob(chunks, { type: recorder.mimeType || "video/webm" })
-          : null;
-        chunksRef.current   = [];
+      let settled = false;
+      const cleanup = () => {
+        audioCtxRef.current?.close().catch(() => {});
+        audioCtxRef.current = null;
         recorderRef.current = null;
-        resolve(blob);
-        return;
-      }
-      recorder.onstop = () => {
+      };
+      const finish = (r: MediaRecorder) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(failsafe);
         const chunks = chunksRef.current;
         const blob = chunks.length > 0
-          ? new Blob(chunks, { type: recorder.mimeType || "video/webm" })
+          ? new Blob(chunks, { type: r.mimeType || "video/mp4" })
           : null;
         chunksRef.current = [];
-        recorderRef.current = null;
+        cleanup();
         resolve(blob);
       };
-      recorder.stop();
+      // Failsafe: always resolve within 6 seconds even if onstop never fires
+      const failsafe = setTimeout(() => finish(recorder), 6000);
+      // Recorder already stopped — build blob from buffered chunks
+      if (recorder.state === "inactive") {
+        finish(recorder);
+        return;
+      }
+      // Request any buffered data, then stop
+      try { recorder.requestData(); } catch { /* ignore */ }
+      recorder.onstop = () => finish(recorder);
+      try { recorder.stop(); } catch { finish(recorder); }
     });
   }, []);
 

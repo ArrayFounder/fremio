@@ -25,6 +25,7 @@ const METHODS: { id: PaymentMethod; emoji: string; label: string; desc: string }
   { id: "TICKET",   emoji: "🎫", label: "Scan Ticket",  desc: "Scan tiket yang sudah kamu beli sebelumnya" },
   { id: "CASHLESS", emoji: "💳", label: "Cashless",     desc: "Bayar dengan QRIS, GoPay, OVO, atau e-wallet lainnya" },
   { id: "VOUCHER",  emoji: "🏷️", label: "Use Voucher",  desc: "Masukkan kode voucher diskon atau voucher gratis" },
+  { id: "CASH",     emoji: "💵", label: "Bayar Tunai",  desc: "Bayar langsung ke kasir dengan uang kertas" },
 ];
 
 const COLORFUL_PAYMENT_BG = ["#bae6fd", "#fda4af", "#e9d5ff"];
@@ -43,13 +44,14 @@ function isLightColor(hex: string): boolean {
 function CardsCard({ methods, cardBorder, onSelect, isPortrait }: {
   methods: typeof METHODS; cardBorder: string; onSelect: (id: PaymentMethod) => void; isPortrait: boolean;
 }) {
-  const cols = isPortrait ? "1fr" : "repeat(3, 1fr)";
   const emojiSize = isPortrait ? "15vmin" : "9vw";
   const labelSize = isPortrait ? "4.5vmin" : "1.8vw";
   const iconSize  = isPortrait ? "6vmin"  : "3vw";
   const padding   = isPortrait ? "5vmin 4vmin" : "5vw 2vw";
+  const n = methods.length;
+  const cols = Math.min(n, 3);
   return (
-    <div style={{ display: "grid", gridTemplateColumns: cols, gap: "2vmin", width: "100%" }}>
+    <div style={{ display: "grid", gridTemplateColumns: isPortrait ? "1fr" : `repeat(${cols}, 1fr)`, gap: "2vmin", width: "100%" }}>
       {methods.map((m) => (
         <button key={m.id} onClick={() => onSelect(m.id)}
           className="active:scale-95 transition-transform"
@@ -110,7 +112,7 @@ function CardsColorful({ methods, onSelect, isPortrait }: {
   methods: typeof METHODS; onSelect: (id: PaymentMethod) => void; isPortrait: boolean;
 }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: isPortrait ? "1fr" : "repeat(3, 1fr)", gap: "3vmin", width: "100%" }}>
+    <div style={{ display: "grid", gridTemplateColumns: isPortrait ? "1fr" : `repeat(${Math.min(methods.length, 3)}, 1fr)`, gap: "3vmin", width: "100%" }}>
       {methods.map((m, i) => (
         <button key={m.id} onClick={() => onSelect(m.id)}
           className="active:scale-95 transition-transform"
@@ -131,14 +133,14 @@ function CardsColumns({ methods, textPrimary, cardBorder, onSelect, isPortrait }
   methods: typeof METHODS; textPrimary: string; cardBorder: string; onSelect: (id: PaymentMethod) => void; isPortrait: boolean;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: isPortrait ? "column" : "row", width: "100%", gap: isPortrait ? "2vmin" : 0 }}>
+    <div style={{ display: isPortrait ? "flex" : "grid", flexDirection: "column", gridTemplateColumns: isPortrait ? undefined : `repeat(${Math.min(methods.length, 3)}, 1fr)`, width: "100%", gap: isPortrait ? "2vmin" : 0 }}>
       {methods.map((m, i) => (
         <button key={m.id} onClick={() => onSelect(m.id)}
           className="active:scale-95 transition-transform"
-          style={{ flex: 1, padding: isPortrait ? "4vmin 6vmin" : "3vw 1vw",
+          style={{ padding: isPortrait ? "4vmin 6vmin" : "3vw 1vw",
                    display: "flex", flexDirection: isPortrait ? "row" : "column",
                    alignItems: "center", gap: isPortrait ? "4vmin" : "2vw", textAlign: "center",
-                   borderRight: !isPortrait && i < methods.length - 1 ? `1px solid ${cardBorder}` : "none",
+                   borderRight: !isPortrait && (i + 1) % Math.min(methods.length, 3) !== 0 && i < methods.length - 1 ? `1px solid ${cardBorder}` : "none",
                    borderBottom: isPortrait && i < methods.length - 1 ? `1px solid ${cardBorder}` : "none" }}>
           <span style={{ fontSize: isPortrait ? "12vmin" : "7vw" }}>{m.emoji}</span>
           <p style={{ fontWeight: 900, fontSize: isPortrait ? "4.5vmin" : "1.5vw", color: textPrimary,
@@ -154,7 +156,7 @@ function CardsBold({ methods, onSelect, isPortrait }: {
   methods: typeof METHODS; onSelect: (id: PaymentMethod) => void; isPortrait: boolean;
 }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: isPortrait ? "1fr" : "repeat(3, 1fr)", gap: 0, width: "100%" }}>
+    <div style={{ display: "grid", gridTemplateColumns: isPortrait ? "1fr" : `repeat(${Math.min(methods.length, 3)}, 1fr)`, gap: 0, width: "100%" }}>
       {methods.map((m, i) => (
         <button key={m.id} onClick={() => onSelect(m.id)}
           className="active:scale-95 transition-transform"
@@ -179,12 +181,19 @@ export function PaymentMethodScreen({ booth, onSelect, prefsOverride }: PaymentM
   const { accentColor } = booth;
   const isPortrait = useIsPortrait();
 
+  // Baca enabledPaymentMethods langsung dari welcomeScreenPrefs (tidak melalui getEffectivePrefs karena field ini tidak ada di WelcomeScreenPrefs)
+  const rawPrefs = (prefsOverride ?? booth.welcomeScreenPrefs) as Record<string, unknown> | null;
+  const enabledMethods = rawPrefs?.enabledPaymentMethods as ("TICKET" | "CASHLESS" | "VOUCHER" | "CASH")[] | undefined;
+  const visibleMethods = METHODS.filter((m) =>
+    enabledMethods ? enabledMethods.includes(m.id) : true
+  );
+
   const bgColor       = prefs.paymentBgColor ?? booth.primaryColor;
   const light         = isLightColor(bgColor);
   const textPrimary   = light ? "rgba(0,0,0,0.85)"  : "rgba(255,255,255,0.95)";
   const textSecondary = light ? "rgba(0,0,0,0.45)"  : "rgba(255,255,255,0.55)";
   const cardBorder    = light ? "rgba(0,0,0,0.10)"  : "rgba(255,255,255,0.14)";
-  const style         = prefs.paymentStyle ?? "card";
+  const style         = prefs.paymentStyle ?? "bold";
 
   return (
     <div className="flex flex-col h-full px-8 py-10 select-none" style={{ backgroundColor: bgColor }}>
@@ -201,15 +210,15 @@ export function PaymentMethodScreen({ booth, onSelect, prefsOverride }: PaymentM
       {/* Method cards */}
       <div className="flex-1 flex items-center">
         {style === "minimal" ? (
-          <CardsMinimal methods={METHODS} accentColor={accentColor} onSelect={onSelect} isPortrait={isPortrait} />
+          <CardsMinimal methods={visibleMethods} accentColor={accentColor} onSelect={onSelect} isPortrait={isPortrait} />
         ) : style === "colorful" ? (
-          <CardsColorful methods={METHODS} onSelect={onSelect} isPortrait={isPortrait} />
+          <CardsColorful methods={visibleMethods} onSelect={onSelect} isPortrait={isPortrait} />
         ) : style === "columns" ? (
-          <CardsColumns methods={METHODS} textPrimary={textPrimary} cardBorder={cardBorder} onSelect={onSelect} isPortrait={isPortrait} />
+          <CardsColumns methods={visibleMethods} textPrimary={textPrimary} cardBorder={cardBorder} onSelect={onSelect} isPortrait={isPortrait} />
         ) : style === "bold" ? (
-          <CardsBold methods={METHODS} onSelect={onSelect} isPortrait={isPortrait} />
+          <CardsBold methods={visibleMethods} onSelect={onSelect} isPortrait={isPortrait} />
         ) : (
-          <CardsCard methods={METHODS} cardBorder={cardBorder} onSelect={onSelect} isPortrait={isPortrait} />
+          <CardsCard methods={visibleMethods} cardBorder={cardBorder} onSelect={onSelect} isPortrait={isPortrait} />
         )}
       </div>
     </div>

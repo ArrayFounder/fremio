@@ -16,19 +16,20 @@ const VERSION = require('../package.json').version;
 
 const app = express();
 
-// ─── CORS — allow only localhost origins ──────────────────────────────────────
+// ─── CORS — allow localhost and Fremio booth origins ─────────────────────────
 
 const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const FREMIO_RE = /^https?:\/\/([a-z0-9-]+\.)*fremio\.id$/;
 
 app.use(
   cors({
     origin(origin, callback) {
       // Allow requests with no origin (server-to-server, curl, Postman dev)
-      if (!origin || LOCALHOST_RE.test(origin)) {
+      if (!origin || LOCALHOST_RE.test(origin) || FREMIO_RE.test(origin)) {
         callback(null, true);
       } else {
         logger.warn(`CORS rejected origin: ${origin}`);
-        callback(new Error(`CORS: hanya localhost yang diizinkan. Origin ditolak: ${origin}`));
+        callback(new Error(`CORS: origin ditolak: ${origin}`));
       }
     },
     methods: ['GET', 'POST', 'OPTIONS'],

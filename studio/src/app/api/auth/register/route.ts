@@ -34,9 +34,17 @@ export async function POST(req: Request) {
     );
   }
 
-  const hashed   = await bcrypt.hash(password, 12);
+  const hashed = await bcrypt.hash(password, 12);
+  const trialExpiry = new Date();
+  trialExpiry.setDate(trialExpiry.getDate() + 30); // 30 hari trial gratis
   const operator = await prisma.operator.create({
-    data: { email, password: hashed, businessName },
+    data: {
+      email,
+      password: hashed,
+      businessName,
+      isActive:           true,
+      subscriptionExpiry: trialExpiry,
+    },
     select: { id: true, email: true, businessName: true },
   });
 

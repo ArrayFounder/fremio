@@ -1,3 +1,6 @@
+@import "../components/creator/ColorPicker.css";
+@import "../components/creator/PropertiesPanel.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

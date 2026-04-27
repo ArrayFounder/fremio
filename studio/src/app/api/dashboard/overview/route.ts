@@ -17,6 +17,8 @@ export async function GET(): Promise<Response> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
+  type BoothBreakdownRow = { id: string; boothName: string; revenue: bigint; sessions: bigint };
+
   const [
     sessionsToday,
     sessionsTotal,
@@ -25,6 +27,7 @@ export async function GET(): Promise<Response> {
     activeBooths,
     recentSessions,
     popularFrames,
+    boothBreakdownRaw,
   ] = await Promise.all([
     // Sesi hari ini
     prisma.boothSession.count({
@@ -74,6 +77,20 @@ export async function GET(): Promise<Response> {
       orderBy: { _count: { frameId: "desc" } },
       take:    5,
     }),
+    // Revenue + sesi per booth (per-cabang breakdown)
+    prisma.$queryRaw<BoothBreakdownRow[]>`
+      SELECT
+        bc.id,
+        bc."boothName",
+        COALESCE(SUM(CASE WHEN t.status = 'SUCCESS' THEN t.amount ELSE 0 END), 0) AS revenue,
+        COUNT(DISTINCT CASE WHEN bs.status = 'COMPLETED' THEN bs.id ELSE NULL END) AS sessions
+      FROM booth_configs bc
+      LEFT JOIN booth_sessions bs ON bs."boothConfigId" = bc.id
+      LEFT JOIN transactions t ON bs."transactionId" = t.id
+      WHERE bc."operatorId" = ${operatorId}
+      GROUP BY bc.id, bc."boothName"
+      ORDER BY revenue DESC
+    `,
   ]);
 
   // Resolve frame names untuk popularFrames
@@ -104,6 +121,12 @@ export async function GET(): Promise<Response> {
         count:       f._count.frameId,
         name:        frameMap[f.frameId!]?.name ?? "Unknown",
         thumbnailUrl: frameMap[f.frameId!]?.thumbnailUrl ?? "",
+      })),
+      boothBreakdown: boothBreakdownRaw.map((b) => ({
+        id:        b.id,
+        boothName: b.boothName,
+        revenue:   Number(b.revenue),
+        sessions:  Number(b.sessions),
       })),
     },
   });
