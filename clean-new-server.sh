@@ -16,6 +16,24 @@ BLUE='\033[0;36m'
 NC='\033[0m'
 
 NEW_SERVER="76.13.192.32"
+SSH_CONTROL_PATH="${FREMIO_SSH_CONTROL_PATH:-/tmp/fremio-${NEW_SERVER}.sock}"
+SSH_OPTS=(
+    -o ControlMaster=auto
+    -o ControlPersist=20m
+    -o ControlPath="$SSH_CONTROL_PATH"
+)
+
+init_ssh_control() {
+    if ssh "${SSH_OPTS[@]}" -O check "root@${NEW_SERVER}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "Membuka koneksi SSH persisten (autentikasi sekali saja)..."
+    if ! ssh "${SSH_OPTS[@]}" -MNf "root@${NEW_SERVER}" 2>/dev/null; then
+        rm -f "$SSH_CONTROL_PATH"
+        ssh "${SSH_OPTS[@]}" -MNf "root@${NEW_SERVER}"
+    fi
+}
 
 echo -e "${RED}"
 echo "╔══════════════════════════════════════════════════════════╗"
@@ -51,11 +69,13 @@ echo ""
 echo -e "${BLUE}🧹 Memulai pembersihan server $NEW_SERVER...${NC}"
 echo ""
 
+init_ssh_control
+
 # ================================================
 # CLEANUP SCRIPT TO RUN ON SERVER
 # ================================================
 
-ssh root@$NEW_SERVER << 'ENDSSH'
+ssh "${SSH_OPTS[@]}" root@$NEW_SERVER << 'ENDSSH'
 #!/bin/bash
 
 RED='\033[0;31m'

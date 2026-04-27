@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getStudioManagedFramesConfig } from "@/lib/studioManagedFrames";
+import { normalizeImportedSlots } from "@/lib/fremioSlots";
 import { z } from "zod";
 import type { ApiResponse } from "@/types";
 
@@ -41,7 +43,7 @@ const ImportSchema = z.object({
 });
 
 // POST /api/dashboard/frames/import
-// Bulk-import frames yang dipilih dari fremio.id ke studio DB
+// Bulk-import frame katalog studio-booth dari fremio.id ke studio DB
 export async function POST(req: Request): Promise<Response> {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json<ApiResponse>({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -57,25 +59,45 @@ export async function POST(req: Request): Promise<Response> {
 
   const { frames, boothId } = parsed.data;
 
+  const managedConfig = await getStudioManagedFramesConfig();
+  const allowedIdsSet = new Set(managedConfig.allowedFrameIds);
+  const whitelistActive =
+    managedConfig.enforceWhitelist || managedConfig.allowedFrameIds.length > 0;
+  const framesToImport = whitelistActive
+    ? frames.filter((f) => allowedIdsSet.has(f.fremioId))
+    : frames;
+
+  if (framesToImport.length === 0) {
+    return NextResponse.json<ApiResponse>(
+      {
+        success: false,
+        error: whitelistActive
+          ? "Tidak ada frame yang diizinkan admin untuk studio"
+          : "Tidak ada frame untuk diimport",
+      },
+      { status: 400 }
+    );
+  }
+
   const results = await Promise.allSettled(
-    frames.map((f) =>
-      prisma.frame.upsert({
-        where: { id: `fremio_${f.fremioId}` },
+    framesToImport.map((f) => {
+      const normalizedSlots = normalizeImportedSlots(f.slots, f.maxCaptures);
+      return prisma.frame.upsert({
+        where: { id: `fremio_sb_${f.fremioId}` },
         update: {
           // Selalu update semua field (biar maxCaptures dan slots ikut update)
           name:         f.name,
           thumbnailUrl: f.thumbnailUrl,
           assetUrl:     f.assetUrl,
           overlayUrl:   f.overlayUrl ?? null,
-          captureMode:  f.captureMode ?? "single",
           canvasWidth:  f.canvasWidth,
           canvasHeight: f.canvasHeight,
           maxCaptures:  f.maxCaptures,
-          slots:        f.slots ?? undefined,
+          slots:        normalizedSlots,
           isActive:     true,
         },
         create: {
-          id:           `fremio_${f.fremioId}`,
+          id:           `fremio_sb_${f.fremioId}`,
           name:         f.name,
           category:     f.category as never,
           thumbnailUrl: f.thumbnailUrl,
@@ -89,10 +111,10 @@ export async function POST(req: Request): Promise<Response> {
           isActive:     true,
           designerId:   null,
           maxCaptures:  f.maxCaptures,
-          slots:        f.slots ?? undefined,
+          slots:        normalizedSlots,
         },
       })
-    )
+    })
   );
 
   const imported = results.filter((r) => r.status === "fulfilled").length;
@@ -101,7 +123,7 @@ export async function POST(req: Request): Promise<Response> {
   // Jika ada boothId + booth punya allowedFrameIds spesifik, tambahkan frame yang baru diimport
   if (boothId && imported > 0) {
     const successIds = results
-      .map((r, i) => (r.status === "fulfilled" ? `fremio_${frames[i].fremioId}` : null))
+      .map((r, i) => (r.status === "fulfilled" ? `fremio_sb_${framesToImport[i].fremioId}` : null))
       .filter(Boolean) as string[];
     const booth = await prisma.boothConfig.findFirst({
       where: { id: boothId, operatorId: session.user.id },
@@ -120,6 +142,6 @@ export async function POST(req: Request): Promise<Response> {
 
   return NextResponse.json<ApiResponse>({
     success: true,
-    data: { imported, failed, total: frames.length },
+    data: { imported, failed, total: framesToImport.length },
   });
 }

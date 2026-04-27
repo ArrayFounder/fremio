@@ -2,11 +2,33 @@ import { useParams } from "react-router-dom";
 import cert0001 from "../assets/certificate/FR-DSG-2026-0001.png";
 import cert0002 from "../assets/certificate/FR-DSG-2026-0002.png";
 import cert0003 from "../assets/certificate/FR-DSG-2026-0003.png";
+import cert0005 from "../assets/certificate/FR-DSG-2026-0005.png";
+import cert0006 from "../assets/certificate/FR-DSG-2026-0006.png";
+import cert0007 from "../assets/certificate/FR-DSG-2026-0007.png";
+import cert0008 from "../assets/certificate/FR-DSG-2026-0008.png";
+import cert0009 from "../assets/certificate/FR-DSG-2026-0009.png";
+import cert00010 from "../assets/certificate/FR-DSG-2026-00010.png";
+import cert00011 from "../assets/certificate/FR-DSG-2026-00011.png";
+import cert00012 from "../assets/certificate/FR-DSG-2026-00012.png";
+import cert00013 from "../assets/certificate/FR-DSG-2026-00013.png";
+import cert00014 from "../assets/certificate/FR-DSG-2026-00014.png";
+import cert00015 from "../assets/certificate/FR-DSG-2026-00015.png";
 
 const CERTIFICATES = {
   "FR-DSG-2026-0001": cert0001,
   "FR-DSG-2026-0002": cert0002,
   "FR-DSG-2026-0003": cert0003,
+  "FR-DSG-2026-0005": cert0005,
+  "FR-DSG-2026-0006": cert0006,
+  "FR-DSG-2026-0007": cert0007,
+  "FR-DSG-2026-0008": cert0008,
+  "FR-DSG-2026-0009": cert0009,
+  "FR-DSG-2026-00010": cert00010,
+  "FR-DSG-2026-00011": cert00011,
+  "FR-DSG-2026-00012": cert00012,
+  "FR-DSG-2026-00013": cert00013,
+  "FR-DSG-2026-00014": cert00014,
+  "FR-DSG-2026-00015": cert00015,
 };
 
 export default function VerifyCertificate() {

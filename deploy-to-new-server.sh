@@ -19,6 +19,31 @@ VPS_USER="root"
 APP_DIR="/var/www/fremio"
 BACKEND_DIR="$APP_DIR/backend"
 FRONTEND_DIR="$APP_DIR/frontend"
+SSH_CONTROL_PATH="${FREMIO_SSH_CONTROL_PATH:-/tmp/fremio-${NEW_SERVER}.sock}"
+SSH_OPTS=(
+    -o ControlMaster=auto
+    -o ControlPersist=20m
+    -o ControlPath="$SSH_CONTROL_PATH"
+)
+
+init_ssh_control() {
+    if ssh "${SSH_OPTS[@]}" -O check "${VPS_USER}@${NEW_SERVER}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "   Opening persistent SSH connection (one-time authentication)..."
+    if ! ssh "${SSH_OPTS[@]}" -MNf "${VPS_USER}@${NEW_SERVER}" 2>/dev/null; then
+        rm -f "$SSH_CONTROL_PATH"
+        ssh "${SSH_OPTS[@]}" -MNf "${VPS_USER}@${NEW_SERVER}"
+    fi
+}
+
+close_ssh_control() {
+    ssh "${SSH_OPTS[@]}" -O exit "${VPS_USER}@${NEW_SERVER}" >/dev/null 2>&1 || true
+    rm -f "$SSH_CONTROL_PATH" >/dev/null 2>&1 || true
+}
+
+trap close_ssh_control EXIT
 
 echo -e "${BLUE}"
 echo "╔══════════════════════════════════════════════════════════╗"
@@ -45,10 +70,11 @@ fi
 
 # Check SSH connection
 echo "   Testing SSH connection to $NEW_SERVER..."
-if ! ssh -o ConnectTimeout=5 $VPS_USER@$NEW_SERVER exit 2>/dev/null; then
+if ! ssh "${SSH_OPTS[@]}" -o ConnectTimeout=5 $VPS_USER@$NEW_SERVER exit 2>/dev/null; then
     echo -e "${RED}❌ Cannot connect to $NEW_SERVER. Check SSH access!${NC}"
     exit 1
 fi
+init_ssh_control
 echo -e "${GREEN}   ✅ SSH connection OK${NC}"
 
 # Check if backend .env exists
@@ -118,7 +144,7 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 echo -e "${YELLOW}4️⃣  Setting up VPS infrastructure...${NC}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-ssh $VPS_USER@$NEW_SERVER << 'ENDSSH'
+ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << 'ENDSSH'
 #!/bin/bash
 
 RED='\033[0;31m'
@@ -182,7 +208,7 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 # Generate random password
 DB_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
 
-ssh $VPS_USER@$NEW_SERVER << ENDSSH
+ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << ENDSSH
 #!/bin/bash
 
 # Start PostgreSQL
@@ -231,9 +257,9 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 # Check if database files exist
 if [ -f "database/schema.sql" ]; then
     echo "   Uploading schema.sql..."
-    scp database/schema.sql $VPS_USER@$NEW_SERVER:/tmp/schema.sql
+    scp "${SSH_OPTS[@]}" database/schema.sql $VPS_USER@$NEW_SERVER:/tmp/schema.sql
     
-    ssh $VPS_USER@$NEW_SERVER << ENDSSH
+    ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << ENDSSH
     sudo -u postgres psql -d fremio -f /tmp/schema.sql
     rm /tmp/schema.sql
 ENDSSH
@@ -243,9 +269,9 @@ fi
 # Import seed data if exists
 if [ -f "database/seed.sql" ]; then
     echo "   Uploading seed data..."
-    scp database/seed.sql $VPS_USER@$NEW_SERVER:/tmp/seed.sql
+    scp "${SSH_OPTS[@]}" database/seed.sql $VPS_USER@$NEW_SERVER:/tmp/seed.sql
     
-    ssh $VPS_USER@$NEW_SERVER << ENDSSH
+    ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << ENDSSH
     sudo -u postgres psql -d fremio -f /tmp/seed.sql
     rm /tmp/seed.sql
 ENDSSH
@@ -274,7 +300,7 @@ rsync -avz --progress \
     backend/ $VPS_USER@$NEW_SERVER:$BACKEND_DIR/
 
 # Upload production .env
-scp backend/.env.production $VPS_USER@$NEW_SERVER:$BACKEND_DIR/.env
+scp "${SSH_OPTS[@]}" backend/.env.production $VPS_USER@$NEW_SERVER:$BACKEND_DIR/.env
 
 # Clean up
 rm backend/.env.production
@@ -303,7 +329,7 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 echo -e "${YELLOW}9️⃣  Installing backend dependencies on VPS...${NC}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-ssh $VPS_USER@$NEW_SERVER << ENDSSH
+ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << ENDSSH
 cd $BACKEND_DIR
 npm install --production
 echo -e "${GREEN}   ✅ Dependencies installed${NC}"
@@ -341,10 +367,10 @@ module.exports = {
 };
 EOF
 
-scp /tmp/ecosystem.config.js $VPS_USER@$NEW_SERVER:$APP_DIR/
+scp "${SSH_OPTS[@]}" /tmp/ecosystem.config.js $VPS_USER@$NEW_SERVER:$APP_DIR/
 rm /tmp/ecosystem.config.js
 
-ssh $VPS_USER@$NEW_SERVER << ENDSSH
+ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << ENDSSH
 cd $APP_DIR
 pm2 start ecosystem.config.js
 pm2 save
@@ -420,10 +446,10 @@ server {
 }
 EOF
 
-scp /tmp/fremio.conf $VPS_USER@$NEW_SERVER:/tmp/
+scp "${SSH_OPTS[@]}" /tmp/fremio.conf $VPS_USER@$NEW_SERVER:/tmp/
 rm /tmp/fremio.conf
 
-ssh $VPS_USER@$NEW_SERVER << ENDSSH
+ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << ENDSSH
 # Install Nginx config
 mv /tmp/fremio.conf /etc/nginx/sites-available/fremio
 ln -sf /etc/nginx/sites-available/fremio /etc/nginx/sites-enabled/fremio
@@ -448,7 +474,7 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 echo -e "${YELLOW}1️⃣2️⃣  Setting permissions...${NC}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-ssh $VPS_USER@$NEW_SERVER << ENDSSH
+ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << ENDSSH
 chown -R www-data:www-data $APP_DIR
 chmod -R 755 $APP_DIR
 chmod 775 $APP_DIR/uploads
@@ -464,7 +490,7 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 echo -e "${YELLOW}1️⃣3️⃣  Configuring firewall...${NC}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-ssh $VPS_USER@$NEW_SERVER << 'ENDSSH'
+ssh "${SSH_OPTS[@]}" $VPS_USER@$NEW_SERVER << 'ENDSSH'
 if command -v ufw &> /dev/null; then
     ufw --force enable
     ufw allow 22/tcp    # SSH

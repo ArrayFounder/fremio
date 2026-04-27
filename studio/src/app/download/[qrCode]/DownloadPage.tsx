@@ -7,6 +7,11 @@ interface Props {
   data: DownloadData;
 }
 
+interface UpgradeResponse {
+  qrCode: string;
+  expiresAt: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Watermark helpers (canvas)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,10 +55,16 @@ function useCountdown(expiresAt: string) {
   );
 
   useEffect(() => {
+    setSecondsLeft(
+      Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+    );
+  }, [expiresAt]);
+
+  useEffect(() => {
     if (secondsLeft <= 0) return;
     const id = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
     return () => clearInterval(id);
-  }, []);             // eslint-disable-line react-hooks/exhaustive-deps
+  }, [secondsLeft]);
 
   const h = Math.floor(secondsLeft / 3600);
   const m = Math.floor((secondsLeft % 3600) / 60);
@@ -69,30 +80,46 @@ function useCountdown(expiresAt: string) {
 
 export default function DownloadPage({ data }: Props) {
   const {
-    photoUrl, videoUrl, operatorName, boothName, logoUrl,
-    primaryColor, accentColor, expiresAt, completedAt,
+    qrCode,
+    photoUrl,
+    videoUrl,
+    gifUrl,
+    rawPhotoUrls,
+    operatorName,
+    boothName,
+    logoUrl,
+    primaryColor,
+    accentColor,
+    expiresAt,
+    completedAt,
+    isTrial,
+    canUpgrade,
+    socialCtaText,
+    instagramUrl,
+    tiktokUrl,
   } = data;
 
-  const { label: countdownLabel, expired: hasExpiredLive } = useCountdown(expiresAt);
-  const isExpired = data.isExpired || hasExpiredLive;
+  const [effectiveExpiresAt, setEffectiveExpiresAt] = useState(expiresAt);
+  const [upgradeStatus, setUpgradeStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+
+  const { label: countdownLabel, expired: hasExpiredLive } = useCountdown(effectiveExpiresAt);
+  const isExpired = hasExpiredLive;
 
   const downloadLinkRef  = useRef<HTMLAnchorElement>(null);
   const videoLinkRef     = useRef<HTMLAnchorElement>(null);
+  const gifLinkRef       = useRef<HTMLAnchorElement>(null);
+  const rawLinkRef       = useRef<HTMLAnchorElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isDownloadingVideo, setIsDownloadingVideo] = useState(false);
+  const [isDownloadingGif, setIsDownloadingGif] = useState(false);
+  const [downloadingRawIndex, setDownloadingRawIndex] = useState<number | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [shareError, setShareError]       = useState<string | null>(null);
 
-  // Format tanggal WITA/WIB dari completedAt
-  const fmtDate = new Intl.DateTimeFormat("id-ID", {
-    day:    "2-digit",
-    month:  "long",
-    year:   "numeric",
-    hour:   "2-digit",
-    minute: "2-digit",
-    timeZoneName: "short",
-  });
-  const sessionDate = fmtDate.format(new Date(completedAt));
+  useEffect(() => {
+    setEffectiveExpiresAt(expiresAt);
+  }, [expiresAt]);
+
 
   // ─── Download ──────────────────────────────────────────────────────────────
   const handleDownload = useCallback(async () => {
@@ -112,35 +139,6 @@ export default function DownloadPage({ data }: Props) {
       setIsDownloading(false);
     }
   }, [photoUrl, boothName]);
-
-  // ─── Web Share API (untuk IG Stories & WhatsApp via share sheet) ─────────
-  const handleNativeShare = useCallback(async () => {
-    setShareError(null);
-    try {
-      const blob = await buildWatermarkedBlob(photoUrl);
-      const file = new File([blob], "foto-fremio.jpg", { type: "image/jpeg" });
-
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: `Foto dari ${boothName}`,
-          text:  `Foto saya dari ${boothName} oleh ${operatorName} • via fremio.id`,
-        });
-      } else {
-        // Fallback: share URL saja
-        await navigator.share({
-          title: `Foto dari ${boothName}`,
-          text:  `Foto saya dari ${boothName} oleh ${operatorName}`,
-          url:   window.location.href,
-        });
-      }
-    } catch (err) {
-      // AbortError = user batalkan — bukan error
-      if (err instanceof Error && err.name !== "AbortError") {
-        setShareError("Gagal membuka share. Coba simpan foto dulu lalu upload manual.");
-      }
-    }
-  }, [photoUrl, boothName, operatorName]);
 
   // ─── Download video ───────────────────────────────────────────────────────
   const handleDownloadVideo = useCallback(async () => {
@@ -163,10 +161,70 @@ export default function DownloadPage({ data }: Props) {
     }
   }, [videoUrl, boothName]);
 
-  // ─── WhatsApp link ────────────────────────────────────────────────────────
-  const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(
-    `Foto saya dari ${boothName} oleh ${operatorName} 📸\n${window?.location?.href ?? ""}`
-  )}`;
+  // ─── Download GIF ─────────────────────────────────────────────────────────
+  const handleDownloadGif = useCallback(async () => {
+    if (!gifUrl) return;
+    setIsDownloadingGif(true);
+    try {
+      const res  = await fetch(gifUrl);
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = gifLinkRef.current!;
+      a.href     = url;
+      a.download = `slideshow-${boothName.replace(/\s+/g, "-").toLowerCase()}.gif`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch {
+      setDownloadError("Gagal mengunduh GIF");
+    } finally {
+      setIsDownloadingGif(false);
+    }
+  }, [gifUrl, boothName]);
+
+  // ─── Download foto mentah (tanpa frame) ────────────────────────────────────
+  const handleDownloadRaw = useCallback(async (url: string, index: number) => {
+    setDownloadingRawIndex(index);
+    setDownloadError(null);
+    try {
+      const blob    = await buildWatermarkedBlob(url);
+      const objUrl  = URL.createObjectURL(blob);
+      const a       = rawLinkRef.current!;
+      a.href        = objUrl;
+      a.download    = `foto-${index + 1}-${boothName.replace(/\s+/g, "-").toLowerCase()}.jpg`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 10_000);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Gagal mengunduh foto");
+    } finally {
+      setDownloadingRawIndex(null);
+    }
+  }, [boothName]);
+
+  const handleUpgradeAccess = useCallback(async () => {
+    setUpgradeStatus("loading");
+    setShareError(null);
+
+    try {
+      const res = await fetch(`/api/download/${qrCode}/upgrade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const body = await res.json() as
+        | { success: true; data: UpgradeResponse }
+        | { success: false; error?: string };
+
+      if (!res.ok || !body.success) {
+        throw new Error("Gagal mengaktifkan akses 24 jam");
+      }
+
+      setEffectiveExpiresAt(body.data.expiresAt);
+      setUpgradeStatus("success");
+    } catch (err) {
+      setUpgradeStatus("error");
+      setShareError(err instanceof Error ? err.message : "Gagal upgrade trial");
+    }
+  }, [qrCode]);
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -176,6 +234,10 @@ export default function DownloadPage({ data }: Props) {
       <a ref={downloadLinkRef} className="hidden" aria-hidden />
       {/* eslint-disable-next-line jsx-a11y/anchor-has-content */}
       <a ref={videoLinkRef} className="hidden" aria-hidden />
+      {/* eslint-disable-next-line jsx-a11y/anchor-has-content */}
+      <a ref={gifLinkRef} className="hidden" aria-hidden />
+      {/* eslint-disable-next-line jsx-a11y/anchor-has-content */}
+      <a ref={rawLinkRef} className="hidden" aria-hidden />
 
       {/* ── Header operator ── */}
       <header
@@ -207,13 +269,51 @@ export default function DownloadPage({ data }: Props) {
           <div className="text-5xl mb-5">⏳</div>
           <h2 className="text-xl font-bold text-gray-800 mb-2">Link Sudah Kedaluwarsa</h2>
           <p className="text-gray-500 text-sm max-w-xs">
-            Link download aktif selama 24 jam. Hubungi operator booth untuk mendapatkan foto ulang.
+            {isTrial
+              ? "Mode trial: link aktif 5 menit. Upgrade subscription untuk memperpanjang jadi 24 jam."
+              : "Link download aktif selama 24 jam. Hubungi operator booth untuk mendapatkan foto ulang."}
           </p>
+
+          {isTrial && canUpgrade && (
+            <button
+              onClick={handleUpgradeAccess}
+              disabled={upgradeStatus === "loading"}
+              className="mt-6 px-5 py-3 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-60"
+            >
+              {upgradeStatus === "loading"
+                ? "Memproses Upgrade..."
+                : "Upgrade Subscription • Aktifkan 24 Jam"}
+            </button>
+          )}
+
+          {upgradeStatus === "success" && (
+            <p className="mt-3 text-xs text-green-600 font-medium">
+              Upgrade berhasil. Link sekarang aktif 24 jam.
+            </p>
+          )}
         </div>
       ) : (
         <>
-          {/* ── Foto + watermark display ── */}
+          {/* ── Countdown (di paling atas) ── */}
+          <div className="mt-5 flex flex-col items-center gap-1">
+            <p className="text-gray-400 text-xs uppercase tracking-wider">Link aktif selama</p>
+            <p
+              className="text-2xl font-black tabular-nums"
+              style={{ color: accentColor !== "#d4a017" ? accentColor : "#0a1a4a" }}
+            >
+              {countdownLabel}
+            </p>
+            <p className="text-[11px] font-semibold text-amber-600 text-center px-4">
+              (Link trial aktif selama 5 menit, upgrade subscription untuk tingkatkan hingga 24 jam)
+            </p>
+          </div>
+
+          {/* ── Framed Photos ── */}
           <div className="w-full max-w-sm mx-auto mt-6 px-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-base">📸</span>
+              <p className="text-sm font-semibold text-gray-700">Framed Photos</p>
+            </div>
             <div className="relative rounded-2xl overflow-hidden shadow-xl bg-black">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -224,9 +324,55 @@ export default function DownloadPage({ data }: Props) {
               />
             </div>
 
-            {/* Tanggal sesi */}
-            <p className="text-center text-gray-400 text-xs mt-2">{sessionDate}</p>
+            {/* Tombol download foto+frame (gaya sama seperti tombol lainnya) */}
+            <button
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="w-full mt-2 py-2.5 rounded-xl text-sm font-semibold text-gray-600
+                         border border-gray-300 bg-white active:bg-gray-50 transition-colors
+                         flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {isDownloading ? (
+                <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              ) : (
+                "⬇️"
+              )}
+              {isDownloading ? "Mengunduh…" : "Simpan photo"}
+            </button>
           </div>
+
+          {/* ── GIF slideshow ── */}
+          {gifUrl && (
+            <div className="w-full max-w-sm mx-auto mt-4 px-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm">�</span>
+                <p className="text-sm font-semibold text-gray-700">Slideshow GIF</p>
+              </div>
+              <div className="rounded-2xl overflow-hidden shadow-lg bg-black">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={gifUrl}
+                  alt="Slideshow foto"
+                  className="w-full h-auto object-contain"
+                  loading="lazy"
+                />
+              </div>
+              <button
+                onClick={handleDownloadGif}
+                disabled={isDownloadingGif}
+                className="w-full mt-2 py-2.5 rounded-xl text-sm font-semibold text-gray-600
+                           border border-gray-300 bg-white active:bg-gray-50 transition-colors
+                           flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isDownloadingGif ? (
+                  <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                ) : (
+                  "⬇️"
+                )}
+                {isDownloadingGif ? "Mengunduh…" : "Simpan GIF"}
+              </button>
+            </div>
+          )}
 
           {/* ── Live Mode video ── */}
           {videoUrl && (
@@ -270,17 +416,6 @@ export default function DownloadPage({ data }: Props) {
             </div>
           )}
 
-          {/* ── Countdown ── */}
-          <div className="mt-5 flex flex-col items-center gap-1">
-            <p className="text-gray-400 text-xs uppercase tracking-wider">Link aktif selama</p>
-            <p
-              className="text-2xl font-black tabular-nums"
-              style={{ color: accentColor !== "#d4a017" ? accentColor : "#0a1a4a" }}
-            >
-              {countdownLabel}
-            </p>
-          </div>
-
           {/* ── Error messages ── */}
           {(downloadError || shareError) && (
             <div className="mx-4 mt-3 max-w-sm w-full rounded-xl bg-red-50 border border-red-200 px-4 py-3">
@@ -288,87 +423,93 @@ export default function DownloadPage({ data }: Props) {
             </div>
           )}
 
-          {/* ── CTA buttons ── */}
-          <div className="mt-6 px-4 w-full max-w-sm flex flex-col gap-3">
-            {/* Download */}
-            <button
-              onClick={handleDownload}
-              disabled={isDownloading}
-              style={{
-                backgroundColor: isDownloading ? `${accentColor}88` : accentColor,
-                color: primaryColor,
-              }}
-              className="w-full py-4 rounded-2xl text-lg font-black
-                         active:scale-95 transition-transform disabled:cursor-not-allowed"
-            >
-              {isDownloading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <span className="h-5 w-5 rounded-full border-4 border-current border-t-transparent animate-spin" />
-                  Menyiapkan…
-                </span>
-              ) : (
-                "⬇️  Simpan ke HP"
-              )}
-            </button>
-
-            {/* Native share (Web Share API — WhatsApp, IG Stories, dll via share sheet) */}
-            {"share" in navigator ? (
-              <button
-                onClick={handleNativeShare}
-                className="w-full py-4 rounded-2xl text-lg font-semibold text-gray-700
-                           border-2 border-gray-300 bg-white active:bg-gray-50
-                           transition-colors flex items-center justify-center gap-2"
-              >
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8" />
-                  <polyline points="16 6 12 2 8 6" />
-                  <line x1="12" y1="2" x2="12" y2="15" />
-                </svg>
-                Bagikan Foto
-              </button>
-            ) : (
-              /* Fallback desktop — WhatsApp link */
-              <a
-                href={whatsappUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full py-4 rounded-2xl text-lg font-semibold text-white
-                           bg-[#25D366] active:opacity-80 transition-opacity
-                           flex items-center justify-center gap-2"
-              >
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z" />
-                  <path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.122 1.532 5.855L.058 23.547a.5.5 0 00.609.61l5.753-1.485A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.907 0-3.694-.498-5.25-1.371l-.374-.216-3.882 1L3.416 17.5l-.23-.388A10 10 0 012 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z" />
-                </svg>
-                Kirim via WhatsApp
-              </a>
-            )}
-
-            {/* Instagram Stories hint — instruksi simpel */}
-            <div className="rounded-xl bg-white border border-gray-200 px-4 py-3 flex items-start gap-3">
-              <span className="text-2xl shrink-0 mt-0.5">📸</span>
-              <div>
-                <p className="text-sm font-semibold text-gray-700">Share ke Instagram Stories</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Simpan foto ke HP → buka Instagram → buat Stories → pilih foto dari galeri.
-                </p>
+          {/* ── Foto Original (Tanpa Frame) ── */}
+          {rawPhotoUrls && rawPhotoUrls.length > 0 && (
+            <div className="w-full max-w-sm mx-auto mt-8 px-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-base">📷</span>
+                <p className="text-sm font-semibold text-gray-700">Foto Original (Tanpa Frame)</p>
+              </div>
+              <div className="flex flex-col gap-4">
+                {rawPhotoUrls.map((url, i) => (
+                  <div key={i} className="rounded-2xl overflow-hidden shadow-lg bg-black">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={url}
+                      alt={`Foto original ${i + 1}`}
+                      className="w-full h-auto object-contain"
+                      loading="lazy"
+                    />
+                    <button
+                      onClick={() => handleDownloadRaw(url, i)}
+                      disabled={downloadingRawIndex === i}
+                      className="w-full py-2.5 text-sm font-semibold text-gray-600
+                                 border-t border-gray-700 bg-white active:bg-gray-50 transition-colors
+                                 flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {downloadingRawIndex === i ? (
+                        <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                      ) : (
+                        "⬇️"
+                      )}
+                      {downloadingRawIndex === i ? "Mengunduh…" : `Simpan Foto ${i + 1}`}
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
+          )}
+
+          {/* ── Social Media Links ── */}
+          {(instagramUrl || tiktokUrl) && (
+            <div className="w-full max-w-sm mx-auto mt-8 px-4">
+              <p className="text-center text-sm font-semibold text-gray-700 mb-3">
+                {socialCtaText}
+              </p>
+              <div className="flex justify-center gap-4">
+                {instagramUrl && (
+                  <a
+                    href={instagramUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 hover:opacity-90 transition-opacity"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/instagram.png"
+                      alt="Instagram"
+                      className="w-6 h-6"
+                    />
+                  </a>
+                )}
+                {tiktokUrl && (
+                  <a
+                    href={tiktokUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center w-12 h-12 rounded-full bg-black hover:opacity-90 transition-opacity"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/tiktok.png"
+                      alt="TikTok"
+                      className="w-6 h-6"
+                    />
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* ── Footer fremio branding ── */}
           <div className="mt-10 text-center">
-            <p className="text-xs text-gray-300">
-              Powered by{" "}
-              <a
-                href="https://fremio.id"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-semibold text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                fremio.id
-              </a>
-            </p>
+            <p className="text-xs text-gray-300 mb-1">Powered by</p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo-salem.png"
+              alt="Salem"
+              className="h-6 w-auto mx-auto opacity-60 hover:opacity-80 transition-opacity"
+            />
           </div>
         </>
       )}

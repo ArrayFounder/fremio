@@ -9,6 +9,7 @@ import type { ApiResponse } from "@/types";
 //   from    — ISO date string awal rentang
 //   to      — ISO date string akhir rentang
 //   status  — SUCCESS | FAILED | PENDING | CANCELLED | EXPIRED
+//   boothId — filter per booth (BoothConfig.id)
 //   page    — nomor halaman (1-based, default 1)
 //   limit   — jumlah per halaman (default 20, max 100)
 
@@ -20,6 +21,7 @@ export async function GET(req: Request): Promise<Response> {
   const from    = searchParams.get("from");
   const to      = searchParams.get("to");
   const status  = searchParams.get("status") as string | null;
+  const boothId = searchParams.get("boothId");
   const page    = Math.max(1, Number(searchParams.get("page")  ?? 1));
   const limit   = Math.min(100, Math.max(1, Number(searchParams.get("limit") ?? 20)));
   const skip    = (page - 1) * limit;
@@ -27,6 +29,7 @@ export async function GET(req: Request): Promise<Response> {
   const where = {
     operatorId: session.user.id,
     ...(status  ? { status: status as any } : {}),
+    ...(boothId ? { boothSession: { boothConfigId: boothId } } : {}),
     ...(from || to ? {
       createdAt: {
         ...(from ? { gte: new Date(from) } : {}),

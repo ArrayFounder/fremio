@@ -148,6 +148,7 @@ router.get("/", optionalAuth, async (req, res) => {
 
     const page = parseInt(req.query.page) || 1;
     const category = req.query.category;
+    const source = typeof req.query.source === "string" ? req.query.source.trim().toLowerCase() : "";
     const includeHidden = isIncludeHiddenRequested(req.query.includeHidden);
     const allowHidden = includeHidden ? await isAdminForRequest(req) : false;
 
@@ -202,6 +203,12 @@ router.get("/", optionalAuth, async (req, res) => {
       paramIndex++;
     }
 
+    if (source) {
+      queryText += ` AND source = $${paramIndex}`;
+      queryParams.push(source);
+      paramIndex++;
+    }
+
     // Deterministic ordering avoids "random" disappearance when paging/limits apply
     queryText += ` ORDER BY COALESCE(display_order, 999999) ASC, created_at DESC, id ASC`;
     
@@ -228,6 +235,10 @@ router.get("/", optionalAuth, async (req, res) => {
       if (category) {
         countQuery += " AND category = $1";
         countParams.push(category);
+      }
+      if (source) {
+        countQuery += ` AND source = $${countParams.length + 1}`;
+        countParams.push(source);
       }
       const countResult = await pool.query(countQuery, countParams);
       total = parseInt(countResult.rows[0].count);
@@ -816,6 +827,8 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
       canvasWidth,
       canvasHeight,
       createdBy,
+      source,
+      is_template,
     } = req.body;
 
     // Validate name
@@ -853,6 +866,13 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
       maxCaptures || max_captures || parsedSlots?.length || 1;
     const finalCategory = category || (categories && categories[0]) || "custom";
     const finalIsHidden = Boolean(is_hidden);
+    const normalizedSource = String(source || "fremio").trim().toLowerCase();
+    const finalSource = normalizedSource === "designer"
+      ? "designer"
+      : normalizedSource === "studio_booth"
+      ? "studio_booth"
+      : "fremio";
+    const finalIsTemplate = is_template !== undefined ? Boolean(is_template) : false;
 
     // IMPORTANT: Admin uploads are treated as premium by default unless explicitly set.
     const finalIsPremium =
@@ -880,8 +900,8 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
     // Use PostgreSQL for VPS mode
     try {
       const result = await pool.query(
-        `INSERT INTO frames (id, name, description, category, image_path, slots, max_captures, layout, canvas_background, canvas_width, canvas_height, created_by, is_active, is_hidden, is_premium)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, $14)
+        `INSERT INTO frames (id, name, description, category, image_path, slots, max_captures, layout, canvas_background, canvas_width, canvas_height, created_by, is_active, is_hidden, is_premium, source, is_template)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, $14, $15, $16)
            ON CONFLICT (id) DO UPDATE SET
              name = EXCLUDED.name,
              description = EXCLUDED.description,
@@ -895,6 +915,8 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
              canvas_height = EXCLUDED.canvas_height,
              is_hidden = EXCLUDED.is_hidden,
              is_premium = EXCLUDED.is_premium,
+             source = EXCLUDED.source,
+             is_template = EXCLUDED.is_template,
              updated_at = NOW()
            RETURNING *`,
         [
@@ -912,6 +934,8 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
           createdByUserId,
           finalIsHidden,
           finalIsPremium,
+          finalSource,
+          finalIsTemplate,
         ]
       );
 
@@ -932,6 +956,8 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
           maxCaptures: frame.max_captures,
           is_hidden: frame.is_hidden,
           isPremium: frame.is_premium,
+          source: frame.source || "fremio",
+          is_template: frame.is_template || false,
         },
       });
     } catch (dbError) {
@@ -1112,7 +1138,12 @@ router.put("/:id", verifyToken, requireAdmin, async (req, res) => {
     }
 
     if (source !== undefined) {
-      const safeSource = source === 'designer' ? 'designer' : 'fremio';
+      const normalizedSource = String(source).trim().toLowerCase();
+      const safeSource = normalizedSource === 'designer'
+        ? 'designer'
+        : normalizedSource === 'studio_booth'
+        ? 'studio_booth'
+        : 'fremio';
       updates.push(`source = $${paramIndex++}`);
       values.push(safeSource);
     }

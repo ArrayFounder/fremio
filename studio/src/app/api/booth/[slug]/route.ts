@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { normalizeImportedSlots } from "@/lib/fremioSlots";
 import type { ApiResponse } from "@/types";
+
+const TRIAL_ONLY_MODE = true;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/booth/[slug]
@@ -29,11 +32,12 @@ export async function GET(
     );
   }
 
-  // Cek subscription aktif
+  // Trial rollout: abaikan gate subscription sementara.
   if (
     !booth.operator.isActive ||
-    !booth.operator.subscriptionExpiry ||
-    booth.operator.subscriptionExpiry < new Date()
+    (!TRIAL_ONLY_MODE &&
+      (!booth.operator.subscriptionExpiry ||
+        booth.operator.subscriptionExpiry < new Date()))
   ) {
     return NextResponse.json<ApiResponse>(
       { success: false, error: "Booth sedang tidak aktif" },
@@ -43,7 +47,7 @@ export async function GET(
 
   // Ambil frames yang tersedia
   // Jika allowedFrameIds kosong → ambil semua frame publik aktif
-  const frames = await prisma.frame.findMany({
+  const rawFrames = await prisma.frame.findMany({
     where: {
       isActive: true,
       ...(booth.allowedFrameIds.length > 0
@@ -67,6 +71,31 @@ export async function GET(
     orderBy: { sortOrder: "asc" },
   });
 
+  const prefs = (booth.welcomeScreenPrefs as Record<string, unknown> | null) ?? null;
+  const rawOverrides = prefs?.frameCategoryOverrides;
+  const frameCategoryOverrides: Record<string, string> =
+    rawOverrides && typeof rawOverrides === "object" && !Array.isArray(rawOverrides)
+      ? Object.fromEntries(
+          Object.entries(rawOverrides as Record<string, unknown>)
+            .filter(([k, v]) => typeof k === "string" && typeof v === "string" && v.trim().length > 0)
+            .map(([k, v]) => [k, String(v)])
+        )
+      : {};
+
+  const frames = (rawFrames as Array<{ id: string; category: string } & Record<string, unknown>>).map((f) => {
+    const frameId = String(f.id);
+    const override = frameCategoryOverrides[frameId];
+    const maxCaptures = Number(f.maxCaptures ?? 1);
+    const normalizedSlots = frameId.startsWith("fremio_")
+      ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1)
+      : f.slots;
+    return {
+      ...f,
+      slots: normalizedSlots,
+      category: override && override.trim().length > 0 ? override : f.category,
+    };
+  });
+
   return NextResponse.json<ApiResponse>({
     success: true,
     data: {
@@ -74,6 +103,7 @@ export async function GET(
         id:                    booth.id,
         boothName:             booth.boothName,
         slug:                  booth.slug,
+        showTrialWatermark:    TRIAL_ONLY_MODE,
         pricePerSession:       booth.pricePerSession,
         printPricePerSheet:    booth.printPricePerSheet,
         sessionDurationSeconds: booth.sessionDurationSeconds,

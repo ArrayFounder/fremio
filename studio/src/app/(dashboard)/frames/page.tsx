@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import useSWR, { mutate as globalMutate } from "swr";
 
@@ -10,6 +10,8 @@ interface Frame {
   id: string; name: string; category: string; thumbnailUrl: string;
   assetUrl: string; isPremium: boolean; aspectRatio: string;
   designerId?: string | null; captureMode?: string | null;
+  maxCaptures?: number | null;
+  slots?: Array<{ left: number; top: number; width: number; height: number; photoIndex: number; borderRadius?: number }> | null;
 }
 interface Booth { id: string; boothName: string; allowedFrameIds: string[] }
 interface FrameApiData { frames: Frame[]; allowedFrameIds: string[] }
@@ -331,13 +333,198 @@ function AddFrameModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   );
 }
 
+// ─── Slot Editor Modal ────────────────────────────────────────────────────────
+
+type SlotRect = { left: number; top: number; width: number; height: number; photoIndex: number };
+
+function SlotEditorModal({ frame, onClose, onSaved }: {
+  frame: Frame;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const imgRef        = useRef<HTMLImageElement>(null);
+  const containerRef  = useRef<HTMLDivElement>(null);
+  const [slots, setSlots]       = useState<SlotRect[]>(
+    Array.isArray(frame.slots) && frame.slots.length > 0
+      ? frame.slots.map((s, i) => ({ ...s, photoIndex: i }))
+      : []
+  );
+  const [dragging, setDragging] = useState<{ startX: number; startY: number } | null>(null);
+  const [draft, setDraft]       = useState<SlotRect | null>(null);
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState("");
+  const [maxCaptures, setMaxCaptures] = useState<number>((frame.maxCaptures ?? slots.length) || 1);
+
+  // Convert mouse event to normalized (0-1) coordinates within container
+  const toNorm = useCallback((e: React.MouseEvent): { x: number; y: number } | null => {
+    const el = containerRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (e.clientY - rect.top)  / rect.height)),
+    };
+  }, []);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const p = toNorm(e);
+    if (!p) return;
+    setDragging({ startX: p.x, startY: p.y });
+    setDraft(null);
+  };
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!dragging) return;
+    const p = toNorm(e);
+    if (!p) return;
+    const left   = Math.min(dragging.startX, p.x);
+    const top    = Math.min(dragging.startY, p.y);
+    const width  = Math.abs(p.x - dragging.startX);
+    const height = Math.abs(p.y - dragging.startY);
+    setDraft({ left, top, width, height, photoIndex: slots.length });
+  };
+
+  const onMouseUp = () => {
+    if (!draft || draft.width < 0.02 || draft.height < 0.02) {
+      setDragging(null);
+      setDraft(null);
+      return;
+    }
+    setSlots(prev => [...prev, { ...draft, photoIndex: prev.length }]);
+    setMaxCaptures(prev => Math.max(prev, slots.length + 1));
+    setDragging(null);
+    setDraft(null);
+  };
+
+  const removeSlot = (idx: number) => {
+    setSlots(prev => prev.filter((_, i) => i !== idx).map((s, i) => ({ ...s, photoIndex: i })));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
+    const res = await fetch(`/api/dashboard/frames/${frame.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slots, maxCaptures }),
+    });
+    const json = await res.json();
+    setSaving(false);
+    if (!json.success) { setError(json.error ?? "Gagal menyimpan"); return; }
+    onSaved();
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0">
+          <div>
+            <h2 className="text-base font-bold text-gray-900">Atur Area Foto — {frame.name}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Klik dan seret di atas gambar frame untuk menandai area foto</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4">
+          {/* Canvas area */}
+          <div
+            ref={containerRef}
+            className="relative select-none border border-gray-200 rounded-xl overflow-hidden cursor-crosshair"
+            style={{ aspectRatio: "9/16", maxHeight: 420, margin: "0 auto", width: "100%" }}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              ref={imgRef}
+              src={frame.thumbnailUrl}
+              alt={frame.name}
+              className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+              draggable={false}
+            />
+            {/* Existing slots */}
+            {slots.map((s, i) => (
+              <div
+                key={i}
+                className="absolute border-2 border-blue-500 bg-blue-400/20 flex items-center justify-center"
+                style={{ left: `${s.left * 100}%`, top: `${s.top * 100}%`, width: `${s.width * 100}%`, height: `${s.height * 100}%` }}
+              >
+                <span className="bg-blue-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center shadow">{i + 1}</span>
+                <button
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-4 h-4 text-[10px] flex items-center justify-center shadow hover:bg-red-600"
+                  onClick={e => { e.stopPropagation(); removeSlot(i); }}
+                  onMouseDown={e => e.stopPropagation()}
+                >✕</button>
+              </div>
+            ))}
+            {/* Draft slot being drawn */}
+            {draft && (
+              <div
+                className="absolute border-2 border-dashed border-blue-400 bg-blue-300/20 pointer-events-none"
+                style={{ left: `${draft.left * 100}%`, top: `${draft.top * 100}%`, width: `${draft.width * 100}%`, height: `${draft.height * 100}%` }}
+              />
+            )}
+          </div>
+
+          {/* Controls */}
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-700">Jumlah foto:</label>
+              <input type="number" min={1} max={12} value={maxCaptures}
+                onChange={e => setMaxCaptures(Math.max(1, Number(e.target.value)))}
+                className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-sm text-center"
+              />
+            </div>
+            <span className="text-xs text-gray-400">{slots.length} area ditandai</span>
+            {slots.length > 0 && (
+              <button onClick={() => setSlots([])} className="text-xs text-red-500 hover:underline ml-auto">Hapus Semua</button>
+            )}
+          </div>
+
+          {slots.length === 0 && (
+            <p className="text-sm text-amber-600 bg-amber-50 rounded-xl px-3 py-2 border border-amber-200">
+              Belum ada area foto. Seret di atas gambar untuk menandai area foto. Jika tidak ditandai, live stream akan mengisi seluruh frame.
+            </p>
+          )}
+
+          {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t flex-shrink-0 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-semibold text-gray-600 hover:bg-gray-50">Batal</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2.5 rounded-xl bg-primary-900 text-white text-sm font-bold hover:bg-primary-800 disabled:opacity-60">
+            {saving ? "Menyimpan…" : "💾 Simpan Area Foto"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Frame Card ───────────────────────────────────────────────────────────────
 
 function FrameCard({
-  frame, enabled, onToggle, onDelete, onCaptureModeChange, currentUserId,
-}: { frame: Frame; enabled: boolean; onToggle: () => void; onDelete: () => void; onCaptureModeChange: (mode: "single" | "duplicate") => void; currentUserId?: string }) {
-  const isOwned = frame.designerId === currentUserId;
+  frame, enabled, onToggle, onDelete, onCaptureModeChange, onEditSlots, currentUserId,
+}: {
+  frame: Frame;
+  enabled: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  onCaptureModeChange: (mode: "single" | "duplicate") => void;
+  onEditSlots: () => void;
+  currentUserId?: string;
+}) {
+  const isOwned    = frame.designerId === currentUserId;
   const isDuplicate = frame.captureMode === "duplicate";
+  const slotCount  = Array.isArray(frame.slots) ? frame.slots.length : 0;
   return (
     <div className={`bg-white rounded-2xl border overflow-hidden cursor-pointer transition-all group relative
       ${enabled ? "border-primary-900 ring-2 ring-primary-900/20" : "border-gray-100 hover:border-gray-300"}`}
@@ -381,6 +568,18 @@ function FrameCard({
           title={isDuplicate ? "Mode Duplikat aktif — klik untuk nonaktifkan" : "Aktifkan Mode Duplikat"}
         >
           {isDuplicate ? "🔄 Duplikat" : "○ Single"}
+        </button>
+        {/* Atur area foto (slot editor) */}
+        <button
+          className={`mt-1.5 w-full text-xs py-1 rounded-lg font-semibold border transition-colors ${
+            slotCount > 0
+              ? "bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
+              : "bg-gray-50 border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-600"
+          }`}
+          onClick={e => { e.stopPropagation(); onEditSlots(); }}
+          title="Atur area foto untuk live stream"
+        >
+          {slotCount > 0 ? `📐 ${slotCount} area foto` : "📐 Atur Area Foto"}
         </button>
       </div>
     </div>
@@ -457,6 +656,8 @@ export default function FramesPage() {
     mutate();
   };
 
+  const [slotEditorFrame, setSlotEditorFrame] = useState<Frame | null>(null);
+
   const categories = ["ALL", ...Array.from(new Set(frames.map((f) => f.category)))];
   const filtered   = (filterCat === "ALL" ? frames : frames.filter((f) => f.category === filterCat))
     .filter((f) => isEnabled(f.id));
@@ -474,6 +675,13 @@ export default function FramesPage() {
         <AddFrameModal
           onClose={() => setShowAdd(false)}
           onCreated={() => { mutate(); globalMutate("/api/dashboard/frames"); }}
+        />
+      )}
+      {slotEditorFrame && (
+        <SlotEditorModal
+          frame={slotEditorFrame}
+          onClose={() => setSlotEditorFrame(null)}
+          onSaved={() => { mutate(); setSlotEditorFrame(null); }}
         />
       )}
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -555,6 +763,7 @@ export default function FramesPage() {
               onToggle={() => toggleFrame(frame.id)}
               onDelete={() => handleDelete(frame.id)}
               onCaptureModeChange={(mode) => handleCaptureModeChange(frame.id, mode)}
+              onEditSlots={() => setSlotEditorFrame(frame)}
               currentUserId={session?.user?.id}
             />
           ))}

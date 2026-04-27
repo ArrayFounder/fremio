@@ -30,6 +30,7 @@ import usersRoutes from "./routes/users.js";
 import designerRoutes from "./routes/designer.js";
 import openverseRoutes from "./routes/openverse.js";
 import shareSubscriptionRoutes from "./routes/shareSubscription.js";
+import adminStudioRoutes from "./routes/adminStudio.js";
 import { startAutoReconcilePendingService } from "./services/autoReconcilePendingService.js";
 
 // Get __dirname equivalent for ES modules
@@ -541,9 +542,29 @@ app.use("/api/payment", paymentRoutes);
 app.use("/api/maintenance", maintenanceRoutes);
 app.use("/api/share-subscription", shareSubscriptionRoutes);
 app.use("/api/admin/subscribers", adminSubscribersRoutes);
+app.use("/api/admin/studio", adminStudioRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/designer", designerRoutes);
 app.use("/api/openverse-token", openverseRoutes);
+
+// Client-side error reporting (best-effort, no auth required)
+app.post("/api/client-error", (req, res) => {
+  try {
+    const { message, stack, componentStack, userAgent, url, timestamp } = req.body || {};
+    // Log to server console so it appears in PM2 logs
+    console.error("[CLIENT ERROR]", JSON.stringify({
+      message: String(message || '').slice(0, 500),
+      stack: String(stack || '').slice(0, 1000),
+      componentStack: String(componentStack || '').slice(0, 1000),
+      userAgent: String(userAgent || '').slice(0, 300),
+      url: String(url || '').slice(0, 300),
+      timestamp: timestamp || new Date().toISOString(),
+    }));
+  } catch (_) {
+    // Never crash the server over a client error report
+  }
+  res.status(204).end();
+});
 
 // 404 handler
 app.use((req, res) => {

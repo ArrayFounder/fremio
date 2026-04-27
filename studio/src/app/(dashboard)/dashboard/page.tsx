@@ -16,6 +16,7 @@ interface OverviewData {
   activeBooths: number;
   recentSessions: { id: string; boothName: string; frameName: string; completedAt: string; photoUrl: string | null }[];
   popularFrames: { frameId: string; count: number; name: string; thumbnailUrl: string }[];
+  boothBreakdown: { id: string; boothName: string; revenue: number; sessions: number }[];
 }
 
 interface AnalyticsData {
@@ -220,6 +221,53 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+
+        {/* ── Pendapatan per Cabang ────────────────────────────────────────── */}
+        {!ovLoading && d && d.boothBreakdown && d.boothBreakdown.length > 1 && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-gray-700">Pendapatan per Cabang</h2>
+              <a href="/sessions" className="text-xs text-primary-600 hover:underline">Lihat transaksi →</a>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-50">
+                    <th className="px-5 py-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-wider">Booth / Lokasi</th>
+                    <th className="px-5 py-3 text-right text-[11px] font-bold text-gray-400 uppercase tracking-wider">Total Pendapatan</th>
+                    <th className="px-5 py-3 text-right text-[11px] font-bold text-gray-400 uppercase tracking-wider">Sesi Selesai</th>
+                    <th className="px-5 py-3 text-right text-[11px] font-bold text-gray-400 uppercase tracking-wider">Avg/Sesi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {d.boothBreakdown.map((b, i) => {
+                    const maxRevenue = d.boothBreakdown[0]?.revenue ?? 1;
+                    const pct = maxRevenue > 0 ? Math.round((b.revenue / maxRevenue) * 100) : 0;
+                    const avg = b.sessions > 0 ? Math.round(b.revenue / b.sessions) : 0;
+                    return (
+                      <tr key={b.id} className="hover:bg-gray-50/60 transition-colors">
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-black text-gray-300 w-4 text-center">{i + 1}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-gray-800 truncate">{b.boothName}</p>
+                              <div className="mt-1 h-1.5 w-full max-w-[140px] rounded-full bg-gray-100 overflow-hidden">
+                                <div className="h-full rounded-full bg-primary-400" style={{ width: `${pct}%` }}/>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5 text-right text-sm font-bold text-gray-900 whitespace-nowrap">{fmtIDR(b.revenue)}</td>
+                        <td className="px-5 py-3.5 text-right text-sm text-gray-600">{b.sessions.toLocaleString("id-ID")}</td>
+                        <td className="px-5 py-3.5 text-right text-sm text-gray-500 whitespace-nowrap">{b.sessions > 0 ? fmtIDR(avg) : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* ── Recent + Popular ─────────────────────────────────────────────── */}
         <div className="grid md:grid-cols-2 gap-6">

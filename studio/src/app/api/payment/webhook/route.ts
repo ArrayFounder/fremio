@@ -45,13 +45,20 @@ export async function POST(req: Request): Promise<Response> {
   } = notification;
 
   // 2. Cari Transaction terlebih dahulu untuk mendapat operator key
-  //    lalu verifikasi signature dengan key yang tepat (operator atau global)
+  //    Webhook Midtrans hanya memproses transaksi dengan gateway = MIDTRANS
   const txForSig = await prisma.transaction.findUnique({
     where:   { midtransOrderId: order_id },
     include: {
       operator: { select: { midtransServerKey: true } },
     },
   });
+
+  // Abaikan jika bukan transaksi Midtrans (Xendit/DOKU punya webhook endpoint sendiri)
+  if (txForSig && txForSig.gateway !== "MIDTRANS") {
+    console.warn(`[webhook/midtrans] Order ${order_id} bukan gateway MIDTRANS (${txForSig.gateway}), diabaikan.`);
+    return NextResponse.json({ received: true });
+  }
+
   const operatorKey = txForSig?.operator?.midtransServerKey ?? null;
 
   const isValid = verifyMidtransSignature(notification, operatorKey);

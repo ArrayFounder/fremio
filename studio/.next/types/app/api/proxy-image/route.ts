@@ -1,4 +1,4 @@
-// File: /Users/salwa/Documents/fremio/studio/src/app/api/proxy-image/route.ts
+// File: /Users/salwa/Documents/fremio copy/studio/src/app/api/proxy-image/route.ts
 import * as entry from '../../../../../src/app/api/proxy-image/route.js'
 import type { NextRequest } from 'next/server.js'
 

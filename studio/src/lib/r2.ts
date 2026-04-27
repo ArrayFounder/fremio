@@ -66,6 +66,26 @@ export function buildPhotoKey(
 }
 
 /**
+ * Generate storage key untuk foto mentah per-capture (tanpa frame).
+ * Format: sessions/{sessionId}/raw-{index}-{timestamp}.jpg
+ */
+export function buildRawPhotoKey(
+  sessionId: string,
+  index: number
+): string {
+  const ts = Date.now();
+  return `sessions/${sessionId}/raw-${index}-${ts}.jpg`;
+}
+
+/**
+ * Generate storage key untuk GIF slideshow sesi.
+ * Format: sessions/{sessionId}/slideshow-{timestamp}.gif
+ */
+export function buildGifKey(sessionId: string): string {
+  return `sessions/${sessionId}/slideshow-${Date.now()}.gif`;
+}
+
+/**
  * Generate storage key untuk video Live Mode sesi.
  * Format: sessions/{sessionId}/live-{timestamp}.{ext}
  */

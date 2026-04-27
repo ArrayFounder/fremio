@@ -91,6 +91,52 @@ export interface ComposeOptions {
    * Contoh: "grayscale(100%) contrast(135%)"
    */
   photoFilterCss?: string;
+  /** Tampilkan watermark trial kuning di tengah hasil render. */
+  trialWatermark?: boolean;
+  trialWatermarkText?: string;
+}
+
+function drawCenteredWatermark(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  text: string,
+): void {
+  const fontSize = Math.max(34, Math.round(canvasHeight * 0.05));
+  const paddingX = Math.round(fontSize * 0.55);
+  const paddingY = Math.round(fontSize * 0.28);
+
+  ctx.save();
+  ctx.font = `900 ${fontSize}px Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const metrics = ctx.measureText(text);
+  const textWidth = metrics.width;
+  const boxWidth = textWidth + paddingX * 2;
+  const boxHeight = fontSize + paddingY * 2;
+  const x = (canvasWidth - boxWidth) / 2;
+  const y = (canvasHeight - boxHeight) / 2;
+  const radius = Math.round(boxHeight / 2);
+
+  ctx.fillStyle = "rgba(17, 24, 39, 0.62)";
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(x, y, boxWidth, boxHeight, radius);
+  } else {
+    ctx.rect(x, y, boxWidth, boxHeight);
+  }
+  ctx.fill();
+
+  ctx.shadowColor = "rgba(0, 0, 0, 0.35)";
+  ctx.shadowBlur = Math.round(fontSize * 0.32);
+  ctx.shadowOffsetY = Math.round(fontSize * 0.08);
+  ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.08));
+  ctx.strokeStyle = "rgba(120, 53, 15, 0.85)";
+  ctx.fillStyle = "#facc15";
+  ctx.strokeText(text, canvasWidth / 2, y + boxHeight / 2);
+  ctx.fillText(text, canvasWidth / 2, y + boxHeight / 2);
+  ctx.restore();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,6 +206,26 @@ function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob>
       quality
     );
   });
+}
+
+export async function applyTrialWatermarkToDataUrl(
+  sourceDataUrl: string,
+  options: { quality?: number; text?: string } = {}
+): Promise<string> {
+  if (typeof document === "undefined") {
+    throw new Error("applyTrialWatermarkToDataUrl() harus dipanggil di browser");
+  }
+
+  const img = await loadImage(sourceDataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Tidak dapat membuat 2D context");
+
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  drawCenteredWatermark(ctx, canvas.width, canvas.height, options.text ?? "Trial");
+  return canvas.toDataURL("image/jpeg", options.quality ?? 0.92);
 }
 
 /**
@@ -723,6 +789,10 @@ export async function composePhoto(
     }
   }
 
+  if (options.trialWatermark) {
+    drawCenteredWatermark(ctx, cw, ch, options.trialWatermarkText ?? "Trial");
+  }
+
   // ─── 6. Export JPEG ───────────────────────────────────────────────────────
   return canvasToBlob(canvas, quality);
 }
@@ -1279,30 +1349,41 @@ export async function composeVideoLive(
 
   const mimeType = getBestVideoMime();
 
+  // captureStream — check API availability first (Chrome Android supports this)
+  const captureStreamFn = (canvas as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream }).captureStream;
+  if (typeof captureStreamFn !== "function") {
+    console.warn("[liveMode] captureStream tidak tersedia di browser ini");
+    cleanup();
+    return null;
+  }
+
   let stream: MediaStream;
   try {
-    stream = canvas.captureStream(fps);
+    stream = captureStreamFn.call(canvas, fps);
   } catch (err) {
     console.warn("[liveMode] captureStream gagal:", err);
     cleanup();
     return null;
   }
 
-  let recorder: MediaRecorder;
-  try {
-    recorder = new MediaRecorder(stream, {
-      mimeType,
-      videoBitsPerSecond: 2_000_000,   // 2 Mbps cukup untuk 540×960
-    });
-  } catch (err) {
-    console.warn("[liveMode] MediaRecorder gagal:", err);
+  // MediaRecorder dengan fallback chain — sama seperti useCamera.ts
+  const tryCreateRecorder = (opts: MediaRecorderOptions) => {
+    try { return new MediaRecorder(stream, opts); } catch { return null; }
+  };
+  const recorder =
+    tryCreateRecorder({ mimeType, videoBitsPerSecond: 2_000_000 }) ??
+    tryCreateRecorder({ mimeType }) ??
+    tryCreateRecorder({});
+  if (!recorder) {
+    console.warn("[liveMode] MediaRecorder tidak dapat dibuat");
     cleanup();
     return null;
   }
 
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-  recorder.start(100);
+  // Mulai dengan 200ms timeslice; fallback tanpa timeslice jika gagal
+  try { recorder.start(200); } catch { try { recorder.start(); } catch (e) { console.warn("[liveMode] recorder.start gagal:", e); cleanup(); return null; } }
 
   // ── 6. Draw loop via setInterval ──────────────────────────────────────────
   const endTime = performance.now() + duration;
@@ -1335,9 +1416,13 @@ export async function composeVideoLive(
       if (sceneAfterPhotos.length > 0) drawSceneElementsSync(ctx, sceneAfterPhotos, ch, sceneImages);
       // Extra decoration overlay — hanya untuk frame biasa (non-scene)
       if (decorImg && !useSceneRendering) ctx.drawImage(decorImg, 0, 0, cw, ch);
+      if (options.trialWatermark) {
+        drawCenteredWatermark(ctx, cw, ch, options.trialWatermarkText ?? "Trial");
+      }
 
       if (performance.now() >= endTime) {
         clearInterval(interval);
+        try { recorder.requestData(); } catch { /* ignore */ }
         recorder.stop();
       }
     }, Math.round(1000 / fps));
@@ -1345,7 +1430,7 @@ export async function composeVideoLive(
     recorder.onstop = () => {
       cleanup();
       if (chunks.length === 0) { resolve(null); return; }
-      resolve(new Blob(chunks, { type: mimeType }));
+      resolve(new Blob(chunks, { type: recorder.mimeType || mimeType }));
     };
 
     recorder.onerror = () => {
@@ -1397,4 +1482,129 @@ export async function generateDownloadQR(
       light: light,
     },
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// encodeGif + uploadGif
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Encode array data URL foto menjadi animated GIF Blob.
+ * Setiap frame ditampilkan selama `delayMs` ms (default 500ms).
+ * GIF di-scale ke maxSize (default 540px) untuk ukuran file yang wajar.
+ */
+export async function encodeGif(
+  dataUrls: string[],
+  options: { delayMs?: number; maxSize?: number; trialWatermark?: boolean; trialWatermarkText?: string } = {}
+): Promise<Blob> {
+  const { delayMs = 500, maxSize = 540 } = options;
+  const { GIFEncoder, quantize, applyPalette } = await import("gifenc");
+
+  // Muat semua image ke ImageBitmap terlebih dahulu
+  const bitmaps = await Promise.all(
+    dataUrls.map((url) => {
+      return new Promise<ImageBitmap>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => createImageBitmap(img).then(resolve).catch(reject);
+        img.onerror = reject;
+        img.src = url;
+      });
+    })
+  );
+
+  if (bitmaps.length === 0) throw new Error("Tidak ada foto untuk di-encode");
+
+  // Scale ke maxSize dengan mempertahankan aspek rasio foto pertama
+  const srcW = bitmaps[0].width;
+  const srcH = bitmaps[0].height;
+  const scale = Math.min(1, maxSize / Math.max(srcW, srcH));
+  const w = Math.round(srcW * scale);
+  const h = Math.round(srcH * scale);
+
+  const canvas = document.createElement("canvas");
+  canvas.width  = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+
+  const gif = GIFEncoder();
+
+  for (const bmp of bitmaps) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(bmp, 0, 0, w, h);
+    if (options.trialWatermark) {
+      drawCenteredWatermark(ctx, w, h, options.trialWatermarkText ?? "Trial");
+    }
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const palette   = quantize(imageData.data, 256);
+    const index     = applyPalette(imageData.data, palette);
+    gif.writeFrame(index, w, h, { palette, delay: delayMs });
+    bmp.close();
+  }
+
+  gif.finish();
+  const rawBytes = gif.bytes();
+  // Copy into a fresh ArrayBuffer to avoid SharedArrayBuffer compatibility issues
+  const copy = new Uint8Array(rawBytes.length);
+  copy.set(rawBytes);
+  return new Blob([copy.buffer as ArrayBuffer], { type: "image/gif" });
+}
+
+/**
+ * Upload foto mentah per-capture (tanpa frame) ke server via /api/raw-photos.
+ *
+ * @param blob      - JPEG Blob dari data URL kamera
+ * @param sessionId - ID sesi booth yang sedang aktif
+ * @param index     - Indeks capture (0-based)
+ * @returns Public URL foto mentah
+ */
+export async function uploadRawPhoto(blob: Blob, sessionId: string, index: number): Promise<string> {
+  const form = new FormData();
+  form.append("sessionId", sessionId);
+  form.append("photo", blob, `raw-${index}.jpg`);
+  form.append("index", String(index));
+
+  const res = await fetch("/api/raw-photos", {
+    method: "POST",
+    body:   form,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Gagal mengupload foto mentah (${res.status}): ${text}`);
+  }
+
+  const body = (await res.json()) as { success: boolean; data?: { photoUrl: string }; error?: string };
+
+  if (!body.success || !body.data?.photoUrl) {
+    throw new Error(body.error ?? "Upload foto mentah gagal");
+  }
+
+  return body.data.photoUrl;
+}
+
+/**
+ * Upload animated GIF Blob ke server via /api/gifs (multipart form).
+ */
+export async function uploadGif(blob: Blob, sessionId: string): Promise<string> {
+  const form = new FormData();
+  form.append("sessionId", sessionId);
+  form.append("gif", blob, "slideshow.gif");
+
+  const res = await fetch("/api/gifs", {
+    method: "POST",
+    body:   form,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Gagal mengupload GIF (${res.status}): ${text}`);
+  }
+
+  const body = (await res.json()) as { success: boolean; data?: { gifUrl: string }; error?: string };
+
+  if (!body.success || !body.data?.gifUrl) {
+    throw new Error(body.error ?? "Upload GIF gagal");
+  }
+
+  return body.data.gifUrl;
 }

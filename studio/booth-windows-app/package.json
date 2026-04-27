@@ -1,0 +1,60 @@
+{
+  "name": "fremio-booth-windows-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows kiosk shell for Fremio Studio booth flow",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "build": "electron-builder --win nsis zip --x64",
+    "build:signed": "electron-builder --win nsis zip --x64 --config.win.certificateFile=%CSC_LINK% --config.win.certificatePassword=%CSC_KEY_PASSWORD%"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "id.fremio.booth",
+    "productName": "Fremio Studio",
+    "executableName": "Fremio Studio",
+    "copyright": "Copyright © 2025 Fremio. All rights reserved.",
+    "files": [
+      "main.js",
+      "preload.js",
+      "setup.html",
+      "setup.js",
+      "setup.css"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "publisherName": "Fremio",
+      "requestedExecutionLevel": "asInvoker",
+      "verifyUpdateCodeSignature": false,
+      "signingHashAlgorithms": ["sha256"],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "selectPerMachineByDefault": true,
+      "runAfterFinish": false,
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "${productName} ${version}",
+      "include": "installer.nsh",
+      "menuCategory": "Fremio"
+    },
+    "artifactName": "${productName}-Setup-${version}.${ext}"
+  }
+}

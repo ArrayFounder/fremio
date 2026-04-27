@@ -2,226 +2,382 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Platform {
-  id:       string;
-  label:    string;
-  icon:     string;
-  file:     string;
-  tip:      string;
-  terminalCmds?: string[];   // Mac: shown as copyable code block
-  steps?:   string[];        // Windows: shown as numbered steps
+type TabId = "windows" | "mac";
+
+interface MacVariant {
+  id:    string;
+  label: string;
+  chip:  string;
+  file:  string;
+  cmds:  string[];
 }
 
-const PLATFORMS: Platform[] = [
+const MAC_VARIANTS: MacVariant[] = [
   {
     id:    "mac-arm",
-    label: "macOS (Apple Silicon)",
-    icon:  "🍎",
+    label: "Apple Silicon",
+    chip:  "M1 / M2 / M3 / M4 — Mac 2020 ke atas",
     file:  "fremio-agent-mac-arm64",
-    tip:   "Untuk Mac dengan chip M1/M2/M3/M4 (2020 ke atas)",
-    terminalCmds: [
+    cmds: [
       "cd ~/Downloads",
       "xattr -d com.apple.quarantine fremio-agent-mac-arm64",
       "chmod +x fremio-agent-mac-arm64",
-      "mkdir -p ~/Documents/fremio/studio/agent && mv fremio-agent-mac-arm64 ~/Documents/fremio/studio/agent/",
-      "~/Documents/fremio/studio/agent/fremio-agent-mac-arm64",
+      "mkdir -p ~/Library/Application\\ Support/Fremio && mv fremio-agent-mac-arm64 ~/Library/Application\\ Support/Fremio/",
+      "~/Library/Application\\ Support/Fremio/fremio-agent-mac-arm64",
     ],
   },
   {
     id:    "mac-intel",
-    label: "macOS (Intel)",
-    icon:  "🍎",
+    label: "Intel",
+    chip:  "Intel Core — Mac sebelum 2020",
     file:  "fremio-agent-mac-x64",
-    tip:   "Untuk Mac lama dengan chip Intel (sebelum 2020)",
-    terminalCmds: [
+    cmds: [
       "cd ~/Downloads",
       "xattr -d com.apple.quarantine fremio-agent-mac-x64",
       "chmod +x fremio-agent-mac-x64",
-      "mkdir -p ~/Documents/fremio/studio/agent && mv fremio-agent-mac-x64 ~/Documents/fremio/studio/agent/",
-      "~/Documents/fremio/studio/agent/fremio-agent-mac-x64",
+      "mkdir -p ~/Library/Application\\ Support/Fremio && mv fremio-agent-mac-x64 ~/Library/Application\\ Support/Fremio/",
+      "~/Library/Application\\ Support/Fremio/fremio-agent-mac-x64",
     ],
   },
-  {
-    id:    "windows",
-    label: "Windows",
-    icon:  "🪟",
-    file:  "fremio-agent-win.exe",
-    tip:   "Untuk Windows 10 / 11 (64-bit)",
-    steps: [
-      "Klik kanan fremio-agent-win.exe → Run as administrator",
-      "Jika Windows Defender memblokir: klik More info → Run anyway",
-      "Jendela Command Prompt akan terbuka — biarkan tetap terbuka",
-      "Restart browser, lalu klik Coba Lagi di halaman setup booth",
-    ],
-  },
+];
+
+const WIN_STEPS = [
+  { icon: "⬇️", title: "Download Windows Launcher", desc: "Klik Download. File launcher akan membuka layar welcome terlebih dulu (bukan langsung CMD)." },
+  { icon: "▶️", title: "Klik tombol Mulai", desc: "Di layar welcome owner photobox, klik Mulai Fremio Studio untuk menyalakan bridge printer/kamera." },
+  { icon: "🌐", title: "Buka link booth kamu", desc: "Setelah status Running, buka link booth di browser (Chrome direkomendasikan)." },
+  { icon: "⚠️", title: "Jangan close launcher", desc: "Selama sesi photobox berjalan, biarkan launcher tetap terbuka agar koneksi hardware stabil." },
 ];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AgentPage() {
-  const [copied, setCopied] = useState<string | null>(null);
+  const [tab, setTab]               = useState<TabId>("windows");
+  const [macVariant, setMacVariant] = useState<string>("mac-arm");
+  const [copied, setCopied]         = useState<string | null>(null);
 
-  const copyCmd = (cmd: string, id: string) => {
-    navigator.clipboard.writeText(cmd).catch(() => {});
-    setCopied(id);
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard.writeText(text).catch(() => {});
+    setCopied(key);
     setTimeout(() => setCopied(null), 2000);
   };
 
+  const activeMac = MAC_VARIANTS.find(v => v.id === macVariant) ?? MAC_VARIANTS[0];
+
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-8">
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
 
-      {/* Header */}
-      <div>
-        <Link href="/booths" className="text-sm text-gray-400 hover:text-gray-600 mb-4 inline-block">
-          ← Kembali ke Booth
+        {/* ── Breadcrumb ─────────────────────────────────────────────────── */}
+        <Link href="/booths" className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-600 transition-colors">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          Kembali ke Booth
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">Download Fremio Local Agent</h1>
-        <p className="text-gray-500 mt-1 text-sm">
-          Agent ringan yang berjalan di komputer booth untuk menghubungkan kamera eksternal &amp; printer ke browser — tanpa instalasi Node.js.
-        </p>
-      </div>
 
-      {/* Info box */}
-      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800 space-y-1">
-        <p className="font-semibold">✅ Tanpa agent pun booth tetap bisa dipakai:</p>
-        <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-          <li>Kamera laptop/PC bawaan → langsung terdeteksi browser</li>
-          <li>Cetak foto → dialog print Chrome muncul otomatis di akhir sesi</li>
-        </ul>
-        <p className="font-semibold mt-2">Agent dibutuhkan untuk:</p>
-        <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-          <li>Kamera DSLR / mirrorless via USB (sebagai webcam virtual)</li>
-          <li>Cetak <em>silent</em> tanpa dialog — langsung ke printer pilihan</li>
-          <li>Multiple printer — pilih printer spesifik per booth</li>
-        </ul>
-      </div>
-
-      {/* Not supported note */}
-      <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-800">
-        <p className="font-semibold">📱 Android &amp; iPad tidak didukung untuk agent</p>
-        <p className="mt-1 text-amber-700">
-          Perangkat mobile tidak memiliki akses ke printer sistem dan driver kamera USB.
-          Gunakan laptop/PC (Mac atau Windows) sebagai komputer booth utama.
-          Android/iPad bisa dipakai sebagai <em>layar tambahan</em> atau untuk scan QR saat mengunduh foto.
-        </p>
-      </div>
-
-      {/* Download cards */}
-      <div className="space-y-4">
-        <h2 className="text-lg font-semibold text-gray-800">Pilih Platform</h2>
-
-        {PLATFORMS.map((p) => (
-          <div
-            key={p.id}
-            className="rounded-2xl border border-gray-200 bg-white p-5 space-y-4"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">{p.icon}</span>
-                  <h3 className="font-semibold text-gray-900">{p.label}</h3>
-                </div>
-                <p className="text-xs text-gray-400 mt-0.5">{p.tip}</p>
-              </div>
-              <a
-                href={`/downloads/${p.file}`}
-                download={p.file}
-                className="shrink-0 px-4 py-2 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90"
-                style={{ background: "#c28a7a" }}
-              >
-                ⬇ Download
-              </a>
+        {/* ── Hero card ──────────────────────────────────────────────────── */}
+        <div className="rounded-3xl overflow-hidden shadow-sm"
+          style={{ background: "linear-gradient(135deg, #1a0f0a 0%, #2d1810 60%, #3d2215 100%)" }}>
+          <div className="px-7 pt-7 pb-6 flex items-start gap-5">
+            <div className="shrink-0 w-14 h-14 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center">
+              <Image src="/logo-salem.png" alt="Fremio" width={36} height={36} className="w-8 h-auto brightness-0 invert opacity-90" />
             </div>
-
-            {/* Terminal commands (Mac) */}
-            {p.terminalCmds && (
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                  Buka Terminal (Cmd+Space → "Terminal"), lalu jalankan:
-                </p>
-                <div className="relative rounded-xl bg-gray-900 px-4 py-3 font-mono text-sm text-green-400 space-y-0.5">
-                  {p.terminalCmds.map((cmd, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <span className="select-none text-gray-600">$</span>
-                      <span>{cmd}</span>
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => copyCmd(p.terminalCmds!.join("\n"), p.id)}
-                    className="absolute top-2.5 right-3 text-xs text-gray-400 hover:text-white transition-colors flex items-center gap-1"
-                    title="Salin semua perintah"
-                  >
-                    {copied === p.id ? (
-                      <span className="text-green-400 font-semibold">✓ Disalin</span>
-                    ) : (
-                      <span>⎘ Salin</span>
-                    )}
-                  </button>
-                </div>
-                <p className="text-xs text-gray-400">
-                  ⚠️ Jika muncul peringatan keamanan macOS: <span className="font-medium text-gray-600">System Settings → Privacy &amp; Security → Open Anyway</span>
-                </p>
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 space-y-2">
-                  <p className="font-semibold">🔐 Satu kali saja — install sertifikat HTTPS agent:</p>
-                  <p className="text-amber-700">Setelah agent jalan, Terminal akan menampilkan perintah ini. Salin dan jalankan:</p>
-                  <div className="relative rounded-lg bg-gray-900 px-3 py-2 font-mono text-xs text-green-400">
-                    <span className="select-none text-gray-600">$ </span>
-                    {"sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/fremio-cert.pem"}
-                    <button
-                      onClick={() => copyCmd(
-                        "sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/fremio-cert.pem",
-                        `${p.id}-cert`
-                      )}
-                      className="ml-3 text-gray-400 hover:text-white transition-colors"
-                    >
-                      {copied === `${p.id}-cert` ? <span className="text-green-400">✓</span> : "⎘"}
-                    </button>
-                  </div>
-                  <p className="text-amber-700">Masukkan password Mac → restart browser → buka booth kembali.</p>
-                </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-xl font-bold text-white">Fremio Studio</h1>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide bg-white/10 text-white/70 border border-white/10">
+                  v1.0.0
+                </span>
               </div>
-            )}
-
-            {/* Steps (Windows) */}
-            {p.steps && (
-              <div className="space-y-1.5">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cara Menjalankan</p>
-                <ol className="space-y-1">
-                  {p.steps.map((step, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
-                      <span className="shrink-0 w-5 h-5 rounded-full bg-gray-100 text-gray-500 text-xs flex items-center justify-center font-bold mt-0.5">
-                        {i + 1}
-                      </span>
-                      <span className="flex-1">{step}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
+              <p className="text-sm text-white/60 mt-1 leading-relaxed">
+                Hardware bridge ringan untuk menghubungkan kamera DSLR &amp; printer ke booth — berjalan lokal di mesin photobox.
+              </p>
+            </div>
           </div>
-        ))}
-      </div>
 
-      {/* Auto-start tips */}
-      <div className="rounded-2xl border border-gray-200 bg-gray-50 p-5 space-y-3">
-        <h2 className="font-semibold text-gray-800">💡 Tips: Jalankan Agent Otomatis saat Komputer Nyala</h2>
-        <div className="space-y-3 text-sm text-gray-600">
-          <div>
-            <p className="font-medium text-gray-700">Windows — Task Scheduler</p>
-            <p>Buka Task Scheduler → Create Basic Task → pilih "At startup" → pilih file <code className="bg-gray-200 px-1 rounded">fremio-agent-win.exe</code></p>
-          </div>
-          <div>
-            <p className="font-medium text-gray-700">macOS — Login Items</p>
-            <p>System Settings → General → Login Items → klik + dan pilih file <code className="bg-gray-200 px-1 rounded">~/Documents/fremio/studio/agent/fremio-agent-mac-arm64</code></p>
+          {/* Feature pills */}
+          <div className="px-7 pb-7 flex flex-wrap gap-2">
+            {[
+              { icon: "📷", label: "Kamera DSLR / Mirrorless" },
+              { icon: "🖨️", label: "Silent Print" },
+              { icon: "⚡", label: "Auto-start" },
+              { icon: "🔒", label: "Berjalan lokal" },
+            ].map(f => (
+              <span key={f.label}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white/8 text-white/70 border border-white/10">
+                <span>{f.icon}</span>
+                <span>{f.label}</span>
+              </span>
+            ))}
           </div>
         </div>
-      </div>
 
-      {/* Version info */}
-      <p className="text-xs text-gray-300 text-center">Fremio Local Agent v1.0.0 — port 3002</p>
+        {/* ── Perlu bridge? ───────────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <p className="text-sm font-semibold text-gray-700">Apakah kamu perlu Fremio Studio bridge?</p>
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-gray-100">
+            <div className="px-5 py-4 space-y-2">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Tanpa Bridge</p>
+              {["Webcam built-in laptop", "Kamera USB standar (UVC)", "Print via dialog browser", "Setup instan — 0 instalasi"].map(t => (
+                <div key={t} className="flex items-center gap-2 text-sm text-gray-600">
+                  <span className="text-green-500 font-bold text-xs">✓</span>
+                  <span>{t}</span>
+                </div>
+              ))}
+            </div>
+            <div className="px-5 py-4 space-y-2">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Dengan Bridge</p>
+              {["Kamera DSLR / mirrorless via USB", "Canon, Nikon, Sony, Fujifilm", "Silent print tanpa dialog", "Pilih printer spesifik per booth"].map(t => (
+                <div key={t} className="flex items-center gap-2 text-sm text-gray-600">
+                  <span className="text-[#c28a7a] font-bold text-xs">+</span>
+                  <span>{t}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Platform tabs ──────────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+
+          {/* Tab switcher */}
+          <div className="flex border-b border-gray-100">
+            {([
+              { id: "windows", label: "Windows", icon: "🪟", note: "Direkomendasikan" },
+              { id: "mac",     label: "macOS",   icon: "🍎", note: ""                },
+            ] as { id: TabId; label: string; icon: string; note: string }[]).map(t => (
+              <button key={t.id}
+                onClick={() => setTab(t.id)}
+                className={[
+                  "flex-1 flex items-center justify-center gap-2 px-4 py-3.5 text-sm font-semibold transition-colors",
+                  tab === t.id
+                    ? "border-b-2 text-gray-900"
+                    : "text-gray-400 hover:text-gray-600",
+                ].join(" ")}
+                style={tab === t.id ? { borderBottomColor: "#c28a7a" } : {}}>
+                <span>{t.icon}</span>
+                <span>{t.label}</span>
+                {t.note && (
+                  <span className="hidden sm:inline px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-600 border border-green-100">
+                    {t.note}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Windows content ──────────────────────────────────────────── */}
+          {tab === "windows" && (
+            <div className="p-5 space-y-5">
+              {/* Download button */}
+              <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-100">
+                <div>
+                  <p className="font-semibold text-gray-900 text-sm">Fremio Studio — Windows</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Launcher UI</p>
+                </div>
+                <a
+                  href="/downloads/fremio-studio-launcher.exe"
+                  download="fremio-studio-launcher.exe"
+                  className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
+                  style={{ background: "linear-gradient(135deg, #c28a7a, #a8705e)" }}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download
+                </a>
+              </div>
+
+              {/* Step-by-step */}
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Langkah instalasi</p>
+                {WIN_STEPS.map((s, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-base"
+                      style={{ background: "#fdf4f2" }}>
+                      {s.icon}
+                    </div>
+                    <div className="pt-0.5">
+                      <p className="text-sm font-semibold text-gray-800">{s.title}</p>
+                      <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{s.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* SmartScreen note */}
+              <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 flex gap-3">
+                <span className="text-lg shrink-0">💡</span>
+                <div className="space-y-0.5">
+                  <p className="text-xs font-semibold text-amber-800">Muncul peringatan "Windows protected your PC"?</p>
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    Klik <strong>More info</strong> → <strong>Run anyway</strong>.
+                    Ini muncul karena aplikasi baru, bukan karena berbahaya.
+                    Fremio Studio adalah software resmi dari Fremio.id.
+                  </p>
+                </div>
+              </div>
+
+              {/* Auto-start tip */}
+              <div className="rounded-xl bg-blue-50 border border-blue-100 px-4 py-3 flex gap-3">
+                <span className="text-lg shrink-0">⚡</span>
+                <div>
+                  <p className="text-xs font-semibold text-blue-800">Launcher menyalakan bridge saat tombol Mulai ditekan</p>
+                  <p className="text-xs text-blue-700 mt-0.5 leading-relaxed">
+                    Tidak ada CMD mendadak saat file dibuka.
+                    CMD/engine dijalankan setelah owner klik tombol Mulai di welcome screen.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── macOS content ─────────────────────────────────────────────── */}
+          {tab === "mac" && (
+            <div className="p-5 space-y-5">
+              {/* Chip selector */}
+              <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Jenis chip Mac kamu</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {MAC_VARIANTS.map(v => (
+                    <button key={v.id}
+                      onClick={() => setMacVariant(v.id)}
+                      className={[
+                        "px-4 py-3 rounded-xl text-left transition-all border text-sm",
+                        macVariant === v.id
+                          ? "border-[#c28a7a] bg-[#fdf4f2]"
+                          : "border-gray-200 bg-white hover:border-gray-300",
+                      ].join(" ")}>
+                      <p className={`font-semibold ${macVariant === v.id ? "text-[#a8705e]" : "text-gray-800"}`}>
+                        {v.label}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">{v.chip}</p>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  Tidak tahu chip apa?  → menu Apple () → <strong>About This Mac</strong> → lihat kolom Chip atau Processor.
+                </p>
+              </div>
+
+              {/* Download button */}
+              <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-100">
+                <div>
+                  <p className="font-semibold text-gray-900 text-sm">Fremio Studio — macOS {activeMac.label}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">macOS 12 Monterey ke atas · ~8 MB</p>
+                </div>
+                <a
+                  href={`/downloads/${activeMac.file}`}
+                  download={activeMac.file}
+                  className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
+                  style={{ background: "linear-gradient(135deg, #c28a7a, #a8705e)" }}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download
+                </a>
+              </div>
+
+              {/* Simple steps */}
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Langkah menjalankan</p>
+                {[
+                  { icon: "⬇️", title: "Download file di atas", desc: "File akan masuk ke folder Downloads." },
+                  { icon: "⌨️", title: "Buka Terminal", desc: "Tekan Cmd + Space, ketik Terminal, lalu Enter." },
+                  { icon: "▶️", title: "Jalankan perintah di bawah", desc: "Salin semua command lalu paste ke Terminal untuk menjalankan Fremio Studio bridge." },
+                  { icon: "✅", title: "Booth siap", desc: "Buka halaman setup booth — kamera & printer terdeteksi otomatis." },
+                ].map((s, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-base"
+                      style={{ background: "#fdf4f2" }}>
+                      {s.icon}
+                    </div>
+                    <div className="pt-0.5">
+                      <p className="text-sm font-semibold text-gray-800">{s.title}</p>
+                      <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{s.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-xl bg-blue-50 border border-blue-100 px-4 py-3 flex gap-3">
+                <span className="text-lg shrink-0">🍎</span>
+                <div className="space-y-0.5">
+                  <p className="text-xs font-semibold text-blue-800">Kalau sempat muncul popup "Not Opened"</p>
+                  <p className="text-xs text-blue-700 leading-relaxed">
+                    Abaikan jalur klik biasa. Tutup popup itu, lalu jalankan Fremio Studio bridge lewat Terminal menggunakan command di bawah.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl overflow-hidden border border-gray-800">
+                <div className="flex items-center justify-between bg-gray-900 px-4 py-2.5">
+                  <div className="flex gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-red-500/70" />
+                    <span className="w-3 h-3 rounded-full bg-yellow-500/70" />
+                    <span className="w-3 h-3 rounded-full bg-green-500/70" />
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(activeMac.cmds.join("\n"), "mac-cmds")}
+                    className="text-xs text-gray-400 hover:text-white transition-colors flex items-center gap-1"
+                  >
+                    {copied === "mac-cmds"
+                      ? <span className="text-green-400 font-semibold">✓ Disalin</span>
+                      : <><span>⎘</span><span>Salin semua</span></>
+                    }
+                  </button>
+                </div>
+                <div className="bg-gray-950 px-4 py-3 font-mono text-xs text-green-400 space-y-1">
+                  {activeMac.cmds.map((cmd, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className="select-none text-gray-600 shrink-0 mt-0.5">$</span>
+                      <span className="break-all">{cmd}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── FAQ ────────────────────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden divide-y divide-gray-100">
+          {[
+            {
+              q: "Apakah Fremio Studio bridge menyimpan foto saya?",
+              a: "Tidak. Fremio Studio bridge hanya menjadi jembatan antara hardware (kamera/printer) dan browser. Tidak ada foto yang dikirim ke server Fremio melalui bridge ini.",
+            },
+            {
+              q: "Apakah perlu update bridge saat ada fitur baru?",
+              a: "Hampir tidak pernah. Fitur baru Fremio Studio langsung tersedia di browser tanpa update apapun. Bridge hanya diupdate jika ada perubahan pada integrasi hardware (jarang, biasanya 1-2x per tahun).",
+            },
+            {
+              q: "Bridge crash — apa yang harus dilakukan?",
+              a: "Jalankan ulang Fremio Studio Launcher lalu klik tombol Mulai. Booth tetap bisa dipakai webcam biasa selama bridge tidak aktif.",
+            },
+          ].map((item, i) => (
+            <details key={i} className="group px-5 py-4 cursor-pointer">
+              <summary className="flex items-center justify-between gap-4 text-sm font-semibold text-gray-800 list-none">
+                {item.q}
+                <svg className="w-4 h-4 text-gray-400 shrink-0 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </summary>
+              <p className="mt-3 text-sm text-gray-500 leading-relaxed">{item.a}</p>
+            </details>
+          ))}
+        </div>
+
+        {/* Footer note */}
+        <p className="text-xs text-gray-300 text-center">Fremio Studio v1.0.0 · fremio.id</p>
+      </div>
     </div>
   );
 }

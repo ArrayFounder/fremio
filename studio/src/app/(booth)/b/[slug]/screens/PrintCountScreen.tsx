@@ -36,10 +36,11 @@ function isLightColor(hex: string): boolean {
 
 export function PrintCountScreen({ booth, frame, voucher, onSelect }: PrintCountScreenProps) {
   const { primaryColor, accentColor } = booth;
+  const bgColor = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.printCountBgColor as string | undefined ?? primaryColor;
   const [count, setCount] = useState(1);
   const isPortrait = useIsPortrait();
 
-  const light         = isLightColor(primaryColor);
+  const light         = isLightColor(bgColor);
   const textPrimary   = light ? "rgba(0,0,0,0.85)"  : "rgba(255,255,255,0.95)";
   const textSecondary = light ? "rgba(0,0,0,0.45)"  : "rgba(255,255,255,0.55)";
   const surfaceBg     = light ? "rgba(0,0,0,0.06)"  : "rgba(255,255,255,0.10)";
@@ -64,7 +65,7 @@ export function PrintCountScreen({ booth, frame, voucher, onSelect }: PrintCount
   return (
     <div
       className={`flex flex-col h-full ${px} ${py} select-none`}
-      style={{ backgroundColor: primaryColor }}
+      style={{ backgroundColor: bgColor }}
     >
       {/* Header — compact */}
       <div className={`${isPortrait ? "mb-3" : "mb-6"}`}>

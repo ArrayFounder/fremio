@@ -648,33 +648,23 @@ const ElementContent = forwardRef(
       // Photo slot: Dummy placeholder that shows position & size for real photos later
       // This is the "recipe" that Editor will use to place real captured photos
       const slotNumber =
-        element.data?.slotNumber || element.data?.label || "Area Foto";
+        element.data?.slotNumber || element.data?.label || null;
 
       const rotationDegrees = Number.isFinite(element?.rotation)
         ? element.rotation
         : 0;
 
-      console.log("📷 Rendering photo slot:", {
-        id: element.id,
-        label: slotNumber,
-        position: { x: element.x, y: element.y },
-        size: { width: element.width, height: element.height },
-        zIndex: element.zIndex,
-        hasCustomStyle: shouldUseCustomPhotoStyle,
-      });
-
       return (
         <div
           style={{
             ...style,
-            // Override: Set gradient background directly (not from getElementStyle)
             background: "linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)",
             position: "relative",
           }}
           className="h-full w-full creator-photo-placeholder"
           data-photo-placeholder="true"
         >
-          {/* Dashed border to indicate placeholder */}
+          {/* Dashed border */}
           <div
             style={{
               position: "absolute",
@@ -708,28 +698,55 @@ const ElementContent = forwardRef(
             <circle cx="12" cy="13" r="4" />
           </svg>
 
-          {/* Label */}
-          <div
-            style={{
-              position: "relative",
-              zIndex: 1,
-              borderRadius: "8px",
-              background: "rgba(255, 255, 255, 0.9)",
-              backdropFilter: "blur(4px)",
-              padding: "6px 12px",
-              fontSize: "11px",
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              color: "rgb(79 70 229)",
-              boxShadow:
-                "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+          {/* Slot number (large centered) or small pill label */}
+          {typeof slotNumber === 'number' ? (
+            <div style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               pointerEvents: "none",
-              border: "1px solid rgb(199 210 254)",
-            }}
-          >
-            📷 {slotNumber}
-          </div>
+              zIndex: 1,
+            }}>
+              <span style={{
+                fontSize: `${Math.round(Math.min(element.width, element.height) * 0.5)}px`,
+                fontWeight: 900,
+                color: "rgb(99 102 241 / 0.45)",
+                lineHeight: 0.85,
+                userSelect: "none",
+                letterSpacing: "-0.02em",
+                fontFamily: "system-ui, -apple-system, sans-serif",
+                transform: "translateY(-5%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}>
+                {slotNumber}
+              </span>
+            </div>
+          ) : (
+            <div
+              style={{
+                position: "relative",
+                zIndex: 1,
+                borderRadius: "8px",
+                background: "rgba(255, 255, 255, 0.9)",
+                backdropFilter: "blur(4px)",
+                padding: "6px 12px",
+                fontSize: "11px",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                color: "rgb(79 70 229)",
+                boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+                pointerEvents: "none",
+                border: "1px solid rgb(199 210 254)",
+              }}
+            >
+              📷 {slotNumber ?? "Area Foto"}
+            </div>
+          )}
 
           {/* Selection indicator */}
           {isSelected && (

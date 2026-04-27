@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { Sidebar } from "@/components/dashboard/Sidebar";
+import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { SWRProvider } from "@/components/dashboard/SWRProvider";
 
 export default async function DashboardLayout({
@@ -16,21 +16,13 @@ export default async function DashboardLayout({
 
   return (
     <SWRProvider>
-      <div className="flex h-screen overflow-hidden bg-gray-50">
-        {/* Sidebar — sticky kiri (desktop), drawer (mobile) */}
-        <Sidebar
-          businessName={user.businessName ?? user.name ?? "Operator"}
-          email={user.email ?? ""}
-          tier={user.subscriptionTier ?? "STARTER"}
-        />
-
-        {/* Konten halaman */}
-        <main className="flex-1 overflow-y-auto">
-          {/* Spacer untuk mobile topbar */}
-          <div className="md:hidden h-0" />
-          {children}
-        </main>
-      </div>
+      <DashboardShell
+        businessName={user.businessName ?? user.name ?? "Operator"}
+        email={user.email ?? ""}
+        tier={user.subscriptionTier ?? "STARTER"}
+      >
+        {children}
+      </DashboardShell>
     </SWRProvider>
   );
 }

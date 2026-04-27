@@ -626,6 +626,9 @@ export default function DesignerEditor() {
 
   const getCanvasDimensions = useCallback((ratio) => {
     if (typeof ratio !== "string") return { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
+    if (ratio === "A5") return { width: 1080, height: 1529 };
+    if (ratio === "A4") return { width: 1240, height: 1754 };
+    if (ratio === "A3") return { width: 1754, height: 2480 };
     const [w, h] = ratio.split(":").map(Number);
     if (!w || !h) return { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
     if (h >= w) return { width: CANVAS_WIDTH, height: Math.round((CANVAS_WIDTH * h) / w) };

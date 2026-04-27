@@ -72,6 +72,14 @@ model Operator {
   midtransServerKey  String?
   /// Midtrans Client Key milik operator — dikirim ke booth UI untuk init Snap
   midtransClientKey  String?
+  /// Xendit Secret Key (server-side)
+  xenditSecretKey    String?
+  /// Xendit Public Key (client-side)
+  xenditPublicKey    String?
+  /// Doku Client ID
+  dokuClientId       String?
+  /// Doku Secret Key
+  dokuSecretKey      String?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -143,6 +151,10 @@ model BoothSession {
   photoUrl      String?
   /// URL video Live Mode (WebM) di storage
   videoUrl      String?
+  /// URL animated GIF slideshow foto di storage
+  gifUrl        String?
+  /// URL foto-foto asli (per-capture, tanpa frame) di storage
+  rawPhotoUrls  String[]      @default([])
   /// Frame yang dipilih customer pada sesi ini
   frameId       String?
   startedAt     DateTime      @default(now())
@@ -211,8 +223,11 @@ model Transaction {
   sessionId       String            @unique
   amount          Int               // IDR, nilai penuh
   method          PaymentMethod
+  /// MIDTRANS | XENDIT | DOKU — menentukan webhook mana yang memproses notifikasi
+  gateway         String            @default("MIDTRANS")
+  /// Order ID universal — dikirim ke gateway sebagai reference. Untuk Midtrans: midtrans order_id, Xendit: reference_id, Doku: invoice_number
   midtransOrderId String?           @unique
-  /// transaction_id dari callback/webhook Midtrans
+  /// transaction_id / payment_id dari gateway
   midtransId      String?
   /// Token Snap untuk payment page; null jika method = CASH
   snapToken       String?

@@ -2,11 +2,16 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   createQrisCharge,
+  createSnapToken,
   buildBoothOrderId,
 } from "@/lib/midtrans";
+import { createXenditQrCharge } from "@/lib/xendit";
+import { createDokuQrisCharge } from "@/lib/doku";
 import { createPaymentSchema } from "@/lib/validations/payment";
 import type { ApiResponse } from "@/types";
 import type { CreatePaymentResponse } from "@/lib/validations/payment";
+
+const TRIAL_ONLY_MODE = true;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/payment/create
@@ -14,12 +19,17 @@ import type { CreatePaymentResponse } from "@/lib/validations/payment";
 // Dipanggil oleh booth UI setelah customer memilih frame.
 // Tidak memerlukan operator auth — booth berjalan sebagai publik.
 //
+// Gateway selection (prioritas):
+//  1. Midtrans  — jika midtransServerKey tersedia
+//  2. Xendit    — jika xenditSecretKey tersedia
+//  3. DOKU      — jika dokuClientId + dokuSecretKey tersedia
+//
 // Flow:
 //  1. Validasi input
-//  2. Ambil BoothConfig + harga per sesi
-//  3. Buat Transaction (PENDING) + BoothSession (PENDING) di DB
-//  4. Panggil Midtrans QRIS Core API → dapatkan QR code
-//  5. Update Transaction dengan midtransOrderId + midtransTransactionId
+//  2. Ambil BoothConfig + semua gateway keys
+//  3. Pilih gateway aktif berdasarkan keys yang tersedia
+//  4. Panggil gateway terpilih → dapatkan QR code
+//  5. Tulis Transaction (PENDING) + BoothSession (PENDING) di DB
 //  6. Return QR data ke booth UI
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -50,7 +60,16 @@ export async function POST(req: Request): Promise<Response> {
     where:   { id: boothConfigId, isActive: true },
     include: {
       operator: {
-        select: { id: true, subscriptionTier: true, subscriptionExpiry: true, isActive: true, midtransServerKey: true },
+        select: {
+          id:                true,
+          subscriptionTier:  true,
+          subscriptionExpiry: true,
+          isActive:          true,
+          midtransServerKey: true,
+          xenditSecretKey:   true,
+          dokuClientId:      true,
+          dokuSecretKey:     true,
+        },
       },
     },
   });
@@ -71,10 +90,27 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  if (!operator.subscriptionExpiry || operator.subscriptionExpiry < new Date()) {
+  if (
+    !TRIAL_ONLY_MODE &&
+    (!operator.subscriptionExpiry || operator.subscriptionExpiry < new Date())
+  ) {
     return NextResponse.json<ApiResponse>(
       { success: false, error: "Subscription operator sudah berakhir. Hubungi operator booth." },
       { status: 403 }
+    );
+  }
+
+  // Tentukan gateway aktif — prioritas: Midtrans → Xendit → DOKU
+  const activeGateway: "MIDTRANS" | "XENDIT" | "DOKU" | null =
+    operator.midtransServerKey                              ? "MIDTRANS" :
+    operator.xenditSecretKey                               ? "XENDIT"   :
+    (operator.dokuClientId && operator.dokuSecretKey)      ? "DOKU"     :
+    null;
+
+  if (!activeGateway) {
+    return NextResponse.json<ApiResponse>(
+      { success: false, error: "Tidak ada payment gateway yang dikonfigurasi. Hubungi operator booth." },
+      { status: 503 }
     );
   }
 
@@ -93,7 +129,7 @@ export async function POST(req: Request): Promise<Response> {
   // 3. Generate ID untuk Transaction dan BoothSession
   const sessionId    = crypto.randomUUID().replace(/-/g, "").slice(0, 25);
   const txId         = crypto.randomUUID().replace(/-/g, "").slice(0, 25);
-  const midtransOrderId = buildBoothOrderId(boothConfig.slug);
+  const orderId      = buildBoothOrderId(boothConfig.slug); // universal order ID lintas gateway
   const description  = `Sesi Foto — ${boothConfig.boothName}`;
 
   // Hitung amount:
@@ -124,18 +160,68 @@ export async function POST(req: Request): Promise<Response> {
 
   const amount = baseAmount + extraPrintCost;
 
-  // 4. Panggil Midtrans QRIS sebelum menulis ke DB
-  //    Jika Midtrans gagal, kita tidak meninggalkan record orphan di DB.
-  let qrisResult: Awaited<ReturnType<typeof createQrisCharge>>;
+  // 4. Panggil gateway terpilih untuk membuat QR code
+  //    Jika gateway gagal, kita tidak meninggalkan record orphan di DB.
+  let qrString:   string = "";
+  let qrImageUrl: string = "";
+  let snapToken:  string = "";
+  let expiresAt:  Date   = new Date(Date.now() + 15 * 60 * 1000);
+  let gatewayTxId: string = "";
+
   try {
-    qrisResult = await createQrisCharge(
-      { orderId: midtransOrderId, amount, description },
-      operator.midtransServerKey,
-    );
+    if (activeGateway === "MIDTRANS") {
+      // Coba QRIS Core API dulu; jika 402 (channel belum aktif), fallback ke Snap
+      try {
+        const result = await createQrisCharge(
+          { orderId, amount, description },
+          operator.midtransServerKey,
+        );
+        qrString    = result.qrString;
+        qrImageUrl  = result.qrImageUrl;
+        expiresAt   = result.expiresAt;
+        gatewayTxId = result.midtransTransactionId;
+      } catch (qrisErr) {
+        const qrisMsg = qrisErr instanceof Error ? qrisErr.message : "";
+        // 402 = Payment channel not activated — fallback ke Snap token
+        if (qrisMsg.includes("[402]") || qrisMsg.includes("not activated")) {
+          console.warn("[payment/create] QRIS not active, falling back to Snap token");
+          const snapResult = await createSnapToken(
+            { orderId, amount, description },
+            operator.midtransServerKey,
+          );
+          snapToken   = snapResult.snapToken;
+          gatewayTxId = orderId; // Snap tidak return txId sampai bayar
+        } else {
+          throw qrisErr; // lempar ulang error lain (401, 500, dll)
+        }
+      }
+
+    } else if (activeGateway === "XENDIT") {
+      const result = await createXenditQrCharge(
+        { referenceId: orderId, amount, description },
+        operator.xenditSecretKey!,
+      );
+      qrString    = result.qrString;
+      qrImageUrl  = ""; // Xendit tidak return image URL — render qrString di client
+      expiresAt   = result.expiresAt;
+      gatewayTxId = result.xenditQrId;
+
+    } else if (activeGateway === "DOKU") {
+      const result = await createDokuQrisCharge(
+        { invoiceNumber: orderId, amount, description },
+        operator.dokuClientId!,
+        operator.dokuSecretKey!,
+      );
+      qrString    = result.qrString;
+      qrImageUrl  = result.qrImageUrl;
+      expiresAt   = result.expiresAt;
+      gatewayTxId = result.invoiceNumber;
+    }
   } catch (err) {
-    console.error("[payment/create] Midtrans QRIS error:", err);
+    const msg = err instanceof Error ? err.message : "Gagal membuat QR pembayaran. Coba lagi.";
+    console.error(`[payment/create] ${activeGateway} error:`, msg);
     return NextResponse.json<ApiResponse>(
-      { success: false, error: "Gagal membuat QR pembayaran. Coba lagi." },
+      { success: false, error: msg },
       { status: 502 }
     );
   }
@@ -144,14 +230,15 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const txCreate = prisma.transaction.create({
       data: {
-        id:               txId,
+        id:              txId,
         sessionId,
-        operatorId:       operator.id,
+        operatorId:      operator.id,
         amount,
-        method:           "QRIS",
-        midtransOrderId,
-        midtransId:       qrisResult.midtransTransactionId,
-        status:           "PENDING",
+        method:          "QRIS",
+        gateway:         activeGateway,
+        midtransOrderId: orderId,   // universal order ID untuk semua gateway
+        midtransId:      gatewayTxId,
+        status:          "PENDING",
       },
     });
     const sessionCreate = prisma.boothSession.create({
@@ -161,7 +248,7 @@ export async function POST(req: Request): Promise<Response> {
         frameId:       frameId ?? null,
         status:        "PENDING",
         transactionId: txId,
-        expiresAt:     qrisResult.expiresAt,
+        expiresAt,
       },
     });
 
@@ -185,11 +272,12 @@ export async function POST(req: Request): Promise<Response> {
   // 6. Return ke booth UI
   const responseData: CreatePaymentResponse = {
     sessionId,
-    orderId:    midtransOrderId,
+    orderId,
     amount,
-    qrImageUrl: qrisResult.qrImageUrl,
-    qrString:   qrisResult.qrString,
-    expiresAt:  qrisResult.expiresAt.toISOString(),
+    qrImageUrl: qrImageUrl || null,
+    qrString:   qrString   || null,
+    expiresAt:  expiresAt.toISOString(),
+    snapToken:  snapToken  || null,
   };
 
   return NextResponse.json<ApiResponse<CreatePaymentResponse>>(

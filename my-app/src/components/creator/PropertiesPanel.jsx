@@ -159,6 +159,10 @@ export default function PropertiesPanel({
   // Local state for dimension inputs
   const [localWidth, setLocalWidth] = useState("");
   const [localHeight, setLocalHeight] = useState("");
+
+  // Custom canvas size inputs
+  const [customCanvasW, setCustomCanvasW] = useState("1080");
+  const [customCanvasH, setCustomCanvasH] = useState("1920");
   
   // State to control which dropdown is open (only one at a time)
   const [openDropdown, setOpenDropdown] = useState(null);
@@ -729,11 +733,12 @@ export default function PropertiesPanel({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {[
-                { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱" },
-                { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "🎞️" },
-                { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️" },
+                { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱", matchRatios: ["9:16"] },
+                { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "🎥", matchRatios: ["2:3"] },
+                { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️", matchRatios: ["1:3"] },
+                { label: "A3/A4/A5", ratio: "A4", desc: "1240 × 1754 px", icon: "�", matchRatios: ["A3","A4","A5"] },
               ].map((preset) => {
-                const isSelected = canvasAspectRatio === preset.ratio;
+                const isSelected = preset.matchRatios.includes(canvasAspectRatio);
                 return (
                   <button
                     key={preset.ratio}
@@ -813,6 +818,71 @@ export default function PropertiesPanel({
                   </button>
                 );
               })}
+
+              {/* Custom size */}
+              {(() => {
+                const stdRatios = ['9:16','2:3','1:3','A3','A4','A5'];
+                const isCustomActive = !stdRatios.includes(canvasAspectRatio);
+                return (
+                  <div style={{
+                    padding: '14px 16px',
+                    borderRadius: '14px',
+                    border: isCustomActive ? '2px solid #d4a99a' : '1px solid rgba(224, 183, 169, 0.15)',
+                    background: isCustomActive
+                      ? 'linear-gradient(135deg, #fdf7f4 0%, #f7ebe5 50%, #f1dfd6 100%)'
+                      : 'linear-gradient(135deg, #ffffff 0%, #fefcfb 100%)',
+                    boxShadow: isCustomActive
+                      ? '0 4px 16px rgba(212, 169, 154, 0.25)'
+                      : '0 2px 8px rgba(224, 183, 169, 0.08)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '20px' }}>⚙️</span>
+                      <span style={{ fontWeight: 700, fontSize: '14px', color: '#4a302b' }}>Custom</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="number" min="100" max="9999"
+                        value={customCanvasW}
+                        onChange={(e) => setCustomCanvasW(e.target.value)}
+                        placeholder="Lebar"
+                        style={{
+                          flex: 1, padding: '8px 10px', borderRadius: '10px', fontSize: '13px',
+                          border: '1px solid rgba(224,183,169,0.4)', background: '#fff',
+                          color: '#4a302b', fontWeight: 600, outline: 'none',
+                        }}
+                      />
+                      <span style={{ color: '#c89585', fontWeight: 700 }}>×</span>
+                      <input
+                        type="number" min="100" max="9999"
+                        value={customCanvasH}
+                        onChange={(e) => setCustomCanvasH(e.target.value)}
+                        placeholder="Tinggi"
+                        style={{
+                          flex: 1, padding: '8px 10px', borderRadius: '10px', fontSize: '13px',
+                          border: '1px solid rgba(224,183,169,0.4)', background: '#fff',
+                          color: '#4a302b', fontWeight: 600, outline: 'none',
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const w = parseInt(customCanvasW, 10);
+                          const h = parseInt(customCanvasH, 10);
+                          if (w >= 100 && h >= 100) onCanvasAspectRatioChange?.(`${w}:${h}`);
+                        }}
+                        style={{
+                          padding: '8px 14px', borderRadius: '10px', fontSize: '13px',
+                          background: 'linear-gradient(135deg, #e0b7a9, #d4a99a)',
+                          color: '#fff', fontWeight: 700, border: 'none', cursor: 'pointer',
+                        }}
+                      >
+                        Terapkan
+                      </button>
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>px (lebar × tinggi)</div>
+                  </div>
+                );
+              })()}
             </div>
             
             {/* Current Ratio Display */}
@@ -1089,8 +1159,11 @@ export default function PropertiesPanel({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {[
                 { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱" },
-                { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "🎞️" },
+                { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "�" },
                 { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️" },
+                { label: "A3", ratio: "A3", desc: "297 × 420 mm", icon: "📄" },
+                { label: "A4", ratio: "A4", desc: "210 × 297 mm", icon: "📃" },
+                { label: "A5", ratio: "A5", desc: "148 × 210 mm", icon: "📋" },
               ].map((preset) => {
                 const isSelected = canvasAspectRatio === preset.ratio;
                 return (
@@ -1172,6 +1245,44 @@ export default function PropertiesPanel({
                   </button>
                 );
               })}
+
+              {/* Custom size */}
+              {(() => {
+                const stdRatios2 = ['9:16','2:3','1:3','A3','A4','A5'];
+                const isCustomActive2 = !stdRatios2.includes(canvasAspectRatio);
+                return (
+                  <div style={{
+                    padding: '14px 16px',
+                    borderRadius: '14px',
+                    border: isCustomActive2 ? '2px solid #d4a99a' : '1px solid rgba(224, 183, 169, 0.15)',
+                    background: isCustomActive2
+                      ? 'linear-gradient(135deg, #fdf7f4 0%, #f7ebe5 50%, #f1dfd6 100%)'
+                      : 'linear-gradient(135deg, #ffffff 0%, #fefcfb 100%)',
+                    boxShadow: isCustomActive2 ? '0 4px 16px rgba(212, 169, 154, 0.25)' : '0 2px 8px rgba(224, 183, 169, 0.08)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '20px' }}>⚙️</span>
+                      <span style={{ fontWeight: 700, fontSize: '14px', color: '#4a302b' }}>Custom</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input type="number" min="100" max="9999" value={customCanvasW}
+                        onChange={(e) => setCustomCanvasW(e.target.value)} placeholder="Lebar"
+                        style={{ flex: 1, padding: '8px 10px', borderRadius: '10px', fontSize: '13px', border: '1px solid rgba(224,183,169,0.4)', background: '#fff', color: '#4a302b', fontWeight: 600, outline: 'none' }}
+                      />
+                      <span style={{ color: '#c89585', fontWeight: 700 }}>×</span>
+                      <input type="number" min="100" max="9999" value={customCanvasH}
+                        onChange={(e) => setCustomCanvasH(e.target.value)} placeholder="Tinggi"
+                        style={{ flex: 1, padding: '8px 10px', borderRadius: '10px', fontSize: '13px', border: '1px solid rgba(224,183,169,0.4)', background: '#fff', color: '#4a302b', fontWeight: 600, outline: 'none' }}
+                      />
+                      <button type="button"
+                        onClick={() => { const w = parseInt(customCanvasW, 10); const h = parseInt(customCanvasH, 10); if (w >= 100 && h >= 100) onCanvasAspectRatioChange?.(`${w}:${h}`); }}
+                        style={{ padding: '8px 14px', borderRadius: '10px', fontSize: '13px', background: 'linear-gradient(135deg, #e0b7a9, #d4a99a)', color: '#fff', fontWeight: 700, border: 'none', cursor: 'pointer' }}
+                      >Terapkan</button>
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '6px' }}>px (lebar × tinggi)</div>
+                  </div>
+                );
+              })()}
             </div>
             
             {/* Current Ratio Display */}
@@ -1345,7 +1456,7 @@ export default function PropertiesPanel({
             {/* Description */}
             <div className="bg-gradient-to-br from-[#fdf7f4] to-[#f5e5df] rounded-xl p-4 border border-[#e0b7a9]/20">
               <p className="text-sm text-slate-600 leading-relaxed">
-                Area Foto adalah tempat dimana foto yang diambil di halaman <strong>TakeMoment</strong> akan ditampilkan dalam frame.
+                Area Foto adalah tempat dimana foto yang diambil di halaman <strong>TakeMoment</strong> akan ditampilkan dalam frame. Canvas dibagi dua oleh garis tengah — area kiri dan kanan bergerak seperti <strong>cermin</strong>.
               </p>
             </div>
             
@@ -1354,35 +1465,35 @@ export default function PropertiesPanel({
               <label className="text-xs font-bold uppercase tracking-wider text-[#e0b7a9]">
                 Pilih Layout Grid
               </label>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 {[
-                  { rows: 1, cols: 1, label: "1×1" },
-                  { rows: 2, cols: 1, label: "2×1" },
-                  { rows: 2, cols: 2, label: "2×2" },
-                  { rows: 3, cols: 2, label: "3×2" },
+                  { rows: 3, label: "6 Foto", sublabel: "3×2" },
+                  { rows: 4, label: "8 Foto", sublabel: "4×2" },
                 ].map((grid) => (
                   <button
                     key={grid.label}
                     type="button"
-                    onClick={() => onConfirmAddPhoto(grid.rows, grid.cols)}
-                    className="flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-[#e0b7a9]/30 bg-white p-3 transition-all hover:border-[#e0b7a9] hover:bg-[#fdf7f4] hover:shadow-md active:scale-95"
+                    onClick={() => onConfirmAddPhoto(grid.rows)}
+                    className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-[#e0b7a9]/30 bg-white p-4 transition-all hover:border-[#e0b7a9] hover:bg-[#fdf7f4] hover:shadow-md active:scale-95"
                   >
-                    {/* Grid Preview */}
-                    <div 
-                      className="grid gap-0.5 w-10 h-12 p-0.5"
-                      style={{
-                        gridTemplateRows: `repeat(${grid.rows}, 1fr)`,
-                        gridTemplateColumns: `repeat(${grid.cols}, 1fr)`,
-                      }}
-                    >
-                      {Array.from({ length: grid.rows * grid.cols }).map((_, i) => (
-                        <div
-                          key={i}
-                          className="bg-[#d1e3f0] rounded-sm border border-[#a8c8e0]"
-                        />
-                      ))}
+                    {/* Split grid preview: left 1-col + center divider + right 1-col */}
+                    <div className="flex gap-1 w-14 h-14 p-0.5">
+                      <div className="flex flex-col gap-0.5 flex-1">
+                        {Array.from({ length: grid.rows }).map((_, i) => (
+                          <div key={i} className="flex-1 bg-[#d1e3f0] rounded-sm border border-[#a8c8e0]" />
+                        ))}
+                      </div>
+                      <div className="w-px bg-[#e0b7a9]/50 self-stretch" />
+                      <div className="flex flex-col gap-0.5 flex-1">
+                        {Array.from({ length: grid.rows }).map((_, i) => (
+                          <div key={i} className="flex-1 bg-[#d1e3f0] rounded-sm border border-[#a8c8e0]" />
+                        ))}
+                      </div>
                     </div>
-                    <span className="text-xs font-semibold text-slate-600">{grid.label}</span>
+                    <div className="text-center">
+                      <div className="text-sm font-bold text-slate-700">{grid.label}</div>
+                      <div className="text-xs text-slate-400">{grid.sublabel}</div>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -1391,7 +1502,7 @@ export default function PropertiesPanel({
             {/* Tips */}
             <div className="bg-blue-50 rounded-xl p-3 border border-blue-200">
               <p className="text-xs text-blue-700 font-medium">
-                💡 <strong>Tips:</strong> Pilih layout grid untuk menambahkan beberapa area foto sekaligus dengan susunan simetris.
+                💡 <strong>Tips:</strong> Geser area foto ke atas/bawah → semua ikut. Geser kiri/kanan → sisi lainnya bergerak berlawanan (cermin). Area foto tidak bisa melewati garis tengah canvas.
               </p>
             </div>
 
