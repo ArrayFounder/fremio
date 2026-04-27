@@ -155,6 +155,10 @@ export default function PropertiesPanel({
   onAddPexelsPhoto = () => {},
   onCancelPexelsTool = () => {},
   onAddOpenverseBackground = () => {},
+  onPhotoVerticalModeChange = () => {},
+  photoVerticalMode = "parallel",
+  photoGapY = 30,
+  onPhotoGapChange = () => {},
 }) {
   // Local state for dimension inputs
   const [localWidth, setLocalWidth] = useState("");
@@ -1545,7 +1549,66 @@ export default function PropertiesPanel({
 
           {selectedElement.type === "photo" && (
             <>
-              {renderBorderRadiusControls()}
+              {selectedElement.data?.linkedGroup === 'mirror' && (
+                <Section title="Mode Vertikal">
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {[{ value: 'parallel', label: 'Sejajar' }, { value: 'inverted', label: 'Terbalik' }].map((opt) => {
+                      const isActive = photoVerticalMode === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => onPhotoVerticalModeChange(opt.value)}
+                          style={{
+                            flex: 1, padding: '10px 8px', borderRadius: '12px', cursor: 'pointer',
+                            border: isActive ? '2px solid #d4a99a' : '1px solid rgba(224,183,169,0.3)',
+                            background: isActive ? 'linear-gradient(135deg,#fdf7f4,#f1dfd6)' : '#fff',
+                            fontWeight: isActive ? 700 : 500, fontSize: '13px',
+                            color: isActive ? '#4a302b' : '#6b7280', transition: 'all 0.2s ease',
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#9ca3af', lineHeight: 1.5 }}>
+                    {photoVerticalMode === 'parallel'
+                      ? 'Jarak area foto kiri & kanan dari sisi atas canvas selalu sama.'
+                      : 'Jarak kiri dari sisi atas = jarak kanan dari sisi bawah canvas.'}
+                  </div>
+                </Section>
+              )}
+              {selectedElement.data?.linkedGroup === 'mirror' && (
+                <Section title="Jarak Vertikal Antar Foto">
+                  <InputRow label="Jarak (px)">
+                    <input
+                      type="range"
+                      min={0}
+                      max={300}
+                      tabIndex="-1"
+                      value={photoGapY}
+                      onChange={(e) => onPhotoGapChange(Number(e.target.value))}
+                    />
+                    <div className="text-xs font-semibold text-slate-500">{photoGapY}px</div>
+                  </InputRow>
+                </Section>
+              )}
+              <Section title="Kelengkungan Sudut">
+                <InputRow label="Radius">
+                  <input
+                    type="range"
+                    min={0}
+                    max={120}
+                    tabIndex="-1"
+                    value={selectedElement.data?.borderRadius ?? 0}
+                    onChange={(e) => onUpdateElement(selectedElement.id, { data: { borderRadius: Number(e.target.value) } })}
+                  />
+                  <div className="text-xs font-semibold text-slate-500">
+                    {Math.round(selectedElement.data?.borderRadius ?? 0)}px
+                  </div>
+                </InputRow>
+              </Section>
             </>
           )}
 
@@ -1561,8 +1624,9 @@ export default function PropertiesPanel({
             renderBackgroundPhotoControls()}
 
           {/* Dimensi - dipindahkan ke bawah (tidak untuk teks) */}
-          {selectedElement.type !== "background-photo" && selectedElement.type !== "text" && renderSharedControls()}
+          {selectedElement.type !== "background-photo" && selectedElement.type !== "text" && selectedElement.type !== "photo" && renderSharedControls()}
 
+          {selectedElement.type !== "photo" && (
           <button
             type="button"
             onClick={() => {
@@ -1573,6 +1637,7 @@ export default function PropertiesPanel({
           >
             <Trash2 size={18} strokeWidth={2.5} /> Hapus Element
           </button>
+          )}
         </>
       )}
     </motion.div>
