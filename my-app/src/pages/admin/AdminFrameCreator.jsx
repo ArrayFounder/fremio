@@ -37,98 +37,12 @@ import {
 } from "../../components/creator/canvasConstants.js";
 import { useAuth } from "../../contexts/AuthContext.jsx";
 import unifiedFrameService from "../../services/unifiedFrameService";
+import { detectFrameSlots, buildSlotMaps } from "../../utils/slotSystem.js";
 import "../Create.css";
 
 const panelMotion = {
   hidden: { opacity: 0, y: 16 },
   visible: { opacity: 1, y: 0 },
-};
-
-// ── Detect transparent slot regions from a frame PNG ──
-const detectFrameSlots = (dataUrl) =>
-  new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, 400 / Math.max(img.width, img.height));
-      const w = Math.max(1, Math.round(img.width * scale));
-      const h = Math.max(1, Math.round(img.height * scale));
-      const offscreen = document.createElement("canvas");
-      offscreen.width = w;
-      offscreen.height = h;
-      const ctx = offscreen.getContext("2d", { alpha: true });
-      ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(img, 0, 0, w, h);
-      const { data: pixels } = ctx.getImageData(0, 0, w, h);
-      const transp = new Uint8Array(w * h);
-      for (let i = 0; i < w * h; i++) transp[i] = pixels[i * 4 + 3] < 128 ? 1 : 0;
-      const labels = new Int32Array(w * h).fill(-1);
-      const bounds = [];
-      const stack = [];
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const idx = y * w + x;
-          if (!transp[idx] || labels[idx] !== -1) continue;
-          const label = bounds.length;
-          const b = { minX: x, minY: y, maxX: x, maxY: y, size: 0 };
-          stack.push(idx);
-          while (stack.length > 0) {
-            const cur = stack.pop();
-            if (labels[cur] !== -1) continue;
-            labels[cur] = label;
-            b.size++;
-            const cx = cur % w;
-            const cy = Math.floor(cur / w);
-            if (cx < b.minX) b.minX = cx;
-            if (cx > b.maxX) b.maxX = cx;
-            if (cy < b.minY) b.minY = cy;
-            if (cy > b.maxY) b.maxY = cy;
-            if (cx > 0 && transp[cur - 1] && labels[cur - 1] === -1) stack.push(cur - 1);
-            if (cx < w - 1 && transp[cur + 1] && labels[cur + 1] === -1) stack.push(cur + 1);
-            if (cy > 0 && transp[cur - w] && labels[cur - w] === -1) stack.push(cur - w);
-            if (cy < h - 1 && transp[cur + w] && labels[cur + w] === -1) stack.push(cur + w);
-          }
-          bounds.push(b);
-        }
-      }
-      const minSize = w * h * 0.01;
-      const slots = bounds
-        .filter((b) => b.size >= minSize)
-        .map((b) => ({
-          left: b.minX / w,
-          top: b.minY / h,
-          width: (b.maxX - b.minX + 1) / w,
-          height: (b.maxY - b.minY + 1) / h,
-        }));
-      resolve(slots);
-    };
-    img.onerror = () => resolve([]);
-    img.src = dataUrl;
-  });
-
-// ── Build slot display number map (mirror-aware) ──
-const buildSlotDisplayNumberMap = (slots) => {
-  const map = {};
-  if (!Array.isArray(slots) || slots.length === 0) return map;
-  slots.forEach((_, index) => { map[index] = index + 1; });
-  const withGeom = slots.map((slot, index) => {
-    const left = Number.isFinite(Number(slot?.left)) ? Number(slot.left) : 0;
-    const top = Number.isFinite(Number(slot?.top)) ? Number(slot.top) : 0;
-    const width = Number.isFinite(Number(slot?.width)) ? Number(slot.width) : 0;
-    const height = Number.isFinite(Number(slot?.height)) ? Number(slot.height) : 0;
-    return { index, top, centerX: left + width / 2, width, height };
-  });
-  const valid = withGeom.filter((s) => s.width > 0 && s.height > 0);
-  if (valid.length !== slots.length || slots.length % 2 !== 0) return map;
-  const left = valid.filter((s) => s.centerX < 0.5);
-  const right = valid.filter((s) => s.centerX >= 0.5);
-  if (left.length === 0 || left.length !== right.length) return map;
-  const sort = (a, b) => Math.abs(a.top - b.top) > 0.0001 ? a.top - b.top : a.centerX - b.centerX;
-  left.sort(sort);
-  right.sort(sort);
-  const rowCount = left.length;
-  left.forEach((s, i) => { map[s.index] = i + 1; });
-  right.forEach((s, i) => { map[s.index] = rowCount - i; });
-  return map;
 };
 
 export default function AdminFrameCreator({ studioBoothMode = false }) {
@@ -628,7 +542,7 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
 
       showToast("info", "Mendeteksi area slot foto…", 6000);
       const slots = await detectFrameSlots(dataUrl);
-      const slotNumberMap = buildSlotDisplayNumberMap(slots);
+      const { slotNumberMap, photoIndexMap } = buildSlotMaps(slots);
 
       if (slots.length > 0) {
         slots.forEach((slot, index) => {
@@ -639,7 +553,7 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
             height: Math.round(slot.height * canvasH),
             zIndex: 0,
             data: {
-              photoIndex: index,
+              photoIndex: photoIndexMap[index] ?? index,
               slotNumber: slotNumberMap[index] ?? index + 1,
               borderRadius: 0,
             },
@@ -1398,19 +1312,27 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
                 const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
                 const centerX = Math.floor(canvasW / 2);
                 const slots = buildMirroredPhotoLayout(numRows, canvasW, canvasH);
-                // Assign display numbers: left col 1..N top→bottom, right col N..1 top→bottom
-                const leftSlots = slots.filter((s) => s.side === "left").sort((a, b) => a.y - b.y);
-                const rightSlots = slots.filter((s) => s.side === "right").sort((a, b) => a.y - b.y);
-                const rowCount = leftSlots.length;
-                const slotNumberMap = {};
-                leftSlots.forEach((s, i) => { slotNumberMap[slots.indexOf(s)] = i + 1; });
-                rightSlots.forEach((s, i) => { slotNumberMap[slots.indexOf(s)] = rowCount - i; });
+                const normalizedSlots = slots.map((slot) => ({
+                  left: slot.x / canvasW,
+                  top: slot.y / canvasH,
+                  width: slot.width / canvasW,
+                  height: slot.height / canvasH,
+                }));
+                const { slotNumberMap, photoIndexMap } = buildSlotMaps(normalizedSlots);
                 let lastAddedId = null;
                 slots.forEach((slot, index) => {
                   const newId = addElement("photo", {
                     x: slot.x, y: slot.y, width: slot.width, height: slot.height,
                     zIndex: 0,
-                    data: { photoIndex: index, slotNumber: slotNumberMap[index] ?? index + 1, borderRadius: 0, linkedGroup: "mirror", side: slot.side, rowIndex: slot.rowIndex, mirrorCenterX: centerX },
+                    data: {
+                      photoIndex: photoIndexMap[index] ?? index,
+                      slotNumber: slotNumberMap[index] ?? index + 1,
+                      borderRadius: 0,
+                      linkedGroup: "mirror",
+                      side: slot.side,
+                      rowIndex: slot.rowIndex,
+                      mirrorCenterX: centerX,
+                    },
                   });
                   if (newId) lastAddedId = newId;
                 });

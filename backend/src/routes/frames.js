@@ -15,6 +15,87 @@ const buildImageUrl = (imagePath, req) => {
   return `${protocol}://${host}${imagePath}`;
 };
 
+const toFiniteNumber = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const sortByTopThenLeft = (a, b) => {
+  if (Math.abs(a.top - b.top) > 0.0001) return a.top - b.top;
+  return a.left - b.left;
+};
+
+const normalizeSlotsAndMode = (slots) => {
+  const sourceSlots = Array.isArray(slots) ? slots : [];
+  const geometry = sourceSlots
+    .map((slot, index) => {
+      const left = toFiniteNumber(slot?.left, 0);
+      const top = toFiniteNumber(slot?.top, 0);
+      const width = toFiniteNumber(slot?.width, 0);
+      const height = toFiniteNumber(slot?.height, 0);
+      return {
+        index,
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+      };
+    })
+    .filter((slot) => slot.width > 0 && slot.height > 0);
+
+  const slotNumberMap = {};
+  const photoIndexMap = {};
+
+  const crossesCenter = geometry.some((slot) => slot.left < 0.5 && slot.right > 0.5);
+  const leftSlots = geometry.filter((slot) => slot.right <= 0.5);
+  const rightSlots = geometry.filter((slot) => slot.left >= 0.5);
+
+  const isDuplicateMode =
+    !crossesCenter &&
+    leftSlots.length > 0 &&
+    leftSlots.length === rightSlots.length &&
+    leftSlots.length + rightSlots.length === geometry.length;
+
+  if (isDuplicateMode) {
+    leftSlots.sort(sortByTopThenLeft);
+    rightSlots.sort(sortByTopThenLeft);
+    const rows = leftSlots.length;
+    leftSlots.forEach((slot, idx) => {
+      slotNumberMap[slot.index] = idx + 1;
+      photoIndexMap[slot.index] = idx;
+    });
+    rightSlots.forEach((slot, idx) => {
+      const displayNumber = rows - idx;
+      slotNumberMap[slot.index] = displayNumber;
+      photoIndexMap[slot.index] = displayNumber - 1;
+    });
+  } else {
+    [...geometry].sort(sortByTopThenLeft).forEach((slot, idx) => {
+      slotNumberMap[slot.index] = idx + 1;
+      photoIndexMap[slot.index] = idx;
+    });
+  }
+
+  const normalizedSlots = sourceSlots.map((slot, index) => ({
+    ...slot,
+    slotNumber:
+      Number.isFinite(Number(slot?.slotNumber))
+        ? Number(slot.slotNumber)
+        : slotNumberMap[index] ?? index + 1,
+    photoIndex:
+      Number.isFinite(Number(slot?.photoIndex))
+        ? Number(slot.photoIndex)
+        : photoIndexMap[index] ?? index,
+  }));
+
+  return {
+    slots: normalizedSlots,
+    duplicatePhotos: isDuplicateMode,
+    captureMode: isDuplicateMode ? 'duplicate' : 'single',
+  };
+};
+
 /**
  * GET /api/frames
  * Get all active frames (public)
@@ -71,6 +152,7 @@ router.get('/', optionalAuth, async (req, res) => {
     // Transform for frontend compatibility - include full URLs
     const frames = result.rows.map(frame => {
       const imageUrl = buildImageUrl(frame.image_path, req);
+      const slotMeta = normalizeSlotsAndMode(frame.slots || []);
       return {
         id: frame.id,
         name: frame.name,
@@ -79,9 +161,11 @@ router.get('/', optionalAuth, async (req, res) => {
         imagePath: imageUrl,
         imageUrl: imageUrl,
         thumbnailUrl: imageUrl,
-        slots: frame.slots || [],
+        slots: slotMeta.slots,
         layout: frame.layout || {},
         maxCaptures: frame.max_captures,
+        duplicatePhotos: slotMeta.duplicatePhotos,
+        captureMode: slotMeta.captureMode,
         viewCount: frame.view_count,
         downloadCount: frame.download_count,
         createdAt: frame.created_at,
@@ -124,6 +208,7 @@ router.get('/:id', async (req, res) => {
     
     const frame = result.rows[0];
     const imageUrl = buildImageUrl(frame.image_path, req);
+    const slotMeta = normalizeSlotsAndMode(frame.slots || []);
     
     res.json({
       id: frame.id,
@@ -133,9 +218,11 @@ router.get('/:id', async (req, res) => {
       imagePath: imageUrl,
       imageUrl: imageUrl,
       thumbnailUrl: imageUrl,
-      slots: frame.slots || [],
+      slots: slotMeta.slots,
       layout: frame.layout || {},
       maxCaptures: frame.max_captures,
+      duplicatePhotos: slotMeta.duplicatePhotos,
+      captureMode: slotMeta.captureMode,
       viewCount: frame.view_count,
       downloadCount: frame.download_count,
       createdAt: frame.created_at,
@@ -165,7 +252,8 @@ router.get('/:id/config', async (req, res) => {
     }
     
     const frame = result.rows[0];
-    const slots = frame.slots || [];
+    const slotMeta = normalizeSlotsAndMode(frame.slots || []);
+    const slots = slotMeta.slots;
     const imageUrl = buildImageUrl(frame.image_path, req);
     
     const W = 1080;
@@ -177,7 +265,8 @@ router.get('/:id/config', async (req, res) => {
       name: frame.name,
       description: frame.description,
       maxCaptures: frame.max_captures,
-      duplicatePhotos: false,
+      duplicatePhotos: slotMeta.duplicatePhotos,
+      captureMode: slotMeta.captureMode,
       imagePath: imageUrl,
       frameImage: imageUrl,
       thumbnailUrl: imageUrl,
@@ -193,6 +282,7 @@ router.get('/:id/config', async (req, res) => {
           zIndex: s.zIndex || 2,
           data: {
             photoIndex: s.photoIndex !== undefined ? s.photoIndex : i,
+            slotNumber: s.slotNumber !== undefined ? s.slotNumber : i + 1,
             image: null,
             aspectRatio: s.aspectRatio || '4:5'
           }

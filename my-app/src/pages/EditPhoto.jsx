@@ -2564,10 +2564,17 @@ export default function EditPhoto() {
             const totalSlots = photoElements.length;
             const totalPhotos = resolvedPhotos.length;
             
-            // If we have fewer photos than slots, use paired duplication
-            // Each photo should fill 2 consecutive slots
-            if (totalPhotos > 0 && totalSlots > totalPhotos) {
-              // Calculate how many slots each photo should fill
+            // NEW: If slot has explicit photoIndex within range, use it directly.
+            // This is the frame-driven duplicate system: photoIndex encodes which unique
+            // captured photo (by capture order / slot number) belongs in each slot.
+            // Both left and right column slots that share a slotNumber share the same
+            // photoIndex, so the same photo renders in both positions.
+            if (typeof photoEl.data?.photoIndex === 'number' && totalPhotos > 0 && photoIndex < totalPhotos) {
+              effectivePhotoIndex = photoIndex;
+              console.log(`🎯 Slot ${idx}: using explicit photoIndex ${effectivePhotoIndex}`);
+            } else if (totalPhotos > 0 && totalSlots > totalPhotos) {
+              // Legacy fallback: no in-range photoIndex, distribute by slot position
+              // Each photo should fill 2 consecutive slots
               const slotsPerPhoto = Math.ceil(totalSlots / totalPhotos);
               // Use idx (slot position) to determine which photo
               effectivePhotoIndex = Math.floor(idx / slotsPerPhoto);

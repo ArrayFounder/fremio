@@ -10,6 +10,7 @@ import unifiedFrameService from "../services/unifiedFrameService";
 import safeStorage from "./safeStorage.js";
 import userStorage from "./userStorage.js";
 import { sanitizeFrameConfigForStorage } from "./frameConfigSanitizer.js";
+import { buildSlotMaps } from "./slotSystem.js";
 
 const CUSTOM_FRAME_PREFIX = "custom-";
 
@@ -26,6 +27,26 @@ const isCustomFrameId = (frameName) => {
   // 1. Starts with "custom-" prefix (legacy/localStorage)
   // 2. Is a UUID (Supabase)
   return frameName.startsWith(CUSTOM_FRAME_PREFIX) || isUUID(frameName);
+};
+
+const normalizeSlotsWithMaps = (slots) => {
+  const sourceSlots = Array.isArray(slots) ? slots : [];
+  const { slotNumberMap, photoIndexMap, mode } = buildSlotMaps(sourceSlots);
+
+  return {
+    slots: sourceSlots.map((slot, index) => ({
+      ...slot,
+      slotNumber:
+        Number.isFinite(Number(slot?.slotNumber))
+          ? Number(slot.slotNumber)
+          : slotNumberMap[index] ?? index + 1,
+      photoIndex:
+        Number.isFinite(Number(slot?.photoIndex))
+          ? Number(slot.photoIndex)
+          : photoIndexMap[index] ?? index,
+    })),
+    duplicatePhotos: mode === "duplicate",
+  };
 };
 
 export class FrameDataProvider {
@@ -86,6 +107,15 @@ export class FrameDataProvider {
         hasSlots = true;
         console.log("🔧 Derived slots from layout.elements:", frameData.slots.length);
       }
+
+      if (hasSlots) {
+        const normalized = normalizeSlotsWithMaps(frameData.slots);
+        frameData = {
+          ...frameData,
+          slots: normalized.slots,
+          duplicatePhotos: normalized.duplicatePhotos,
+        };
+      }
       
       console.log(`🔍 Frame data check:`);
       console.log(`  - Has slots: ${hasSlots} (${frameData.slots?.length || 0} slots)`);
@@ -102,6 +132,7 @@ export class FrameDataProvider {
           ...frameData,
           // Ensure required fields have sensible defaults
           maxCaptures: frameData.maxCaptures || frameData.slots?.length || 1,
+          duplicatePhotos: Boolean(frameData.duplicatePhotos),
           canvasWidth: frameData.canvasWidth || 1080,
           canvasHeight: frameData.canvasHeight || 1920,
           designer: {
@@ -126,6 +157,7 @@ export class FrameDataProvider {
           name: frameData.name,
           description: frameData.description || "",
           maxCaptures: frameData.slots?.length || 1,
+          duplicatePhotos: Boolean(frameData.duplicatePhotos),
           slots: frameData.slots,
           imagePath: null,
           frameImage: null,
@@ -196,6 +228,7 @@ export class FrameDataProvider {
               zIndex: slot.zIndex || 2,
               data: {
                 photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : index,
+                slotNumber: slot.slotNumber !== undefined ? slot.slotNumber : index + 1,
                 image: null,
                 aspectRatio: slot.aspectRatio || "4:5",
               },
@@ -257,7 +290,7 @@ export class FrameDataProvider {
           name: frameData.name,
           description: frameData.description || "",
           maxCaptures: frameData.maxCaptures || 3,
-          duplicatePhotos: frameData.duplicatePhotos || false,
+          duplicatePhotos: Boolean(frameData.duplicatePhotos),
           imagePath: frameImageUrl,
           frameImage: frameImageUrl,
           thumbnailUrl: frameData.thumbnailUrl || frameData.imagePath,

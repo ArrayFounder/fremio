@@ -62,6 +62,7 @@ import frameProvider from "../utils/frameProvider.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { clearStaleFrameCache } from "../utils/frameCacheCleaner.js";
 import { EDITOR_FONT_FAMILIES } from "../config/editorFonts.js";
+import { detectFrameSlots, buildSlotMaps } from "../utils/slotSystem.js";
 import "./Create.css";
 
 const panelMotion = {
@@ -1958,81 +1959,6 @@ export default function Create() {
     reader.readAsDataURL(file);
   };
 
-  // ── Detect transparent slot regions in a frame PNG ──
-  // Returns array of normalized { left, top, width, height } objects.
-  const detectFrameSlots = useCallback((dataUrl) => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        // Work at reduced resolution for speed (max 400px on longest side)
-        const scale = Math.min(1, 400 / Math.max(img.width, img.height));
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-
-        const offscreen = document.createElement("canvas");
-        offscreen.width = w;
-        offscreen.height = h;
-        const ctx = offscreen.getContext("2d", { alpha: true });
-        ctx.clearRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-
-        const { data: pixels } = ctx.getImageData(0, 0, w, h);
-
-        // Build transparent pixel map (alpha < 128)
-        const transp = new Uint8Array(w * h);
-        for (let i = 0; i < w * h; i++) {
-          transp[i] = pixels[i * 4 + 3] < 128 ? 1 : 0;
-        }
-
-        // Connected components (flood fill, 4-connected)
-        const labels = new Int32Array(w * h).fill(-1);
-        const bounds = []; // { minX, minY, maxX, maxY, size }
-        const stack = [];
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) {
-            const idx = y * w + x;
-            if (!transp[idx] || labels[idx] !== -1) continue;
-            const label = bounds.length;
-            const b = { minX: x, minY: y, maxX: x, maxY: y, size: 0 };
-            stack.push(idx);
-            while (stack.length > 0) {
-              const cur = stack.pop();
-              if (labels[cur] !== -1) continue;
-              labels[cur] = label;
-              b.size++;
-              const cx = cur % w;
-              const cy = Math.floor(cur / w);
-              if (cx < b.minX) b.minX = cx;
-              if (cx > b.maxX) b.maxX = cx;
-              if (cy < b.minY) b.minY = cy;
-              if (cy > b.maxY) b.maxY = cy;
-              if (cx > 0 && transp[cur - 1] && labels[cur - 1] === -1) stack.push(cur - 1);
-              if (cx < w - 1 && transp[cur + 1] && labels[cur + 1] === -1) stack.push(cur + 1);
-              if (cy > 0 && transp[cur - w] && labels[cur - w] === -1) stack.push(cur - w);
-              if (cy < h - 1 && transp[cur + w] && labels[cur + w] === -1) stack.push(cur + w);
-            }
-            bounds.push(b);
-          }
-        }
-
-        // Keep only regions >= 1% of image area (filter noise)
-        const minSize = w * h * 0.01;
-        const slots = bounds
-          .filter((b) => b.size >= minSize)
-          .map((b) => ({
-            left: b.minX / w,
-            top: b.minY / h,
-            width: (b.maxX - b.minX + 1) / w,
-            height: (b.maxY - b.minY + 1) / h,
-          }));
-
-        resolve(slots);
-      };
-      img.onerror = () => resolve([]);
-      img.src = dataUrl;
-    });
-  }, []);
-
   // ── Handle frame PNG file selected from device ──
   const handleImportFrameFile = useCallback(async (e) => {
     const file = e.target.files?.[0];
@@ -2062,6 +1988,7 @@ export default function Create() {
       // 3. Detect transparent slot regions from the PNG
       showToast("info", "Mendeteksi area slot foto…", 6000);
       const slots = await detectFrameSlots(dataUrl);
+      const { slotNumberMap, photoIndexMap } = buildSlotMaps(slots);
 
       // 4. Add photo slot elements FIRST (behind), one per detected transparent region
       if (slots.length > 0) {
@@ -2072,7 +1999,11 @@ export default function Create() {
             width: Math.round(slot.width * canvasW),
             height: Math.round(slot.height * canvasH),
             zIndex: 0,
-            data: { photoIndex: index, borderRadius: 0 },
+            data: {
+              photoIndex: photoIndexMap[index] ?? index,
+              slotNumber: slotNumberMap[index] ?? index + 1,
+              borderRadius: 0,
+            },
           });
         });
       } else {
@@ -2080,7 +2011,7 @@ export default function Create() {
         addElement("photo", {
           x: 0, y: 0, width: canvasW, height: canvasH,
           zIndex: 0,
-          data: { photoIndex: 0, borderRadius: 0 },
+          data: { photoIndex: 0, slotNumber: 1, borderRadius: 0 },
         });
       }
 
@@ -2118,7 +2049,63 @@ export default function Create() {
     } finally {
       setImportFrameWorking(false);
     }
-  }, [importFrameWorking, showToast, getCanvasDimensions, canvasAspectRatio, detectFrameSlots, addElement]);
+  }, [importFrameWorking, showToast, getCanvasDimensions, canvasAspectRatio, addElement]);
+
+  const applyPhotoGridLayout = useCallback((rows = 1, cols = 1) => {
+    elements.filter((el) => el.type === "photo").forEach((el) => removeElement(el.id));
+
+    const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+    const gapX = 30;
+    const gapY = 30;
+    const marginX = 65;
+    const marginY = 140;
+
+    const availableWidth = canvasW - 2 * marginX - (cols - 1) * gapX;
+    const availableHeight = canvasH - 2 * marginY - (rows - 1) * gapY;
+    const photoWidth = Math.floor(availableWidth / cols);
+    const photoHeight = Math.floor(availableHeight / rows);
+
+    const gridSlots = [];
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        gridSlots.push({
+          x: marginX + col * (photoWidth + gapX),
+          y: marginY + row * (photoHeight + gapY),
+          width: photoWidth,
+          height: photoHeight,
+        });
+      }
+    }
+
+    const normalizedSlots = gridSlots.map((slot) => ({
+      left: slot.x / canvasW,
+      top: slot.y / canvasH,
+      width: slot.width / canvasW,
+      height: slot.height / canvasH,
+    }));
+
+    const { slotNumberMap, photoIndexMap } = buildSlotMaps(normalizedSlots);
+
+    let lastAddedId = null;
+    gridSlots.forEach((slot, index) => {
+      const newId = addElement("photo", {
+        x: slot.x,
+        y: slot.y,
+        width: slot.width,
+        height: slot.height,
+        data: {
+          photoIndex: photoIndexMap[index] ?? index,
+          slotNumber: slotNumberMap[index] ?? index + 1,
+          borderRadius: 0,
+        },
+      });
+      if (newId) lastAddedId = newId;
+    });
+
+    if (lastAddedId) {
+      selectElement(lastAddedId);
+    }
+  }, [elements, removeElement, getCanvasDimensions, canvasAspectRatio, addElement, selectElement]);
 
   const handleSaveTemplate = async () => {
     if (saving) return;
@@ -4496,57 +4483,7 @@ export default function Create() {
                 }}
                 onConfirmAddPhoto={(rows = 1, cols = 1) => {
                   setPendingPhotoTool(false);
-                  
-                  // Replace existing photo elements so the selected layout is the definitive one.
-                  // Without this, adding a grid on top of previous photo slots doubles the count.
-                  elements.filter(el => el.type === "photo").forEach(el => removeElement(el.id));
-
-                  // Canvas dimensions from constants
-                  const canvasW = 1080;
-                  const canvasH = 1920;
-                  
-                  // Calculate grid dimensions based on rows/cols
-                  // Gap between elements (in canvas units)
-                  const gapX = 30;
-                  const gapY = 30;
-                  
-                  // Margins from canvas edges
-                  const marginX = 65;
-                  const marginY = 140;
-                  
-                  // Calculate available space
-                  const availableWidth = canvasW - (2 * marginX) - ((cols - 1) * gapX);
-                  const availableHeight = canvasH - (2 * marginY) - ((rows - 1) * gapY);
-                  
-                  // Calculate individual photo area dimensions
-                  const photoWidth = Math.floor(availableWidth / cols);
-                  const photoHeight = Math.floor(availableHeight / rows);
-                  
-                  // Add photo elements in grid pattern
-                  let lastAddedId = null;
-                  for (let row = 0; row < rows; row++) {
-                    for (let col = 0; col < cols; col++) {
-                      // Calculate position with symmetry around center
-                      const x = marginX + (col * (photoWidth + gapX));
-                      const y = marginY + (row * (photoHeight + gapY));
-                      
-                      const newId = addElement("photo", {
-                        x,
-                        y,
-                        width: photoWidth,
-                        height: photoHeight,
-                      });
-                      
-                      if (newId) {
-                        lastAddedId = newId;
-                      }
-                    }
-                  }
-                  
-                  // Select the last added element
-                  if (lastAddedId) {
-                    selectElement(lastAddedId);
-                  }
+                  applyPhotoGridLayout(rows, cols);
                 }}
                 onCancelPhotoTool={() => setPendingPhotoTool(false)}
               />
@@ -4655,18 +4592,7 @@ export default function Create() {
                     }}
                     onConfirmAddPhoto={(rows = 1, cols = 1) => {
                       setPendingPhotoTool(false);
-                      // Replace existing photo elements so layout is definitive
-                      elements.filter(el => el.type === "photo").forEach(el => removeElement(el.id));
-                      const canvasW = 1080; const canvasH = 1920;
-                      const gapX = 30, gapY = 30, marginX = 65, marginY = 140;
-                      const photoWidth = Math.floor((canvasW - 2*marginX - (cols-1)*gapX) / cols);
-                      const photoHeight = Math.floor((canvasH - 2*marginY - (rows-1)*gapY) / rows);
-                      let lastId = null;
-                      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-                        const id = addElement("photo", { x: marginX+c*(photoWidth+gapX), y: marginY+r*(photoHeight+gapY), width: photoWidth, height: photoHeight });
-                        if (id) lastId = id;
-                      }
-                      if (lastId) selectElement(lastId);
+                      applyPhotoGridLayout(rows, cols);
                     }}
                     onCancelPhotoTool={() => setPendingPhotoTool(false)}
                     onSelectBackgroundPhoto={() => {
@@ -4704,48 +4630,7 @@ export default function Create() {
                   type="button"
                   onClick={() => {
                     setPendingPhotoTool(false);
-                    
-                    // Replace existing photo elements so the selected layout is the definitive one
-                    elements.filter(el => el.type === "photo").forEach(el => removeElement(el.id));
-
-                    // Canvas dimensions from constants
-                    const canvasW = 1080;
-                    const canvasH = 1920;
-                    
-                    // Calculate grid dimensions based on rows/cols
-                    const gapX = 30;
-                    const gapY = 30;
-                    const marginX = 65;
-                    const marginY = 140;
-                    
-                    const availableWidth = canvasW - (2 * marginX) - ((grid.cols - 1) * gapX);
-                    const availableHeight = canvasH - (2 * marginY) - ((grid.rows - 1) * gapY);
-                    
-                    const photoWidth = Math.floor(availableWidth / grid.cols);
-                    const photoHeight = Math.floor(availableHeight / grid.rows);
-                    
-                    let lastAddedId = null;
-                    for (let row = 0; row < grid.rows; row++) {
-                      for (let col = 0; col < grid.cols; col++) {
-                        const x = marginX + (col * (photoWidth + gapX));
-                        const y = marginY + (row * (photoHeight + gapY));
-                        
-                        const newId = addElement("photo", {
-                          x,
-                          y,
-                          width: photoWidth,
-                          height: photoHeight,
-                        });
-                        
-                        if (newId) {
-                          lastAddedId = newId;
-                        }
-                      }
-                    }
-                    
-                    if (lastAddedId) {
-                      selectElement(lastAddedId);
-                    }
+                    applyPhotoGridLayout(grid.rows, grid.cols);
                   }}
                   className="create-mobile-toolbar__button"
                 >
