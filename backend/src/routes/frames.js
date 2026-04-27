@@ -79,14 +79,8 @@ const normalizeSlotsAndMode = (slots) => {
 
   const normalizedSlots = sourceSlots.map((slot, index) => ({
     ...slot,
-    slotNumber:
-      Number.isFinite(Number(slot?.slotNumber))
-        ? Number(slot.slotNumber)
-        : slotNumberMap[index] ?? index + 1,
-    photoIndex:
-      Number.isFinite(Number(slot?.photoIndex))
-        ? Number(slot.photoIndex)
-        : photoIndexMap[index] ?? index,
+    slotNumber: slotNumberMap[index] ?? index + 1,
+    photoIndex: photoIndexMap[index] ?? index,
   }));
 
   return {
