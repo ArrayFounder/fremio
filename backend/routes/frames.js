@@ -44,6 +44,91 @@ function normalizeSlots(rawSlots, layoutRaw, canvasW, canvasH) {
   }));
 }
 
+const toFiniteNumber = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const sortByTopThenLeft = (a, b) => {
+  if (Math.abs(a.top - b.top) > 0.0001) return a.top - b.top;
+  return a.left - b.left;
+};
+
+const normalizeSlotsAndMode = (slots) => {
+  const sourceSlots = Array.isArray(slots) ? slots : [];
+  const geometry = sourceSlots
+    .map((slot, index) => {
+      const left = toFiniteNumber(slot?.left, 0);
+      const top = toFiniteNumber(slot?.top, 0);
+      const width = toFiniteNumber(slot?.width, 0);
+      const height = toFiniteNumber(slot?.height, 0);
+      return {
+        index,
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+      };
+    })
+    .filter((slot) => slot.width > 0 && slot.height > 0);
+
+  const slotNumberMap = {};
+  const photoIndexMap = {};
+
+  const crossesCenter = geometry.some(
+    (slot) => slot.left < 0.5 && slot.right > 0.5
+  );
+  const leftSlots = geometry.filter((slot) => slot.right <= 0.5);
+  const rightSlots = geometry.filter((slot) => slot.left >= 0.5);
+
+  const isDuplicateMode =
+    !crossesCenter &&
+    leftSlots.length > 0 &&
+    leftSlots.length === rightSlots.length &&
+    leftSlots.length + rightSlots.length === geometry.length;
+
+  if (isDuplicateMode) {
+    leftSlots.sort(sortByTopThenLeft);
+    rightSlots.sort(sortByTopThenLeft);
+    const rows = leftSlots.length;
+
+    leftSlots.forEach((slot, idx) => {
+      slotNumberMap[slot.index] = idx + 1;
+      photoIndexMap[slot.index] = idx;
+    });
+
+    rightSlots.forEach((slot, idx) => {
+      const displayNumber = rows - idx;
+      slotNumberMap[slot.index] = displayNumber;
+      photoIndexMap[slot.index] = displayNumber - 1;
+    });
+  } else {
+    [...geometry].sort(sortByTopThenLeft).forEach((slot, idx) => {
+      slotNumberMap[slot.index] = idx + 1;
+      photoIndexMap[slot.index] = idx;
+    });
+  }
+
+  const normalizedSlots = sourceSlots.map((slot, index) => ({
+    ...slot,
+    slotNumber:
+      Number.isFinite(Number(slot?.slotNumber))
+        ? Number(slot.slotNumber)
+        : slotNumberMap[index] ?? index + 1,
+    photoIndex:
+      Number.isFinite(Number(slot?.photoIndex))
+        ? Number(slot.photoIndex)
+        : photoIndexMap[index] ?? index,
+  }));
+
+  return {
+    slots: normalizedSlots,
+    duplicatePhotos: isDuplicateMode,
+    captureMode: isDuplicateMode ? "duplicate" : "single",
+  };
+};
+
 /** Resolve image path: handle base64 data URLs, absolute HTTP URLs, and relative paths */
 function resolveImageUrl(imagePath, baseUrl) {
   if (!imagePath) return null;
@@ -394,10 +479,11 @@ router.get("/", optionalAuth, async (req, res) => {
       const derivedSlots = normalizeSlots(
         rawSlotsValue, layoutRaw, frame.canvas_width, frame.canvas_height
       );
+      const slotMeta = normalizeSlotsAndMode(derivedSlots);
 
       // IMPORTANT: Prevent premium frames from being usable without access.
       // We still allow preview (name + thumbnail), but redact slots/layout elements.
-      const slots = canSeePremiumDetails ? derivedSlots : [];
+      const slots = canSeePremiumDetails ? slotMeta.slots : [];
       const layout = canSeePremiumDetails
         ? layoutRaw
         : {
@@ -421,6 +507,8 @@ router.get("/", optionalAuth, async (req, res) => {
         thumbnailUrl: thumbnailUrl,
         slots: slots,
         maxCaptures: frame.max_captures || derivedSlots.length || 1,
+        duplicatePhotos: slotMeta.duplicatePhotos,
+        captureMode: slotMeta.captureMode,
         isPremium: isPremium,
         isLocked: isPremium && !canSeePremiumDetails,
         isActive: frame.is_active,
@@ -588,6 +676,14 @@ router.get("/:id", optionalAuth, async (req, res) => {
           }
         : parsedLayout;
 
+    const normalizedSlots = normalizeSlots(
+      typeof frame.slots === "string" ? JSON.parse(frame.slots) : frame.slots,
+      normalizedLayout,
+      frame.canvas_width,
+      frame.canvas_height
+    );
+    const slotMeta = normalizeSlotsAndMode(normalizedSlots);
+
     res.json({
       success: true,
       frame: {
@@ -601,17 +697,14 @@ router.get("/:id", optionalAuth, async (req, res) => {
         imageUrl: frame.image_path?.startsWith("http")
           ? frame.image_path
           : `${publicBaseUrl}${frame.image_path}`,
-        slots: normalizeSlots(
-          typeof frame.slots === "string" ? JSON.parse(frame.slots) : frame.slots,
-          normalizedLayout,
-          frame.canvas_width,
-          frame.canvas_height
-        ),
+        slots: slotMeta.slots,
         layout: normalizedLayout,
         canvasBackground: frame.canvas_background,
         canvasWidth: frame.canvas_width,
         canvasHeight: frame.canvas_height,
         maxCaptures: frame.max_captures,
+        duplicatePhotos: slotMeta.duplicatePhotos,
+        captureMode: slotMeta.captureMode,
         isPremium: frame.is_premium,
         isActive: frame.is_active,
         viewCount: frame.view_count,
@@ -673,7 +766,7 @@ router.get("/:id/config", optionalAuth, async (req, res) => {
       }
     }
 
-    const slots =
+    const rawSlots =
       typeof frame.slots === "string"
         ? JSON.parse(frame.slots)
         : frame.slots || [];
@@ -681,6 +774,10 @@ router.get("/:id/config", optionalAuth, async (req, res) => {
       typeof frame.layout === "string"
         ? JSON.parse(frame.layout)
         : frame.layout || {};
+
+    const slots = normalizeSlots(rawSlots, layout, frame.canvas_width, frame.canvas_height);
+    const slotMeta = normalizeSlotsAndMode(slots);
+    const normalizedSlots = slotMeta.slots;
 
     const withAbsoluteUploads = (value) => {
       if (typeof value !== "string" || value.length === 0) return value;
@@ -707,7 +804,7 @@ router.get("/:id/config", optionalAuth, async (req, res) => {
       : `${publicBaseUrl}${frame.image_path}`;
 
     // Build designer elements from slots (photo placeholders)
-    const photoElements = slots.map((s, i) => ({
+    const photoElements = normalizedSlots.map((s, i) => ({
       id: s.id || `photo_${i + 1}`,
       type: "photo",
       x: Math.round((s.left || 0) * W),
@@ -717,6 +814,7 @@ router.get("/:id/config", optionalAuth, async (req, res) => {
       zIndex: s.zIndex || 1,
       data: {
         photoIndex: s.photoIndex !== undefined ? s.photoIndex : i,
+        slotNumber: s.slotNumber !== undefined ? s.slotNumber : i + 1,
         image: null,
         borderRadius: s.borderRadius || 0,
       },
@@ -763,12 +861,13 @@ router.get("/:id/config", optionalAuth, async (req, res) => {
       id: frame.id,
       name: frame.name,
       description: frame.description,
-      maxCaptures: frame.max_captures || slots.length,
-      duplicatePhotos: false,
+      maxCaptures: frame.max_captures || normalizedSlots.length,
+      duplicatePhotos: slotMeta.duplicatePhotos,
+      captureMode: slotMeta.captureMode,
       imagePath: imageUrl,
       frameImage: imageUrl,
       thumbnailUrl: imageUrl,
-      slots: slots,
+      slots: normalizedSlots,
       canvasBackground:
         frame.canvas_background || layout.backgroundColor || "#ffffff",
       canvasWidth: W,
