@@ -284,19 +284,39 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   useEffect(() => {
     if (typeof window === "undefined") return;
     (async () => {
-      for (const base of ["https://127.0.0.1:3002", "http://127.0.0.1:3002"]) {
+      const candidates = [
+        "http://127.0.0.1:7432",
+        "http://localhost:7432",
+        "https://127.0.0.1:7432",
+        "https://localhost:7432",
+        "http://127.0.0.1:3002",
+        "http://localhost:3002",
+        "https://127.0.0.1:3002",
+        "https://localhost:3002",
+      ];
+
+      let healthyBase: string | null = null;
+
+      for (const base of candidates) {
         try {
           const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(2500) });
           if (!res.ok) continue;
           const data = await res.json() as { camera?: { available: boolean; cameras?: { model: string }[] } };
+          if (!healthyBase) healthyBase = base;
           if (data.camera?.available) {
             agentBaseRef.current = base;
             setDslrAvailable(true);
             setDslrModel(data.camera.cameras?.[0]?.model ?? "DSLR");
+            return;
           }
-          break;
         } catch { /* agent tidak ada atau error → skip */ }
       }
+
+      if (healthyBase) {
+        agentBaseRef.current = healthyBase;
+      }
+      setDslrAvailable(false);
+      setDslrModel(null);
     })();
   }, []);
 

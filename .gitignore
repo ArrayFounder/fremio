@@ -83,3 +83,10 @@ localhost+*.pem
 backup.*
 *.backup
 *.b64
+
+# Next.js build
+.next/
+
+# Studio downloads (large binaries)
+studio/public/downloads/*.exe
+studio/public/downloads/*.zip

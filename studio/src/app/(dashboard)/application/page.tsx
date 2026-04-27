@@ -5,7 +5,7 @@ const APP_DOWNLOADS = [
     label: "Windows Installer (.exe)",
     href: "/downloads/fremio-booth-windows-setup.exe",
     fileName: "fremio-booth-windows-setup.exe",
-    note: "Direkomendasikan untuk operator umum (install sekali, langsung pakai).",
+    note: "Direkomendasikan untuk operator umum. Install sekali, buka app, lalu cek status kamera dan printer langsung dari setup screen.",
   },
   {
     label: "Windows Portable (.zip)",
@@ -29,15 +29,15 @@ export default function ApplicationPage() {
         <h1 className="text-2xl font-bold text-gray-900">Download Fremio Studio</h1>
         <p className="text-gray-500 mt-1 text-sm">
           Unduh aplikasi Fremio Studio untuk Windows. Link ini disiapkan untuk
-          penggunaan operator di lokasi booth.
+          penggunaan operator di lokasi booth dengan alur install yang sesederhana mungkin.
         </p>
       </div>
 
       <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800 space-y-1">
-        <p className="font-semibold">Catatan rilis</p>
+        <p className="font-semibold">Cara pakai singkat</p>
         <p>
-          Pastikan file installer terbaru sudah di-upload ke path <span className="font-mono">/downloads</span>
-          dengan nama file yang sama seperti tombol di bawah.
+          Download installer, install sekali, lalu buka app. Dari app itu operator bisa melihat apakah bridge lokal,
+          kamera DSLR, dan printer sudah siap tanpa setup manual lewat CMD.
         </p>
       </div>
 

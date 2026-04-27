@@ -26,6 +26,19 @@
       "setup.js",
       "setup.css"
     ],
+    "extraResources": [
+      {
+        "from": "../../agent",
+        "to": "embedded-agent/agent",
+        "filter": [
+          "package.json",
+          "package-lock.json",
+          ".env.example",
+          "src/**/*",
+          "node_modules/**/*"
+        ]
+      }
+    ],
     "win": {
       "icon": "build/icon.ico",
       "publisherName": "Fremio",

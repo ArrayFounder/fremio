@@ -1056,18 +1056,53 @@ function CanvasPreviewComponent({
     const mirrorPhotos = elements.filter(
       (e) => e.type === 'photo' && e.data?.linkedGroup === 'mirror'
     );
-    const numRows = mirrorPhotos.length > 0 ? Math.round(mirrorPhotos.length / 2) : 0;
-    const map = {};
-    mirrorPhotos.forEach((photo) => {
-      const rowIdx = photo.data?.rowIndex ?? 0;
-      const side = photo.data?.side;
-      const vertMode = photo.data?.verticalMode ?? 'parallel';
-      if (side === 'left' || vertMode === 'parallel') {
-        map[photo.id] = rowIdx + 1;
-      } else {
-        map[photo.id] = numRows - rowIdx;
+    if (mirrorPhotos.length === 0) {
+      return {};
+    }
+
+    const sortByVerticalPosition = (a, b) => {
+      if (Math.abs(a.y - b.y) > 0.0001) {
+        return a.y - b.y;
       }
+      return a.x - b.x;
+    };
+
+    const verticalMode =
+      mirrorPhotos.find((photo) => typeof photo?.data?.verticalMode === 'string')
+        ?.data?.verticalMode ?? 'parallel';
+
+    const leftPhotos = mirrorPhotos
+      .filter((photo) => photo.data?.side === 'left')
+      .sort(sortByVerticalPosition);
+
+    const rightPhotos = mirrorPhotos
+      .filter((photo) => photo.data?.side === 'right')
+      .sort(sortByVerticalPosition);
+
+    if (verticalMode === 'inverted') {
+      rightPhotos.reverse();
+    }
+
+    const unassignedPhotos = mirrorPhotos.filter(
+      (photo) => photo.data?.side !== 'left' && photo.data?.side !== 'right'
+    );
+
+    const map = {};
+    leftPhotos.forEach((photo, index) => {
+      map[photo.id] = index + 1;
     });
+    rightPhotos.forEach((photo, index) => {
+      map[photo.id] = index + 1;
+    });
+    unassignedPhotos
+      .sort(sortByVerticalPosition)
+      .forEach((photo) => {
+        const fallbackNumber = Number(photo.data?.slotNumber);
+        if (Number.isFinite(fallbackNumber) && fallbackNumber > 0) {
+          map[photo.id] = fallbackNumber;
+        }
+      });
+
     return map;
   }, [elements]);
 

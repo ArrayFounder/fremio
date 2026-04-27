@@ -16,11 +16,12 @@ interface BoothSetupScreenProps {
 const STORAGE_KEY = "fremio_booth_hw_settings";
 
 /**
- * Booth app sekarang berjalan native tanpa local agent.
- * Selalu gunakan alur kamera/printer bawaan browser atau sistem.
+ * Local agent dipakai untuk desktop booth (DSLR/printer),
+ * sementara mobile/tablet tetap native browser-only.
  */
 function canUseLocalAgent(): boolean {
-  return false;
+  if (typeof window === "undefined") return false;
+  return !isNoAgentDevice();
 }
 
 /** Detect iOS / iPadOS */
@@ -74,8 +75,8 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   const [agentOnline,    setAgentOnline]     = useState<boolean | null>(null); // null=checking
   const [agentChecking,  setAgentChecking]   = useState(false);
   const [manualPrinter,  setManualPrinter]   = useState(""); // manual input when agent offline
-  // Native mode (tanpa agent): tampilkan panduan print sistem.
-  const isTabletMode = true;
+  // Mobile/tablet mode: tanpa local agent.
+  const isTabletMode = isNoAgentDevice();
 
   // ── DSLR state ────────────────────────────────────────────────────
   const [dslrCameras, setDslrCameras] = useState<{ model: string; port: string }[]>([]);
@@ -167,7 +168,46 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     if (!canUseLocalAgent()) { setAgentOnline(false); return; }
     setAgentChecking(true);
     try {
+      const candidates = [
+        "http://127.0.0.1:7432",
+        "http://localhost:7432",
+        "https://127.0.0.1:7432",
+        "https://localhost:7432",
+        "http://127.0.0.1:3002",
+        "http://localhost:3002",
+        "https://127.0.0.1:3002",
+        "https://localhost:3002",
+      ];
+
+      const status = await Promise.any(
+        candidates.map(async (base) => {
+          const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(2500) });
+          if (!res.ok) throw new Error(`status ${res.status}`);
+          const data = await res.json() as {
+            camera?: { available?: boolean; cameras?: { model: string; port: string }[] };
+            printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
+          };
+          return data;
+        })
+      );
+
+      setAgentOnline(true);
+      const cams = status.camera?.cameras ?? [];
+      setDslrCameras(cams);
+
+      const printerList = status.printer?.printers?.map((p) => p.name) ?? [];
+      setPrinters(printerList);
+
+      if (!printerName) {
+        const defaultPrinter = status.printer?.defaultPrinter ?? null;
+        const nextPrinter = defaultPrinter || printerList[0] || null;
+        setPrinterName(nextPrinter);
+        if (nextPrinter) setManualPrinter(nextPrinter);
+      }
+    } catch {
       setAgentOnline(false);
+      setDslrCameras([]);
+      setPrinters([]);
     } finally {
       setAgentChecking(false);
     }
@@ -339,7 +379,8 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               <ol className="space-y-2 text-[11px] leading-relaxed" style={{ color: textSecondary }}>
                 <li>
                   <span className="font-semibold" style={{ color: textPrimary }}>1. Jalankan Local Agent</span><br/>
-                  Download dari panel Printer di atas. Jalankan sekali di komputer booth — berjalan di background. Cek badge “Agent Aktif” muncul.
+                  Untuk DSLR Canon/Nikon di Windows, jalankan Hardware Agent lokal terpisah yang membuka endpoint <strong>127.0.0.1:7432</strong>.
+                  Launcher booth / printer saja tidak cukup untuk mendeteksi kamera DSLR.
                 </li>
                 <li>
                   <span className="font-semibold" style={{ color: textPrimary }}>2. Hubungkan kamera via kabel USB</span><br/>
@@ -356,8 +397,8 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                   <code className="px-1.5 py-0.5 rounded text-[10px] font-mono" style={{ background: "rgba(255,255,255,0.1)", color: textPrimary }}>sudo killall PTPCamera</code>
                 </li>
                 <li>
-                  <span className="font-semibold" style={{ color: textPrimary }}>5. Klik “Coba Lagi” di panel Printer</span><br/>
-                  Agent akan mendeteksi ulang kamera. Nama model kamera akan muncul di atas.
+                  <span className="font-semibold" style={{ color: textPrimary }}>5. Verifikasi status agent lalu klik “Coba Lagi”</span><br/>
+                  Pastikan <strong>http://127.0.0.1:7432/status</strong> bisa dibuka dan kamera terdeteksi, lalu refresh deteksi di halaman booth.
                 </li>
               </ol>
               <div className="pt-1 space-y-1.5">
@@ -374,7 +415,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               {agentOnline === false && (
                 <div className="rounded-xl px-2.5 py-2 text-[10px]"
                   style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.3)", color: "#fde047" }}>
-                  ⚠️ Agent belum aktif. Download & jalankan agent dari panel Printer di atas, lalu klik Coba Lagi.
+                  ⚠️ Agent DSLR belum aktif. Jalankan hardware agent lokal di 127.0.0.1:7432, lalu klik Coba Lagi.
                 </div>
               )}
               {agentOnline === true && dslrCameras.length === 0 && (

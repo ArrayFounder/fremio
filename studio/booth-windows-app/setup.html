@@ -9,7 +9,26 @@
 <body>
   <main class="card">
     <h1>Fremio Studio Setup</h1>
-    <p class="subtitle">Atur URL studio dan slug booth agar app membuka flow booth yang sama dengan web.</p>
+    <p class="subtitle">Install sekali, buka app, lalu cek apakah kamera dan printer sudah siap dipakai.</p>
+
+    <section class="bridge-panel" aria-labelledby="bridge-title">
+      <div class="bridge-head">
+        <div>
+          <p class="eyebrow">Status hardware</p>
+          <h2 id="bridge-title">Kamera dan printer</h2>
+        </div>
+        <span id="bridgeBadge" class="badge badge-waiting">Memeriksa...</span>
+      </div>
+
+      <p id="bridgeSummary" class="bridge-summary">Launcher sedang menyiapkan bridge lokal.</p>
+      <p id="bridgeAction" class="bridge-action"></p>
+      <ul id="bridgeNotes" class="bridge-notes"></ul>
+
+      <div class="bridge-actions">
+        <button type="button" id="refreshBridgeButton" class="secondary-button">Cek lagi</button>
+        <button type="button" id="restartBridgeButton" class="ghost-button">Nyalakan ulang bridge</button>
+      </div>
+    </section>
 
     <form id="setup-form">
       <label>
@@ -31,7 +50,7 @@
       <p id="status" class="status"></p>
     </form>
 
-    <p class="hint">Shortcut saat app berjalan: <strong>Ctrl+Shift+S</strong> untuk buka setup.</p>
+    <p class="hint">Kalau kamera Canon belum terbaca, biarkan app tetap terbuka lalu klik <strong>Cek lagi</strong>. Shortcut saat app berjalan: <strong>Ctrl+Shift+S</strong> untuk buka setup.</p>
   </main>
 
   <script src="./setup.js"></script>

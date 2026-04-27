@@ -206,6 +206,17 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
             // Build elements from frame data
             const newElements = [];
             
+            // Use the frame's stored canvas dimensions to correctly scale
+            // slot coordinates back to pixel positions.
+            // IMPORTANT: Never use the global CANVAS_HEIGHT constant here — it
+            // defaults to 1920 (9:16), but studio-booth frames use 1620 (2:3).
+            // Using the wrong height causes cumulative coordinate drift on each
+            // edit-save cycle, which shifts photo slots away from their designed
+            // positions in the background image.
+            const { width: canvasWidth, height: canvasHeight } = getCanvasDimensions(canvasAspectRatio);
+            const frameCanvasW = (frame.canvasWidth && frame.canvasWidth > 0) ? frame.canvasWidth : canvasWidth;
+            const frameCanvasH = (frame.canvasHeight && frame.canvasHeight > 0) ? frame.canvasHeight : canvasHeight;
+
             // Add background photo if available
             if (frame.imageUrl || frame.thumbnailUrl || frame.imagePath || frame.image_url) {
               const imageUrl = frame.imageUrl || frame.thumbnailUrl || frame.imagePath || frame.image_url;
@@ -215,8 +226,8 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
                 type: "background-photo",
                 x: 0,
                 y: 0,
-                width: CANVAS_WIDTH,
-                height: CANVAS_HEIGHT,
+                width: frameCanvasW,
+                height: frameCanvasH,
                 zIndex: 0,
                 data: {
                   image: imageUrl,
@@ -229,18 +240,25 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
             // Add photo slots - ALWAYS use low zIndex (1) so they appear BELOW overlay elements
             if (frame.slots && Array.isArray(frame.slots)) {
               console.log("📸 Adding photo slots:", frame.slots.length);
+              // Rebuild slotNumber/photoIndex maps from geometry for visual labels
+              const slotsNorm = frame.slots.map(s => ({
+                left: s.left || 0, top: s.top || 0,
+                width: s.width || 0, height: s.height || 0,
+              }));
+              const { slotNumberMap } = buildSlotMaps(slotsNorm);
               frame.slots.forEach((slot, index) => {
                 newElements.push({
                   id: slot.id || `photo_${index + 1}`,
                   type: "photo",
-                  x: slot.left * CANVAS_WIDTH,
-                  y: slot.top * CANVAS_HEIGHT,
-                  width: slot.width * CANVAS_WIDTH,
-                  height: slot.height * CANVAS_HEIGHT,
+                  x: slot.left * frameCanvasW,
+                  y: slot.top * frameCanvasH,
+                  width: slot.width * frameCanvasW,
+                  height: slot.height * frameCanvasH,
                   rotation: typeof slot.rotation === "number" ? slot.rotation : 0,
                   zIndex: 1, // Always low z-index for photo slots
                   data: {
                     photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : index,
+                    slotNumber: slotNumberMap[index] ?? index + 1,
                     borderRadius: slot.borderRadius || 0,
                   }
                 });
@@ -259,8 +277,8 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
                 if (el.type === "photo") return;
                 
                 // Convert normalized positions back to absolute positions
-                let restoredWidth = el.widthNorm !== undefined ? el.widthNorm * CANVAS_WIDTH : el.width;
-                let restoredHeight = el.heightNorm !== undefined ? el.heightNorm * CANVAS_HEIGHT : el.height;
+                let restoredWidth = el.widthNorm !== undefined ? el.widthNorm * frameCanvasW : el.width;
+                let restoredHeight = el.heightNorm !== undefined ? el.heightNorm * frameCanvasH : el.height;
                 
                 // For upload elements, recalculate dimensions using stored aspect ratio
                 // This ensures the image maintains its correct proportions
@@ -273,8 +291,8 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
                 
                 const restoredElement = {
                   ...el,
-                  x: el.xNorm !== undefined ? el.xNorm * CANVAS_WIDTH : el.x,
-                  y: el.yNorm !== undefined ? el.yNorm * CANVAS_HEIGHT : el.y,
+                  x: el.xNorm !== undefined ? el.xNorm * frameCanvasW : el.x,
+                  y: el.yNorm !== undefined ? el.yNorm * frameCanvasH : el.y,
                   width: restoredWidth,
                   height: restoredHeight,
                   // Ensure overlay elements (upload/text/shape) are ABOVE photo slots
@@ -748,20 +766,102 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
       } else {
         // No background photo - capture canvas as frame image
         console.log("🎨 No background photo, capturing canvas...");
-        
-        if (previewFrameRef.current) {
+
+        const canvasNode = document.getElementById("creator-canvas");
+        if (canvasNode) {
+          const exportWrapper = document.createElement("div");
+          Object.assign(exportWrapper.style, {
+            position: "fixed",
+            top: "-10000px",
+            left: "-10000px",
+            width: `${canvasWidth}px`,
+            height: `${canvasHeight}px`,
+            overflow: "hidden",
+            pointerEvents: "none",
+            opacity: "0",
+            zIndex: "-1",
+          });
+
+          const exportCanvasNode = canvasNode.cloneNode(true);
+          exportCanvasNode.id = "creator-canvas-export-admin";
+          Object.assign(exportCanvasNode.style, {
+            transform: "none",
+            transformOrigin: "top left",
+            position: "relative",
+            top: "0",
+            left: "0",
+            width: `${canvasWidth}px`,
+            height: `${canvasHeight}px`,
+            margin: "0",
+            boxShadow: "none",
+            outline: "none",
+          });
+
+          exportWrapper.appendChild(exportCanvasNode);
+          document.body.appendChild(exportWrapper);
+
+          try {
+            const canvas = await html2canvas(exportCanvasNode, {
+              scale: 1,
+              useCORS: true,
+              allowTaint: true,
+              backgroundColor: canvasBackground || "#ffffff",
+              width: canvasWidth,
+              height: canvasHeight,
+              windowWidth: canvasWidth,
+              windowHeight: canvasHeight,
+              scrollX: 0,
+              scrollY: 0,
+              logging: false,
+              ignoreElements: (element) => {
+                if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+                if (element.getAttribute?.("data-export-ignore") === "true") return true;
+                if (element.closest?.('[data-export-ignore="true"]')) return true;
+                // Exclude photo slot placeholders — background image must be a clean
+                // frame decoration. The booth draws camera/photos at slot coordinates
+                // on top; baked-in blue boxes cause visual misalignment with the
+                // actual frame photo areas and confuse the slot position mapping.
+                if (element.getAttribute?.("data-photo-placeholder") === "true") return true;
+                if (element.closest?.('[data-photo-placeholder="true"]')) return true;
+                return false;
+              },
+            });
+
+            // Export as JPEG (not PNG) so the booth's isOverlayAsset() returns false
+            // and draws this image as a background BEFORE camera slots, not as an
+            // overlay ON TOP of them (which would hide the camera feed).
+            frameImageDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+            frameImageBlob = await (await fetch(frameImageDataUrl)).blob();
+            console.log("📸 Canvas captured (native JPEG), blob size:", frameImageBlob.size, "bytes");
+          } catch (err) {
+            console.error("❌ Failed to capture canvas:", err);
+            showToast("error", "Gagal membuat gambar frame dari canvas");
+            setSaving(false);
+            return;
+          } finally {
+            if (exportWrapper.parentNode) {
+              exportWrapper.parentNode.removeChild(exportWrapper);
+            }
+          }
+        } else if (previewFrameRef.current) {
           try {
             const canvas = await html2canvas(previewFrameRef.current, {
               scale: 2,
               useCORS: true,
               allowTaint: true,
               backgroundColor: canvasBackground || "#ffffff",
+              ignoreElements: (element) => {
+                if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+                if (element.getAttribute?.('data-photo-placeholder') === 'true') return true;
+                if (element.closest?.('[data-photo-placeholder="true"]')) return true;
+                return false;
+              },
             });
-            frameImageDataUrl = canvas.toDataURL("image/png", 0.9);
+            frameImageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
             frameImageBlob = await (await fetch(frameImageDataUrl)).blob();
-            console.log("📸 Canvas captured, blob size:", frameImageBlob.size, "bytes");
+            console.log("📸 Canvas captured (fallback JPEG), blob size:", frameImageBlob.size, "bytes");
           } catch (err) {
-            console.error("❌ Failed to capture canvas:", err);
+            console.error("❌ Failed to capture canvas fallback:", err);
             showToast("error", "Gagal membuat gambar frame dari canvas");
             setSaving(false);
             return;
@@ -910,6 +1010,25 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
         }
       });
 
+      // ─── Overlay detection ────────────────────────────────────────────────────
+      // Jika ada upload element dengan __isOverlay=true (mis. dari Import Frame),
+      // gunakan URL PNG-nya langsung sebagai assetUrl/imagePath.
+      // PNG overlay punya lubang transparan di posisi area foto → booth
+      // menggambarnya SETELAH kamera/foto (isOverlayAsset deteksi ekstensi .png)
+      // sehingga kamera terlihat lewat lubang transparan frame dekorasi.
+      // Hanya berlaku jika TIDAK ada background-photo terpisah agar background
+      // photo tetap terjaga sebagai lapisan bawah.
+      if (!backgroundPhoto) {
+        const overlayEl = otherElements.find(
+          (el) => el.type === 'upload' && el.data?.__isOverlay && typeof el.data?.image === 'string' && el.data.image
+        );
+        if (overlayEl) {
+          frameImageBlob = null;
+          // imagePath will be set in frameData below
+          console.log("🖼️ [OVERLAY] Using overlay PNG URL as assetUrl:", overlayEl.data.image.substring(0, 80));
+        }
+      }
+
       const frameData = {
         name: frameName.trim(),
         description: frameDescription.trim(),
@@ -928,10 +1047,26 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
           orientation: "portrait",
           backgroundColor: canvasBackground,
           elements: otherElements, // Store upload/text/shape elements here
+          // Include canvas dimensions in layout JSON so studio import-preview
+          // can derive correct canvasWidth/Height even when the backend DB
+          // does not have dedicated canvas_width/canvas_height columns.
+          canvasWidth,
+          canvasHeight,
         },
         source: studioBoothMode ? "studio_booth" : "fremio",
         is_template: !!studioBoothMode,
       };
+
+      // Set imagePath from overlay element URL (must happen after frameData is built)
+      if (!backgroundPhoto) {
+        const overlayEl = otherElements.find(
+          (el) => el.type === 'upload' && el.data?.__isOverlay && typeof el.data?.image === 'string' && el.data.image
+        );
+        if (overlayEl) {
+          frameData.imagePath = overlayEl.data.image;
+          frameData.image_path = overlayEl.data.image;
+        }
+      }
 
       console.log("💾 Frame data to save:", {
         ...frameData,
@@ -953,8 +1088,8 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
       } else {
         // Create new frame
         console.log("➕ Creating new frame");
-        if (!frameImageBlob) {
-          throw new Error("Gambar frame tidak ditemukan! Pastikan sudah upload gambar di Background.");
+        if (!frameImageBlob && !frameData.imagePath) {
+          throw new Error("Gambar frame tidak ditemukan! Pastikan sudah upload gambar di Background atau Import Frame.");
         }
         result = await unifiedFrameService.createFrame(frameData, frameImageBlob);
         if (result.success) {
@@ -963,7 +1098,12 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
       }
 
       if (result.success) {
-        const savedFrameId = result?.frame?.id || result?.data?.id || result?.id || null;
+        const savedFrameId =
+          result?.frame?.id ||
+          result?.frameId ||
+          result?.data?.id ||
+          result?.id ||
+          null;
 
         if (studioBoothMode && savedFrameId) {
           try {

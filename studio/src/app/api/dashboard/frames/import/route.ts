@@ -93,6 +93,7 @@ export async function POST(req: Request): Promise<Response> {
           canvasWidth:  f.canvasWidth,
           canvasHeight: f.canvasHeight,
           maxCaptures:  f.maxCaptures,
+          captureMode:  f.captureMode ?? "single",
           slots:        normalizedSlots,
           isActive:     true,
         },
