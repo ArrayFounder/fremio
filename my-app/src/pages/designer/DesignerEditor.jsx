@@ -709,32 +709,35 @@ export default function DesignerEditor() {
     }
   }, [importFrameWorking, showToast, getCanvasDimensions, canvasAspectRatio, addElement]);
 
-  const applyPhotoGridLayout = useCallback((rows = 1, cols = 1) => {
+  const buildMirroredPhotoLayout = useCallback((numRows, canvasW, canvasH) => {
+    const centerX = Math.floor(canvasW / 2);
+    const marginX = 65;
+    const marginY = 140;
+    const gapCenter = 30;
+    const gapY = 30;
+    const halfGap = Math.floor(gapCenter / 2);
+    const colWidth = centerX - marginX - halfGap;
+    const availableH = canvasH - 2 * marginY - (numRows - 1) * gapY;
+    const photoH = Math.floor(availableH / numRows);
+    const slots = [];
+
+    for (let row = 0; row < numRows; row++) {
+      const y = marginY + row * (photoH + gapY);
+      slots.push({ x: marginX, y, width: colWidth, height: photoH, side: "left", rowIndex: row });
+      slots.push({ x: centerX + halfGap, y, width: colWidth, height: photoH, side: "right", rowIndex: row });
+    }
+
+    return slots;
+  }, []);
+
+  const applyPhotoGridLayout = useCallback((numRows = 3) => {
     elements.filter((el) => el.type === "photo").forEach((el) => removeElement(el.id));
 
     const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
-    const gapX = 30;
-    const gapY = 30;
-    const marginX = 65;
-    const marginY = 140;
-    const availableWidth = canvasW - 2 * marginX - (cols - 1) * gapX;
-    const availableHeight = canvasH - 2 * marginY - (rows - 1) * gapY;
-    const photoWidth = Math.floor(availableWidth / cols);
-    const photoHeight = Math.floor(availableHeight / rows);
+    const centerX = Math.floor(canvasW / 2);
+    const slots = buildMirroredPhotoLayout(numRows, canvasW, canvasH);
 
-    const gridSlots = [];
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        gridSlots.push({
-          x: marginX + col * (photoWidth + gapX),
-          y: marginY + row * (photoHeight + gapY),
-          width: photoWidth,
-          height: photoHeight,
-        });
-      }
-    }
-
-    const normalizedSlots = gridSlots.map((slot) => ({
+    const normalizedSlots = slots.map((slot) => ({
       left: slot.x / canvasW,
       top: slot.y / canvasH,
       width: slot.width / canvasW,
@@ -744,16 +747,22 @@ export default function DesignerEditor() {
     const { slotNumberMap, photoIndexMap } = buildSlotMaps(normalizedSlots);
 
     let lastId = null;
-    gridSlots.forEach((slot, index) => {
+    slots.forEach((slot, index) => {
       const id = addElement("photo", {
         x: slot.x,
         y: slot.y,
         width: slot.width,
         height: slot.height,
+        zIndex: 0,
         data: {
           photoIndex: photoIndexMap[index] ?? index,
           slotNumber: slotNumberMap[index] ?? index + 1,
           borderRadius: 0,
+          linkedGroup: "mirror",
+          side: slot.side,
+          rowIndex: slot.rowIndex,
+          mirrorCenterX: centerX,
+          gapY: 30,
         },
       });
       if (id) lastId = id;
@@ -762,7 +771,171 @@ export default function DesignerEditor() {
     if (lastId) {
       selectElement(lastId);
     }
-  }, [elements, removeElement, getCanvasDimensions, canvasAspectRatio, addElement, selectElement]);
+  }, [elements, removeElement, getCanvasDimensions, canvasAspectRatio, buildMirroredPhotoLayout, addElement, selectElement]);
+
+  const handleElementUpdate = useCallback((id, changes) => {
+    const el = elements.find((e) => e.id === id);
+    if (!el || el.type !== "photo" || el.data?.linkedGroup !== "mirror") {
+      updateElement(id, changes);
+      return;
+    }
+
+    const isResize = "width" in changes || "height" in changes;
+    const hasX = "x" in changes;
+    const hasY = "y" in changes;
+    const linkedPhotos = elements.filter(
+      (e) => e.type === "photo" && e.data?.linkedGroup === "mirror"
+    );
+    const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+    const centerX = el.data?.mirrorCenterX ?? Math.floor(canvasW / 2);
+
+    if (isResize) {
+      const side = el.data?.side;
+      const newW = "width" in changes ? changes.width : el.width;
+      const newH = "height" in changes ? changes.height : el.height;
+      const deltaX = ("x" in changes ? changes.x : el.x) - el.x;
+      const deltaY = ("y" in changes ? changes.y : el.y) - el.y;
+      const deltaW = newW - el.width;
+
+      linkedPhotos.forEach((photo) => {
+        if (photo.id === id) return;
+        const pSide = photo.data?.side;
+        let newX;
+        let newY;
+
+        if (pSide === side) {
+          newX = photo.x + deltaX;
+          newY = photo.y + deltaY;
+        } else {
+          newX = photo.x - (deltaX + deltaW);
+          newY = photo.y + deltaY;
+        }
+
+        if (pSide === "left") newX = Math.max(0, Math.min(centerX - newW, newX));
+        else newX = Math.max(centerX, Math.min(canvasW - newW, newX));
+        newY = Math.max(0, Math.min(canvasH - newH, newY));
+
+        updateElement(photo.id, { x: newX, y: newY, width: newW, height: newH });
+      });
+
+      updateElement(id, changes);
+      return;
+    }
+
+    if (hasY && !hasX) {
+      const newY = changes.y;
+      linkedPhotos.forEach((photo) => {
+        updateElement(photo.id, { y: newY });
+      });
+      return;
+    }
+
+    if (hasX) {
+      const newX = changes.x;
+      const side = el.data?.side;
+      const elW = el.width;
+
+      linkedPhotos.forEach((photo) => {
+        const pSide = photo.data?.side;
+        let mirroredX;
+
+        if (pSide === side) {
+          mirroredX = newX;
+        } else {
+          const delta = newX - el.x;
+          mirroredX = photo.x - delta;
+        }
+
+        if (pSide === "left") mirroredX = Math.max(0, Math.min(centerX - elW, mirroredX));
+        else mirroredX = Math.max(centerX, Math.min(canvasW - elW, mirroredX));
+
+        const next = { x: mirroredX };
+        if (hasY) next.y = changes.y;
+        updateElement(photo.id, next);
+      });
+      return;
+    }
+
+    updateElement(id, changes);
+  }, [elements, updateElement, getCanvasDimensions, canvasAspectRatio]);
+
+  const photoVerticalMode = useMemo(() => {
+    const first = elements.find(
+      (e) => e.type === "photo" && e.data?.linkedGroup === "mirror"
+    );
+    return first?.data?.verticalMode ?? "parallel";
+  }, [elements]);
+
+  const handlePhotoVerticalModeChange = useCallback((newMode) => {
+    const { height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+    const linked = elements.filter(
+      (e) => e.type === "photo" && e.data?.linkedGroup === "mirror"
+    );
+
+    const byRow = {};
+    linked.forEach((photo) => {
+      const ri = photo.data?.rowIndex ?? 0;
+      if (!byRow[ri]) byRow[ri] = {};
+      byRow[ri][photo.data?.side] = photo;
+    });
+
+    linked.forEach((photo) => {
+      const ri = photo.data?.rowIndex ?? 0;
+      const rowPhotos = byRow[ri];
+      if (photo.data?.side === "right" && rowPhotos?.left) {
+        const leftY = rowPhotos.left.y;
+        const newY =
+          newMode === "inverted"
+            ? Math.max(0, Math.min(canvasH - photo.height, canvasH - leftY - photo.height))
+            : leftY;
+        updateElement(photo.id, { y: newY, data: { verticalMode: newMode } });
+      } else {
+        updateElement(photo.id, { data: { verticalMode: newMode } });
+      }
+    });
+  }, [elements, updateElement, getCanvasDimensions, canvasAspectRatio]);
+
+  const photoGapY = useMemo(() => {
+    const first = elements.find(
+      (e) => e.type === "photo" && e.data?.linkedGroup === "mirror"
+    );
+    return first?.data?.gapY ?? 30;
+  }, [elements]);
+
+  const handlePhotoGapChange = useCallback((newGap) => {
+    const { height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+    const linked = elements.filter(
+      (e) => e.type === "photo" && e.data?.linkedGroup === "mirror"
+    );
+    if (linked.length === 0) return;
+
+    const numRows = linked.length / 2;
+    const vertMode = linked[0]?.data?.verticalMode ?? "parallel";
+    const leftPhotos = linked
+      .filter((p) => p.data?.side === "left")
+      .sort((a, b) => (a.data?.rowIndex ?? 0) - (b.data?.rowIndex ?? 0));
+    const photoH = leftPhotos[0]?.height ?? 400;
+
+    const maxGap = numRows > 1 ? Math.floor((canvasH - numRows * photoH) / (numRows - 1)) : 0;
+    const clampedGap = Math.max(0, Math.min(maxGap, newGap));
+
+    const topY = leftPhotos[0]?.y ?? 0;
+    const botY = (leftPhotos[numRows - 1]?.y ?? 0) + photoH;
+    const blockCenterY = (topY + botY) / 2;
+    const newBlockH = numRows * photoH + (numRows - 1) * clampedGap;
+    let newTopY = blockCenterY - newBlockH / 2;
+    newTopY = Math.max(0, Math.min(canvasH - newBlockH, newTopY));
+
+    linked.forEach((photo) => {
+      const rowIdx = photo.data?.rowIndex ?? 0;
+      const leftY = newTopY + rowIdx * (photoH + clampedGap);
+      const newY =
+        vertMode === "inverted" && photo.data?.side === "right"
+          ? canvasH - leftY - photoH
+          : leftY;
+      updateElement(photo.id, { y: newY, data: { gapY: clampedGap } });
+    });
+  }, [elements, updateElement, getCanvasDimensions, canvasAspectRatio]);
 
   const triggerUpload = useCallback(() => {
     uploadPurposeRef.current = "upload";
@@ -1509,7 +1682,7 @@ export default function DesignerEditor() {
                     selectElement(id);
                   }
                 }}
-                onUpdate={updateElement}
+                onUpdate={handleElementUpdate}
                 onBringToFront={bringToFront}
                 onRemove={removeElement}
                 onDuplicate={duplicateElement}
@@ -1623,7 +1796,7 @@ export default function DesignerEditor() {
               selectedElement={selectedElement}
               canvasBackground={canvasBackground}
               onBackgroundChange={setCanvasBackground}
-              onUpdateElement={updateElement}
+              onUpdateElement={handleElementUpdate}
               onDeleteElement={removeElement}
               clearSelection={clearSelection}
               onSelectBackgroundPhoto={() => {
@@ -1689,11 +1862,15 @@ export default function DesignerEditor() {
                   showToast("error", "Gagal memuat foto. Coba lagi.");
                 }
               }}
-              onConfirmAddPhoto={(rows = 1, cols = 1) => {
+              onConfirmAddPhoto={(numRows = 3) => {
                 setPendingPhotoTool(false);
-                applyPhotoGridLayout(rows, cols);
+                applyPhotoGridLayout(numRows);
               }}
               onCancelPhotoTool={() => setPendingPhotoTool(false)}
+              onPhotoVerticalModeChange={handlePhotoVerticalModeChange}
+              photoVerticalMode={photoVerticalMode}
+              photoGapY={photoGapY}
+              onPhotoGapChange={handlePhotoGapChange}
             />
           </div>
         </Motion.aside>}
@@ -1746,7 +1923,7 @@ export default function DesignerEditor() {
                     selectedElement={selectedElement}
                     canvasBackground={canvasBackground}
                     onBackgroundChange={setCanvasBackground}
-                    onUpdateElement={updateElement}
+                    onUpdateElement={handleElementUpdate}
                     onDeleteElement={(id) => { removeElement(id); clearSelection(); setShowMobileProps(false); }}
                     clearSelection={clearSelection}
                     onSelectBackgroundPhoto={() => {
@@ -1802,11 +1979,15 @@ export default function DesignerEditor() {
                         setTimeout(() => fitBackgroundPhotoToCanvas({ canvasWidth: cw, canvasHeight: ch }), 300);
                       } catch { showToast("error", "Gagal memuat foto. Coba lagi."); }
                     }}
-                    onConfirmAddPhoto={(rows = 1, cols = 1) => {
+                    onConfirmAddPhoto={(numRows = 3) => {
                       setPendingPhotoTool(false);
-                      applyPhotoGridLayout(rows, cols);
+                      applyPhotoGridLayout(numRows);
                     }}
                     onCancelPhotoTool={() => setPendingPhotoTool(false)}
+                    onPhotoVerticalModeChange={handlePhotoVerticalModeChange}
+                    photoVerticalMode={photoVerticalMode}
+                    photoGapY={photoGapY}
+                    onPhotoGapChange={handlePhotoGapChange}
                   />
                 </div>
               </div>
