@@ -2165,9 +2165,21 @@ export default function Create() {
     }
 
     if (hasY && !hasX) {
-      const newY = changes.y;
+      const dy = changes.y - el.y;
+      let safeDy = dy;
+
       linkedPhotos.forEach((photo) => {
-        updateElement(photo.id, { y: newY });
+        if (safeDy > 0) {
+          const maxDown = canvasH - photo.height - photo.y;
+          if (safeDy > maxDown) safeDy = maxDown;
+        } else {
+          const maxUp = -photo.y;
+          if (safeDy < maxUp) safeDy = maxUp;
+        }
+      });
+
+      linkedPhotos.forEach((photo) => {
+        updateElement(photo.id, { y: photo.y + safeDy });
       });
       return;
     }
@@ -2176,6 +2188,20 @@ export default function Create() {
       const newX = changes.x;
       const side = el.data?.side;
       const elW = el.width;
+      const dy = hasY ? changes.y - el.y : 0;
+      let safeDy = dy;
+
+      if (hasY) {
+        linkedPhotos.forEach((photo) => {
+          if (safeDy > 0) {
+            const maxDown = canvasH - photo.height - photo.y;
+            if (safeDy > maxDown) safeDy = maxDown;
+          } else {
+            const maxUp = -photo.y;
+            if (safeDy < maxUp) safeDy = maxUp;
+          }
+        });
+      }
 
       linkedPhotos.forEach((photo) => {
         const pSide = photo.data?.side;
@@ -2192,7 +2218,7 @@ export default function Create() {
         else mirroredX = Math.max(centerX, Math.min(canvasW - elW, mirroredX));
 
         const next = { x: mirroredX };
-        if (hasY) next.y = changes.y;
+        if (hasY) next.y = photo.y + safeDy;
         updateElement(photo.id, next);
       });
       return;
