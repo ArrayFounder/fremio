@@ -38,9 +38,9 @@ import {
   Download,
   Trash2,
 } from "lucide-react";
-import CanvasPreview from "@/components/creator/CanvasPreview";
-import PropertiesPanel from "@/components/creator/PropertiesPanel";
-import ColorPicker from "@/components/creator/ColorPicker";
+import CanvasPreview from "@/components/creator/CanvasPreview.jsx";
+import PropertiesPanel from "@/components/creator/PropertiesPanel.jsx";
+import ColorPicker from "@/components/creator/ColorPicker.jsx";
 import useCreatorStore from "@/store/useCreatorStore";
 import {
   CAPTURED_OVERLAY_Z_OFFSET,
