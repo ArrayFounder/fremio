@@ -162,8 +162,8 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   };
 
   // ── Check Local Agent & get printers ──────────────────────────────────────
-  // Semua kandidat dicoba PARALLEL (Promise.any) agar tidak ada waktu terbuang
-  // menunggu satu-per-satu timeout. Yang pertama OK langsung dipakai.
+  // Coba endpoint secara BERURUTAN agar tidak membanjiri local agent.
+  // Endpoint HTTP diprioritaskan untuk localhost bridge (tanpa TLS).
   const checkAgent = useCallback(async () => {
     if (!canUseLocalAgent()) { setAgentOnline(false); return; }
     setAgentChecking(true);
@@ -179,17 +179,29 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         "https://localhost:3002",
       ];
 
-      const status = await Promise.any(
-        candidates.map(async (base) => {
-          const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(2500) });
+      let status: {
+        camera?: { available?: boolean; cameras?: { model: string; port: string }[] };
+        printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
+      } | null = null;
+
+      let lastError: unknown = null;
+      for (const base of candidates) {
+        try {
+          const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(8000) });
           if (!res.ok) throw new Error(`status ${res.status}`);
-          const data = await res.json() as {
+          status = await res.json() as {
             camera?: { available?: boolean; cameras?: { model: string; port: string }[] };
             printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
           };
-          return data;
-        })
-      );
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      if (!status) {
+        throw lastError instanceof Error ? lastError : new Error("Agent tidak dapat dijangkau");
+      }
 
       setAgentOnline(true);
       const cams = status.camera?.cameras ?? [];
