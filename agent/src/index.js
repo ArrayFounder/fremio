@@ -48,6 +48,33 @@ app.use((req, _res, next) => {
   next();
 });
 
+/**
+ * GET /preview
+ * Return one DSLR preview frame (no shutter) for live-view polling.
+ */
+app.get('/preview', async (_req, res) => {
+  logger.debug('GET /preview — fetching DSLR live preview frame');
+
+  let result;
+  try {
+    result = await camera.capturePreview();
+  } catch (err) {
+    logger.error('GET /preview error', { message: err.message });
+    return res.status(500).json({
+      ok: false,
+      error: err.message,
+      hint: 'Pastikan kamera mendukung preview dan mode PTP/PC Remote aktif.',
+    });
+  }
+
+  res.setHeader('Content-Type', result.mimeType || 'image/jpeg');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('X-Frame-Elapsed-Ms', String(result.elapsedMs));
+  res.send(result.buffer);
+});
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 /**
@@ -184,7 +211,7 @@ app.use((req, res) => {
   res.status(404).json({
     ok:    false,
     error: `Route tidak ditemukan: ${req.method} ${req.path}`,
-    routes: ['GET /status', 'POST /capture', 'POST /print'],
+    routes: ['GET /status', 'GET /preview', 'POST /capture', 'POST /print'],
   });
 });
 

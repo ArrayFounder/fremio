@@ -270,15 +270,24 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     if (typeof sessionStorage === "undefined") return undefined;
     return sessionStorage.getItem("booth_camera_deviceId") ?? undefined;
   });
+  const [captureSource] = useState<"auto" | "webcam" | "dslr">(() => {
+    if (typeof sessionStorage === "undefined") return "auto";
+    const saved = sessionStorage.getItem("booth_camera_source");
+    return saved === "webcam" || saved === "dslr" || saved === "auto" ? saved : "auto";
+  });
+  const dslrMode = captureSource === "dslr";
   const [mirror, setMirror] = useState(() => {
     if (typeof sessionStorage === "undefined") return true;
     return sessionStorage.getItem("booth_camera_mirror") !== "false";
   });
   const [showSettings, setShowSettings] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
 
   // ── DSLR via Local Agent ────────────────────────────────────────────────────
   const [dslrAvailable, setDslrAvailable] = useState<boolean>(false);
   const [dslrModel,     setDslrModel]     = useState<string | null>(null);
+  const [dslrPreviewUrl, setDslrPreviewUrl] = useState<string | null>(null);
+  const [dslrPreviewError, setDslrPreviewError] = useState<string | null>(null);
   const agentBaseRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -319,6 +328,70 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       setDslrModel(null);
     })();
   }, []);
+
+  useEffect(() => {
+    if (!dslrMode || !agentBaseRef.current) {
+      setDslrPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      setDslrPreviewError(null);
+      return;
+    }
+
+    let mounted = true;
+    let busy = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let currentObjectUrl: string | null = null;
+    let consecutiveFails = 0;
+    let pauseUntil = 0;
+
+    const tick = async () => {
+      if (!mounted || busy) return;
+      if (pauseUntil > Date.now()) {
+        timer = setTimeout(tick, Math.max(400, pauseUntil - Date.now()));
+        return;
+      }
+      busy = true;
+      try {
+        const base = agentBaseRef.current;
+        if (!base) return;
+        const res = await fetch(`${base}/preview`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
+        if (!res.ok) throw new Error(`preview ${res.status}`);
+        const blob = await res.blob();
+        if (!blob.size) throw new Error("preview empty");
+        const nextUrl = URL.createObjectURL(blob);
+        if (!mounted) {
+          URL.revokeObjectURL(nextUrl);
+          return;
+        }
+        setDslrPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          currentObjectUrl = nextUrl;
+          return nextUrl;
+        });
+        consecutiveFails = 0;
+        setDslrPreviewError(null);
+      } catch {
+        consecutiveFails += 1;
+        if (consecutiveFails >= 3) {
+          pauseUntil = Date.now() + 15000;
+          setDslrPreviewError("Live preview DSLR belum tersedia. Cek mode Live View kamera. Capture foto tetap bisa dipakai.");
+        }
+      } finally {
+        busy = false;
+        if (mounted) timer = setTimeout(tick, consecutiveFails >= 3 ? 15000 : 1200);
+      }
+    };
+
+    void tick();
+
+    return () => {
+      mounted = false;
+      if (timer) clearTimeout(timer);
+      if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+    };
+  }, [dslrMode]);
 
   const captureFromAgent = useCallback(async (): Promise<string | null> => {
     const base = agentBaseRef.current;
@@ -387,7 +460,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       stop();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDeviceId, mirror]);
+  }, [selectedDeviceId, mirror, dslrMode]);
 
   const changeDevice = (deviceId: string) => {
     sessionStorage.setItem("booth_camera_deviceId", deviceId);
@@ -405,11 +478,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   const startCountdown = useCallback(() => {
     if (cdState !== "READY") return;
+    setCaptureError(null);
     setCdState("COUNTING");
     setCountdown(3);
 
     // ── Live Mode: mulai rekam saat countdown dimulai ──────────────────────
-    startRecording();
+    if (!dslrMode) {
+      startRecording();
+    }
 
     let count = 3;
     const tick = () => {
@@ -422,32 +498,51 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         setCountdown(null);
         setCdState("FLASH");
         countdownTimerRef.current = setTimeout(async () => {
-          // Ambil foto — coba DSLR via agent dulu, fallback ke webcam
+          // Ambil foto sesuai sumber yang dipilih operator di setup.
           let dataUrl: string | null = null;
-          if (dslrAvailable) {
+          if (captureSource === "dslr") {
+            dataUrl = await captureFromAgent();
+            if (!dataUrl) {
+              setCaptureError("DSLR dipilih tapi gagal ambil foto dari local agent. Cek koneksi kamera lalu coba lagi.");
+              if (!dslrMode) {
+                stopRecording().catch(() => {});
+              }
+              setCdState("READY");
+              return;
+            }
+          } else if (captureSource === "auto" && dslrAvailable) {
             dataUrl = await captureFromAgent();
           }
-          if (!dataUrl) {
+
+          if (!dataUrl && captureSource !== "dslr") {
             dataUrl = capture() ?? null;
           }
+
           setCdState("DONE");
           if (!dataUrl) {
-            stopRecording().catch(() => {});
+            setCaptureError("Foto gagal diambil. Pastikan kamera siap lalu coba lagi.");
+            if (!dslrMode) {
+              stopRecording().catch(() => {});
+            }
             return;
           }
           // Tampilkan foto review segera — jangan tunggu video
           onCapture(dataUrl);
-          // Proses video di background (~800ms setelah shutter)
-          void (async () => {
-            await new Promise<void>((r) => setTimeout(r, 800));
-            const videoBlob = await stopRecording();
-            onVideoReady(videoBlob);
-          })();
+          if (!dslrMode) {
+            // Proses video di background (~800ms setelah shutter)
+            void (async () => {
+              await new Promise<void>((r) => setTimeout(r, 800));
+              const videoBlob = await stopRecording();
+              onVideoReady(videoBlob);
+            })();
+          } else {
+            onVideoReady(null);
+          }
         }, 300);
       }
     };
     countdownTimerRef.current = setTimeout(tick, 1000);
-  }, [cdState, capture, captureFromAgent, dslrAvailable, onCapture, onVideoReady, startRecording, stopRecording]);
+  }, [captureSource, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, onCapture, onVideoReady, startRecording, stopRecording]);
 
   // Viewfinder — landscape 16:9 di landscape, 4:3 di portrait
   const aspectStyle = isPortrait
@@ -466,6 +561,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const cw = frame.canvasWidth  || 1080;
   const ch = frame.canvasHeight || 1920;
   const frameAspect = cw / ch;
+  const canTriggerCapture = dslrMode ? cdState === "READY" : isReady && cdState === "READY";
 
   return (
     <div
@@ -529,14 +625,38 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         <div className="relative flex-1 flex items-center justify-center w-full">
           <div className="relative rounded-2xl overflow-hidden bg-black" style={aspectStyle}>
           {/* Kamera video */}
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-            style={{ transform: mirror ? "scaleX(-1)" : "none" }}
-          />
+          {dslrMode ? (
+            dslrPreviewUrl ? (
+              <img
+                src={dslrPreviewUrl}
+                alt="DSLR live preview"
+                className="w-full h-full object-cover"
+                style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+              />
+            ) : isReady ? (
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+                style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center text-center px-6" style={{ color: textSecondary }}>
+                <p className="text-sm">{dslrPreviewError ?? "Menunggu live preview DSLR…"}</p>
+              </div>
+            )
+          ) : (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover"
+              style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+            />
+          )}
 
           {/* Badge DSLR terhubung */}
           {dslrAvailable && (
@@ -545,6 +665,28 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
               style={{ background: "rgba(0,0,0,0.60)", color: "#4ade80" }}
             >
               📷 {dslrModel ?? "DSLR"} — aktif
+            </div>
+          )}
+
+          {/* Badge sumber capture yang dipilih di setup */}
+          <div
+            className="absolute top-3 right-14 px-2.5 py-1 rounded-full backdrop-blur-sm text-[10px] font-bold pointer-events-none"
+            style={{
+              background: "rgba(0,0,0,0.60)",
+              color: captureSource === "dslr" ? "#4ade80" : "#facc15",
+            }}
+          >
+            {captureSource === "dslr" ? "Sumber Foto: DSLR" : captureSource === "webcam" ? "Sumber Foto: Webcam" : "Sumber Foto: Auto"}
+          </div>
+
+          {captureSource === "dslr" && (
+            <div
+              className="absolute left-3 right-3 top-12 rounded-xl px-3 py-1.5 text-[10px] font-semibold pointer-events-none"
+              style={{ background: "rgba(15,23,42,0.75)", color: "#e2e8f0" }}
+            >
+              {dslrPreviewUrl
+                ? "Live preview dari DSLR aktif."
+                : "Preview pakai webcam sebagai fallback. Capture tetap diambil dari DSLR local agent."}
             </div>
           )}
 
@@ -664,11 +806,18 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
               <p className="animate-pulse text-lg" style={{ color: textPrimary }}>Memuat kamera…</p>
             </div>
           )}
+
+          {captureError && (
+            <div className="absolute left-3 right-3 bottom-3 rounded-xl px-3 py-2 text-[11px] font-semibold"
+              style={{ background: "rgba(220,38,38,0.82)", color: "#fff" }}>
+              {captureError}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Error izin kamera */}
-      {permissionError && (() => {
+      {!dslrMode && permissionError && (() => {
         const chrome = isChrome();
         const chromeUrl = `googlechrome://${typeof location !== "undefined" ? location.href.replace(/^https?:\/\//, "") : ""}`;
         return (
@@ -750,9 +899,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           ) : (
             <button
               onClick={startCountdown}
-              disabled={!isReady || cdState !== "READY"}
+              disabled={!canTriggerCapture}
               style={{
-                backgroundColor: !isReady || cdState !== "READY" ? `${accentColor}55` : accentColor,
+                backgroundColor: !canTriggerCapture ? `${accentColor}55` : accentColor,
                 color:            primaryColor,
               }}
               className="w-full py-6 rounded-3xl text-3xl font-black
