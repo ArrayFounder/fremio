@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import Image from "next/image";
 import { getAdaptiveColors } from "../colorUtils";
 import { getAllPaperSizes } from "../paperSize";
 import type { BoothConfigData, BoothHardwareSettings } from "../types";
@@ -59,6 +58,7 @@ function saveHardwareSettings(slug: string, s: BoothHardwareSettings) {
 export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   const { primaryColor, accentColor } = booth;
   const { textPrimary, textSecondary, textTertiary, surfaceBg, surfaceBorder } = getAdaptiveColors(primaryColor);
+  type CaptureSource = "auto" | "webcam" | "dslr";
 
   // ── Camera state ──────────────────────────────────────────────────────────
   const [devices,    setDevices]    = useState<VideoDevice[]>([]);
@@ -80,6 +80,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
   // ── DSLR state ────────────────────────────────────────────────────
   const [dslrCameras, setDslrCameras] = useState<{ model: string; port: string }[]>([]);
+  const [captureSource, setCaptureSource] = useState<CaptureSource>("auto");
 
   // ── Paper size state ──────────────────────────────────────────────────────
   // null = auto-detect dari canvas frame dimensions
@@ -94,6 +95,13 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       setPrinterName(saved.printerName);
       if (saved.printerName) setManualPrinter(saved.printerName);
       setPaperSizeOverride(saved.paperSize ?? null);
+    }
+
+    if (typeof sessionStorage !== "undefined") {
+      const savedSource = sessionStorage.getItem("booth_camera_source");
+      if (savedSource === "auto" || savedSource === "webcam" || savedSource === "dslr") {
+        setCaptureSource(savedSource);
+      }
     }
   }, [booth.slug]);
 
@@ -157,6 +165,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
   // Switch camera
   const switchCamera = (id: string) => {
+    setCaptureSource("webcam");
     setDeviceId(id);
     startCamera(id);
   };
@@ -183,6 +192,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         camera?: { available?: boolean; cameras?: { model: string; port: string }[] };
         printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
       } | null = null;
+      let connectedBase: string | null = null;
 
       let lastError: unknown = null;
       for (const base of candidates) {
@@ -193,6 +203,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             camera?: { available?: boolean; cameras?: { model: string; port: string }[] };
             printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
           };
+          connectedBase = base;
           break;
         } catch (error) {
           lastError = error;
@@ -220,10 +231,13 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       setAgentOnline(false);
       setDslrCameras([]);
       setPrinters([]);
+      if (captureSource === "dslr") {
+        setCaptureSource("auto");
+      }
     } finally {
       setAgentChecking(false);
     }
-  }, [printerName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [captureSource, printerName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { checkAgent(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -243,6 +257,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     if (deviceId) sessionStorage.setItem("booth_camera_deviceId", deviceId);
     else          sessionStorage.removeItem("booth_camera_deviceId");
     sessionStorage.setItem("booth_camera_mirror", String(mirror));
+    sessionStorage.setItem("booth_camera_source", captureSource);
     onDone(settings);
   };
 
@@ -272,8 +287,14 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         {/* Header — compact horizontal */}
         <div className="flex items-center justify-center gap-3">
           {booth.logoUrl && (
-            <Image src={booth.logoUrl} alt={booth.boothName} width={64} height={32}
-              className="h-7 w-auto object-contain" />
+            <img
+              src={booth.logoUrl}
+              alt={booth.boothName}
+              className="h-7 w-auto object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
           )}
           <div>
             <p className="text-[10px] uppercase tracking-widest" style={{ color: textTertiary }}>Setup Booth</p>
@@ -289,7 +310,14 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
             {/* Preview — fixed height */}
             <div className="relative bg-black" style={{ height: "200px" }}>
-              {camError ? (
+              {captureSource === "dslr" ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+                  <span className="text-2xl">📷</span>
+                  <p className="text-xs" style={{ color: textSecondary }}>
+                    DSLR dipilih. Live preview tampil di sesi foto, bukan di halaman setup.
+                  </p>
+                </div>
+              ) : camError ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
                   <span className="text-2xl">📷</span>
                   <p className="text-xs" style={{ color: textSecondary }}>{camError}</p>
@@ -307,7 +335,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                   style={{ transform: mirror ? "scaleX(-1)" : "none" }}
                 />
               )}
-              {camLoading && !camError && (
+              {captureSource !== "dslr" && camLoading && !camError && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60">
                   <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Memuat kamera…</p>
                 </div>
@@ -324,30 +352,42 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             {/* Camera selector */}
             <div className="p-3 space-y-2">
               <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>
-                Kamera {devices.length > 1 ? `(${devices.length} terdeteksi)` : ""}
+                Kamera Webcam Browser {devices.length > 1 ? `(${devices.length} terdeteksi)` : ""}
               </p>
               {devices.length === 0 && !camError && (
                 <p className="text-xs" style={{ color: textTertiary }}>Mendeteksi kamera…</p>
               )}
               <div className="space-y-1.5">
+                <button
+                  onClick={() => setCaptureSource("webcam")}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
+                  style={{
+                    background: captureSource === "webcam" ? `${accentColor}22` : surfaceBg,
+                    border: captureSource === "webcam" ? `1.5px solid ${accentColor}` : "1.5px solid transparent",
+                    color: captureSource === "webcam" ? accentColor : textPrimary,
+                  }}
+                >
+                  <span>🎬</span>
+                  <span className="flex-1 truncate">Gunakan Webcam Browser</span>
+                  {captureSource === "webcam" && <span className="font-bold">✓ Dipilih</span>}
+                </button>
                 {devices.map(d => (
                   <button key={d.deviceId} onClick={() => switchCamera(d.deviceId)}
                     className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
                     style={{
-                      background: d.deviceId === deviceId ? `${accentColor}22` : surfaceBg,
-                      border:     d.deviceId === deviceId ? `1.5px solid ${accentColor}` : "1.5px solid transparent",
-                      color:      d.deviceId === deviceId ? accentColor : textPrimary,
+                      background: d.deviceId === deviceId && captureSource === "webcam" ? `${accentColor}22` : surfaceBg,
+                      border:     d.deviceId === deviceId && captureSource === "webcam" ? `1.5px solid ${accentColor}` : "1.5px solid transparent",
+                      color:      d.deviceId === deviceId && captureSource === "webcam" ? accentColor : textPrimary,
                     }}>
                     <span>🎥</span>
                     <span className="flex-1 truncate">{d.label}</span>
-                    {d.deviceId === deviceId && <span className="font-bold">✓ Aktif</span>}
+                    {d.deviceId === deviceId && captureSource === "webcam" && <span className="font-bold">✓ Aktif</span>}
                   </button>
                 ))}
                 {/* Tip DSLR */}
                 <div className="rounded-xl px-2.5 py-2 text-[10px] leading-relaxed"
                   style={{ background: surfaceBg, color: textTertiary }}>
-                  💡 DSLR tidak muncul? Install{" "}
-                  <span style={{ color: textSecondary }}>Canon EOS Webcam Utility / Nikon Webcam / Sony Imaging Edge / OBS</span>
+                  💡 List ini hanya webcam browser. DSLR dipilih di panel "Kamera DSLR / Mirrorless" di bawah.
                 </div>
               </div>
             </div>
@@ -373,13 +413,25 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             {agentOnline === true && dslrCameras.length > 0 && (
               <div className="space-y-1">
                 {dslrCameras.map((cam, i) => (
-                  <div key={i} className="flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs"
-                    style={{ background: `${accentColor}15`, border: `1.5px solid ${accentColor}44`, color: textPrimary }}>
+                  <button
+                    key={i}
+                    onClick={() => setCaptureSource("dslr")}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
+                    style={{
+                      background: captureSource === "dslr" ? `${accentColor}22` : `${accentColor}15`,
+                      border: captureSource === "dslr" ? `1.5px solid ${accentColor}` : `1.5px solid ${accentColor}44`,
+                      color: captureSource === "dslr" ? accentColor : textPrimary,
+                    }}
+                  >
                     <span>📷</span>
                     <span className="flex-1">{cam.model}</span>
                     <span className="text-[10px] opacity-60">{cam.port}</span>
-                    <span className="text-[10px] font-bold text-green-400">✓ Siap</span>
-                  </div>
+                    {captureSource === "dslr" ? (
+                      <span className="text-[10px] font-bold">✓ Dipilih</span>
+                    ) : (
+                      <span className="text-[10px] font-bold text-green-400">✓ Siap</span>
+                    )}
+                  </button>
                 ))}
               </div>
             )}

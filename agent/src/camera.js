@@ -75,6 +75,15 @@ function captureHint(stderr) {
   return '';
 }
 
+function extractJpegFrame(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return null;
+  const soi = buffer.indexOf(Buffer.from([0xff, 0xd8]));
+  if (soi < 0) return null;
+  const eoi = buffer.indexOf(Buffer.from([0xff, 0xd9]), soi + 2);
+  if (eoi < 0) return null;
+  return buffer.subarray(soi, eoi + 2);
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -188,4 +197,82 @@ async function capturePhoto({ keepOnCamera = false } = {}) {
   });
 }
 
-module.exports = { detectCamera, capturePhoto };
+/**
+ * Capture a DSLR live preview frame (no shutter).
+ * Tries several non-shutter live-view strategies and returns one JPEG frame.
+ *
+ * @returns {Promise<{ buffer: Buffer, mimeType: string, size: number, elapsedMs: number }>}
+ */
+async function capturePreview() {
+  const t0 = Date.now();
+  const attempts = [
+    {
+      name: 'capture-movie eosviewfinder',
+      args: ['--set-config', 'eosviewfinder=1', '--capture-movie', '--frames', '1', '--stdout'],
+      timeout: 2500,
+      allowKilled: false,
+    },
+    {
+      name: 'capture-movie viewfinder',
+      args: ['--set-config', 'viewfinder=1', '--capture-movie', '--frames', '1', '--stdout'],
+      timeout: 2500,
+      allowKilled: false,
+    },
+  ];
+
+  const errors = [];
+
+  for (const attempt of attempts) {
+    try {
+      logger.debug(`Executing live preview (${attempt.name}): ${GPHOTO2} ${attempt.args.join(' ')}`);
+      const stdout = await new Promise((resolve, reject) => {
+        execFile(
+          GPHOTO2,
+          attempt.args,
+          { timeout: attempt.timeout, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
+          (err, out, stderr) => {
+            if (err && err.killed && attempt.allowKilled) {
+              resolve(Buffer.isBuffer(out) ? out : Buffer.from(out || ''));
+              return;
+            }
+            if (err) {
+              reject(new Error(`${attempt.name} failed: ${err.message}; stderr: ${stderr || '(kosong)'}`));
+              return;
+            }
+            resolve(Buffer.isBuffer(out) ? out : Buffer.from(out || ''));
+          }
+        );
+      });
+
+      const frame = extractJpegFrame(stdout);
+      if (frame && frame.length > 0) {
+        const elapsedMs = Date.now() - t0;
+        logger.debug('gphoto2 preview frame captured', {
+          strategy: attempt.name,
+          sizeKb: (frame.length / 1024).toFixed(1),
+          elapsedMs,
+        });
+        return {
+          buffer: frame,
+          mimeType: 'image/jpeg',
+          size: frame.length,
+          elapsedMs,
+        };
+      }
+
+      errors.push(`${attempt.name}: tidak menemukan frame JPEG di stdout`);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const elapsedMs = Date.now() - t0;
+  logger.error('capture live preview unavailable', { elapsedMs, errors });
+  throw new Error(
+    `Live preview non-shutter tidak tersedia setelah ${elapsedMs}ms.\n` +
+    `Detail: ${errors.join(' | ')}\n` +
+    'Hint: aktifkan Live View / PC Remote di kamera Canon.'
+  );
+}
+
+module.exports = { detectCamera, capturePhoto, capturePreview };
