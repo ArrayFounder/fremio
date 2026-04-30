@@ -129,3 +129,103 @@ export async function fetchGroupShareQuota(token) {
   const data = await response.json();
   return data.quota;
 }
+
+export async function fetchApprovedEvents(options = {}) {
+  const API_URL = getApiUrl();
+  const params = new URLSearchParams();
+
+  if (options?.q) {
+    params.set("q", String(options.q).trim());
+  }
+  if (options?.limit) {
+    params.set("limit", String(options.limit));
+  }
+
+  const response = await fetch(
+    `${API_URL}/groups/events${params.toString() ? `?${params.toString()}` : ""}`
+  );
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.message || err?.error || "Failed to fetch events");
+  }
+
+  const data = await response.json();
+  return {
+    total: Number(data?.total || 0),
+    items: Array.isArray(data?.items) ? data.items : [],
+  };
+}
+
+export async function fetchMyShareLinks(token) {
+  if (!token) {
+    throw new Error("Silakan login terlebih dahulu");
+  }
+
+  const API_URL = getApiUrl();
+  const response = await fetch(`${API_URL}/groups/my-share-links`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.message || err?.error || "Gagal mengambil daftar link share");
+  }
+
+  const data = await response.json();
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function deleteMyShareLink(shareId, token) {
+  if (!token) {
+    throw new Error("Silakan login terlebih dahulu");
+  }
+  if (!shareId) {
+    throw new Error("shareId wajib diisi");
+  }
+
+  const API_URL = getApiUrl();
+  const response = await fetch(`${API_URL}/groups/my-share-links/${encodeURIComponent(shareId)}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.message || err?.error || "Gagal menghapus link share");
+  }
+
+  return response.json().catch(() => ({ success: true }));
+}
+
+export async function submitEventApplication({ shareLink, description, eventDate, token }) {
+  if (!token) {
+    throw new Error("Silakan login terlebih dahulu");
+  }
+
+  const API_URL = getApiUrl();
+  const response = await fetch(`${API_URL}/groups/events/apply`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      shareLink,
+      description,
+      eventDate,
+      message: description,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.message || err?.error || "Gagal mengajukan event");
+  }
+
+  return response.json();
+}

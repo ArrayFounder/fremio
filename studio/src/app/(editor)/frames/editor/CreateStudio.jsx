@@ -3632,6 +3632,8 @@ export default function Create() {
             height: s.height / ch,
             photoIndex: s.data?.photoIndex ?? s.data?.rowIndex ?? 0,
             borderRadius: s.data?.borderRadius ?? 0,
+            rotation: Number.isFinite(s.rotation) ? s.rotation : 0,
+            zIndex: Number.isFinite(s.zIndex) ? s.zIndex : 0,
           })),
           sortOrder: 0,
           studioDraftId: savedDraft.id,

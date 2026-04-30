@@ -33,7 +33,7 @@ import {
   toggleDraftInGroup,
   updateDraftGroupPreferences,
 } from "../utils/draftGroupStorage.js";
-import { fetchGroupShareAnalytics, fetchGroupShareQuota } from "../services/groupService.js";
+import { deleteMyShareLink, fetchGroupShareAnalytics, fetchGroupShareQuota } from "../services/groupService.js";
 import { getStaticFrames } from "../data/staticFrames.js";
 import "./Shares.css";
 
@@ -2017,13 +2017,26 @@ export default function Shares() {
     setConfirmDialog({ type: "group", id: groupId, title: name });
   };
 
-  const confirmDeleteGroup = (groupId) => {
+  const confirmDeleteGroup = async (groupId) => {
     if (groupId === TUTORIAL_GROUP_ID) {
       showToast("info", "Group tutorial tidak dihapus. Ulangi tutorial saja jika ingin melihat alurnya lagi.");
       setConfirmDialog(null);
       return;
     }
     if (!user?.email) return;
+
+    const targetGroup = groups.find((item) => item?.id === groupId) || null;
+    const targetShareId = targetGroup?.preferences?.shareId || null;
+
+    if (targetShareId && token) {
+      try {
+        await deleteMyShareLink(targetShareId, token);
+      } catch (error) {
+        showToast("error", error?.message || "Gagal menghapus link share dari server");
+        return;
+      }
+    }
+
     const updated = deleteDraftGroup(user.email, groupId);
     setGroups((current) => {
       const currentTutorial = current.find((item) => item?.id === TUTORIAL_GROUP_ID) || null;

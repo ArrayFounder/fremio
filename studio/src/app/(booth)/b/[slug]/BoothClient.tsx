@@ -975,7 +975,11 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     let deviceId = window.localStorage.getItem(storageKey);
     if (!deviceId) {
       deviceId = `dev_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
-      window.localStorage.setItem(storageKey, deviceId);
+      try {
+        window.localStorage.setItem(storageKey, deviceId);
+      } catch {
+        // Ignore quota/storage failures; keep deviceId in memory for this session.
+      }
     }
     deviceIdRef.current = deviceId;
 
@@ -1206,7 +1210,11 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     }
     if (typeof window !== "undefined") {
       const key = `booth_pin_unlock_${booth.slug}_${configuredPin}`;
-      window.sessionStorage.setItem(key, "1");
+      try {
+        window.sessionStorage.setItem(key, "1");
+      } catch {
+        // Ignore quota/storage failures; keep unlock state in memory.
+      }
     }
     setPinUnlocked(true);
     setPinError(null);

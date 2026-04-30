@@ -35,6 +35,8 @@ const FrameItemSchema = z.object({
   maxCaptures:  z.number().int().min(1).max(12).default(1),
   isPremium:    z.boolean().default(false),
   slots:        z.array(SlotSchema).nullable().default(null),
+  rawSlots:     z.unknown().optional().nullable(),
+  layout:       z.unknown().optional().nullable(),
 });
 
 const ImportSchema = z.object({
@@ -81,7 +83,15 @@ export async function POST(req: Request): Promise<Response> {
 
   const results = await Promise.allSettled(
     framesToImport.map((f) => {
-      const normalizedSlots = normalizeImportedSlots(f.slots, f.maxCaptures);
+      const sourceSlots = f.rawSlots ?? f.slots;
+      const normalizedSlots = normalizeImportedSlots(f.rawSlots ?? f.slots, f.maxCaptures, {
+        canvasWidth: f.canvasWidth,
+        canvasHeight: f.canvasHeight,
+        layout: f.layout,
+      });
+      const slotsToPersist = Array.isArray(sourceSlots) && sourceSlots.length > 0
+        ? sourceSlots
+        : normalizedSlots;
       return prisma.frame.upsert({
         where: { id: `fremio_sb_${f.fremioId}` },
         update: {
@@ -94,7 +104,7 @@ export async function POST(req: Request): Promise<Response> {
           canvasHeight: f.canvasHeight,
           maxCaptures:  f.maxCaptures,
           captureMode:  f.captureMode ?? "single",
-          slots:        normalizedSlots,
+          slots:        slotsToPersist,
           isActive:     true,
         },
         create: {
@@ -112,7 +122,7 @@ export async function POST(req: Request): Promise<Response> {
           isActive:     true,
           designerId:   null,
           maxCaptures:  f.maxCaptures,
-          slots:        normalizedSlots,
+          slots:        slotsToPersist,
         },
       })
     })

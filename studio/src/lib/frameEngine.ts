@@ -55,12 +55,35 @@ export type FrameLayout = "1full" | "2strip" | "4grid";
  * - ImageKit PNG-as-JPG: URL path sebelum ekstensi terakhir berakhiran "_png" (mis. "...overlay_upload_1_png.jpg")
  */
 export function isOverlayFrame(url: string): boolean {
-  const path = url.split("?")[0];
-  const ext  = path.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "png") return true;
-  // Deteksi ImageKit PNG yang dikonversi ke format lain (ekstensi bukan .png tapi stem berakhir "_png")
-  const stem = path.substring(0, path.lastIndexOf("."));
-  return stem.endsWith("_png");
+  if (!url) return false;
+
+  const raw = url.trim().toLowerCase();
+  if (raw.startsWith("data:image/png")) return true;
+
+  const candidates = [url];
+  try {
+    const parsed = new URL(url, "https://fremio.local");
+    const nestedUrl = parsed.searchParams.get("url");
+    if (nestedUrl) candidates.push(decodeURIComponent(nestedUrl));
+  } catch {
+    // Ignore invalid URL parsing; fallback to raw candidate.
+  }
+
+  return candidates.some((candidate) => {
+    const value = candidate.trim().toLowerCase();
+    if (!value) return false;
+    if (value.startsWith("data:image/png")) return true;
+
+    const path = value.split("?")[0];
+    const ext = path.split(".").pop()?.toLowerCase() ?? "";
+    if (ext === "png") return true;
+
+    // Deteksi ImageKit PNG yang dikonversi ke format lain (ekstensi bukan .png tapi stem berakhir "_png")
+    const lastDot = path.lastIndexOf(".");
+    if (lastDot <= 0) return false;
+    const stem = path.substring(0, lastDot);
+    return stem.endsWith("_png");
+  });
 }
 
 export interface ComposeOptions {
@@ -269,15 +292,20 @@ interface CanvasSceneElement {
 function slotsToCanvas(slots: PhotoSlot[], cw: number, ch: number): CanvasSlot[] {
   return slots
     .slice()
-    .sort((a, b) => a.photoIndex - b.photoIndex)
+    .sort((a, b) => {
+      const zA = Number.isFinite(a.zIndex) ? Number(a.zIndex) : 0;
+      const zB = Number.isFinite(b.zIndex) ? Number(b.zIndex) : 0;
+      if (zA !== zB) return zA - zB;
+      return a.photoIndex - b.photoIndex;
+    })
     .map((s) => ({
-      x:           s.left   * cw,
-      y:           s.top    * ch,
-      w:           s.width  * cw,
-      h:           s.height * ch,
-      photoIndex:  s.photoIndex,
+      x: s.left * cw,
+      y: s.top * ch,
+      w: s.width * cw,
+      h: s.height * ch,
+      photoIndex: s.photoIndex,
       borderRadius: s.borderRadius ?? 0,
-      rotation:    s.rotation ?? 0,
+      rotation: s.rotation ?? 0,
       zIndex:      s.zIndex ?? 0,
     }));
 }

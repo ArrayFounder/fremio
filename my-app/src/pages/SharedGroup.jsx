@@ -77,6 +77,16 @@ const loadTutorialSharePayload = (shareId) => {
   }
 };
 
+const cacheSharedFrameShareId = (shareId) => {
+  if (!shareId || typeof window === "undefined") return false;
+  try {
+    window.sessionStorage.setItem("__fremio_share_id__", String(shareId));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const normalizeTutorialFrameId = (value, fallbackTitle = "tutorial-frame") => {
   if (typeof value === "string" && value.trim()) return value;
   return String(fallbackTitle || "tutorial-frame")
@@ -213,6 +223,7 @@ const buildTutorialFrameConfig = (frameItem) => {
 
   return {
     id: frameId,
+    shareId: frameShareId,
     name: title,
     title,
     description: frameItem?.description || "",
@@ -248,6 +259,7 @@ const persistTutorialFrameSession = (frameConfig) => {
 
   try {
     window.sessionStorage.removeItem("__fremio_share_id__");
+    window.sessionStorage.removeItem(SHARED_FRAME_KEY);
     window.sessionStorage.setItem(
       SHARED_FRAME_KEY,
       JSON.stringify({
@@ -271,6 +283,9 @@ const persistTutorialFrameSession = (frameConfig) => {
     );
     return true;
   } catch {
+    try {
+      window.sessionStorage.removeItem(SHARED_FRAME_KEY);
+    } catch {}
     return false;
   }
 };
@@ -1160,6 +1175,8 @@ export default function SharedGroup() {
                     const cardKey = frameShareId || frameItem?.id || idx;
                     setLoadingFrameId(cardKey);
                     try {
+                      cacheSharedFrameShareId(frameShareId);
+
                       const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
                       const resp = await fetch(`${API_URL}/drafts/share/${encodeURIComponent(frameShareId)}`);
                       if (!resp.ok) throw new Error(`Frame tidak ditemukan (${resp.status})`);
@@ -1177,9 +1194,18 @@ export default function SharedGroup() {
 
                       const frameConfig = await buildGroupFrameConfig(frameShareId, draft, parsedFrameData, frameItem);
                       const stored = persistTutorialFrameSession(frameConfig);
-                      if (!stored) throw new Error("Gagal menyimpan frame ke sesi");
+                      if (stored) {
+                        window.location.assign(new URL("/take-moment", window.location.origin).toString());
+                        return;
+                      }
 
-                      window.location.assign(new URL("/take-moment", window.location.origin).toString());
+                      try {
+                        window.sessionStorage.removeItem(SHARED_FRAME_KEY);
+                      } catch {}
+
+                      const fallbackUrl = new URL("/take-moment", window.location.origin);
+                      fallbackUrl.searchParams.set("share", String(frameShareId));
+                      window.location.assign(fallbackUrl.toString());
                     } catch (err) {
                       console.error("[SharedGroup] Failed to load frame:", err);
                       setLoadingFrameId(null);

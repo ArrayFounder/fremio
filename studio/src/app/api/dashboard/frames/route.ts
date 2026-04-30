@@ -78,7 +78,10 @@ export async function GET(req: Request): Promise<Response> {
     const effectiveCategory = override && override.trim().length > 0 ? override : f.category;
     const maxCaptures = Number(f.maxCaptures ?? 1);
     const normalizedSlots = f.id.startsWith("fremio_")
-      ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1)
+      ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1, {
+          canvasWidth: f.canvasWidth,
+          canvasHeight: f.canvasHeight,
+        })
       : f.slots;
     return {
       ...f,
@@ -121,6 +124,8 @@ const CreateFrameSchema = z.object({
     height:       z.number(),
     photoIndex:   z.number().int().min(0),
     borderRadius: z.number().default(0),
+    rotation:     z.number().optional(),
+    zIndex:       z.number().optional(),
   })).nullable().default(null),
 });
 

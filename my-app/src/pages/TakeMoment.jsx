@@ -1339,9 +1339,32 @@ export default function TakeMoment() {
         if (_p0Raw) {
           const _p0 = JSON.parse(_p0Raw);
           const _p0cfg = _p0?.frameConfig;
-          if (_p0cfg && (_p0cfg.isSharedFrame || _p0cfg.maxCaptures > 1 || (_p0cfg.slots?.length ?? 0) > 0)) {
+          const requestedShareId = String(shareId);
+          const configShareId = String(
+            _p0cfg?.shareId ||
+              (_p0cfg?.id?.startsWith("share-") ? _p0cfg.id.slice(6) : "") ||
+              (_p0cfg?.id?.startsWith("shared-") ? _p0cfg.id.slice(7) : "")
+          );
+          const isShareMatch = requestedShareId === configShareId;
+
+          if (
+            _p0cfg &&
+            isShareMatch &&
+            (_p0cfg.isSharedFrame || _p0cfg.maxCaptures > 1 || (_p0cfg.slots?.length ?? 0) > 0)
+          ) {
             console.log("⏭️ Skipping VPS fetch — valid PRIORITY 0 sessionStorage config found (", _p0cfg.maxCaptures, "captures,", _p0cfg.slots?.length || 0, "slots)");
             return;
+          }
+
+          if (_p0cfg && !isShareMatch) {
+            console.log("🧹 Clearing stale PRIORITY 0 shared frame (share mismatch):", {
+              requestedShareId,
+              configShareId,
+              configId: _p0cfg.id,
+            });
+            try {
+              sessionStorage.removeItem("__fremio_shared_frame_temp__");
+            } catch (_) {}
           }
         }
       } catch (_) {}
@@ -1908,7 +1931,26 @@ export default function TakeMoment() {
         console.log("🔗 [SHARED FRAME] Found in sessionStorage");
 
         const sharedConfig = sharedFrameData.frameConfig;
-        if (sharedConfig) {
+        const requestedShareId = searchParams.get("share");
+        const sharedConfigShareId = String(
+          sharedConfig?.shareId ||
+            (sharedConfig?.id?.startsWith("share-") ? sharedConfig.id.slice(6) : "") ||
+            (sharedConfig?.id?.startsWith("shared-") ? sharedConfig.id.slice(7) : "")
+        );
+        const isRequestedShareMatch = !requestedShareId || String(requestedShareId) === sharedConfigShareId;
+
+        if (sharedConfig && !isRequestedShareMatch) {
+          console.log("🧹 [SHARED FRAME] Ignoring stale session config (share mismatch):", {
+            requestedShareId,
+            sharedConfigShareId,
+            configId: sharedConfig.id,
+          });
+          try {
+            sessionStorage.removeItem(SHARED_FRAME_KEY);
+          } catch (_) {}
+        }
+
+        if (sharedConfig && isRequestedShareMatch) {
           console.log(
             "✅ Using shared frame from sessionStorage:",
             sharedConfig.id

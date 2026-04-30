@@ -66,7 +66,13 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
       const res = await fetch(`/api/sessions/${sessionId}/print-success`, { method: "POST" });
       if (res.ok) {
         paperUsageReportedRef.current = true;
-        if (typeof window !== "undefined") sessionStorage.setItem(storageKey, "1");
+        if (typeof window !== "undefined") {
+          try {
+            sessionStorage.setItem(storageKey, "1");
+          } catch {
+            // Ignore storage quota issues; backend has already been notified.
+          }
+        }
       }
     } catch {
       // Best-effort tracking; printing flow should not fail because of this.

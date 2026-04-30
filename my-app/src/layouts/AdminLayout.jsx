@@ -24,6 +24,7 @@ import {
   Palette,
   Wallet,
   Link2,
+  CalendarCheck2,
   GalleryVerticalEnd,
 } from "lucide-react";
 
@@ -94,6 +95,7 @@ export default function AdminLayout() {
     { path: "/admin/designer-submissions", icon: Palette, label: "Designer Submissions" },
     { path: "/admin/designer-wallets", icon: Wallet, label: "Designer Wallets" },
     { path: "/admin/share-links", icon: Link2, label: "Share Links" },
+    { path: "/admin/event-submissions", icon: CalendarCheck2, label: "Event Submissions" },
     { path: "/admin/studio-booths", icon: GalleryVerticalEnd, label: "Studio Booth Control" },
     { path: "/admin/settings", icon: Settings, label: "Settings" },
   ];

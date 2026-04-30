@@ -19,6 +19,7 @@ import FrameBuilder from "./pages/FrameBuilder.jsx";
 import Create from "./pages/Create.jsx";
 import CreateHub from "./pages/CreateHub.jsx";
 import Shares from "./pages/Shares.jsx";
+import Event from "./pages/Event.jsx";
 import SharedFrame from "./pages/SharedFrame.jsx";
 import SharedGroup from "./pages/SharedGroup.jsx";
 import NotFound from "./pages/NotFound.jsx";
@@ -62,6 +63,7 @@ import AdminSubscribers from "./pages/admin/AdminSubscribers.jsx";
 import AdminDesignerSubmissions from "./pages/admin/AdminDesignerSubmissions.jsx";
 import AdminDesignerWallet from "./pages/admin/AdminDesignerWallet.jsx";
 import AdminShareLinks from "./pages/admin/AdminShareLinks.jsx";
+import AdminEventSubmissions from "./pages/admin/AdminEventSubmissions.jsx";
 import AdminStudioBoothControl from "./pages/admin/AdminStudioBoothControl.jsx";
 
 // Designer Pages
@@ -171,6 +173,7 @@ export default function App() {
             <Route path="photobooth" element={<PhotoboxOnline />} />
             <Route path="frames" element={<Frames />} />
             <Route path="shares" element={<Shares />} />
+            <Route path="event" element={<Event />} />
 
             {/* Certificate verification — public, no auth required */}
             <Route path="verify/:certId" element={<VerifyCertificate />} />
@@ -277,6 +280,7 @@ export default function App() {
             <Route path="designer-submissions" element={<AdminDesignerSubmissions />} />
             <Route path="designer-wallets" element={<AdminDesignerWallet />} />
             <Route path="share-links" element={<AdminShareLinks />} />
+            <Route path="event-submissions" element={<AdminEventSubmissions />} />
             <Route path="studio-booths" element={<AdminStudioBoothControl />} />
             <Route path="studio-booths/editor" element={<AdminFrameCreator studioBoothMode />} />
             <Route path="settings" element={<AdminSettings />} />

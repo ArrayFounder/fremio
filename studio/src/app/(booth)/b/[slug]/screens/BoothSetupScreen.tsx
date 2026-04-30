@@ -50,7 +50,11 @@ export function loadHardwareSettings(slug: string): BoothHardwareSettings | null
 }
 
 function saveHardwareSettings(slug: string, s: BoothHardwareSettings) {
-  localStorage.setItem(`${STORAGE_KEY}_${slug}`, JSON.stringify(s));
+  try {
+    localStorage.setItem(`${STORAGE_KEY}_${slug}`, JSON.stringify(s));
+  } catch {
+    // Ignore storage quota issues; settings persistence is best-effort.
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -172,21 +176,29 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
   // ── Check Local Agent & get printers ──────────────────────────────────────
   // Coba endpoint secara BERURUTAN agar tidak membanjiri local agent.
-  // Endpoint HTTP diprioritaskan untuk localhost bridge (tanpa TLS).
+  // Pada halaman HTTPS, gunakan endpoint HTTPS saja untuk menghindari mixed-content block.
   const checkAgent = useCallback(async () => {
     if (!canUseLocalAgent()) { setAgentOnline(false); return; }
     setAgentChecking(true);
     try {
-      const candidates = [
-        "http://127.0.0.1:7432",
-        "http://localhost:7432",
-        "https://127.0.0.1:7432",
-        "https://localhost:7432",
-        "http://127.0.0.1:3002",
-        "http://localhost:3002",
-        "https://127.0.0.1:3002",
-        "https://localhost:3002",
-      ];
+      const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+      const candidates = isHttps
+        ? [
+            "https://localhost:7432",
+            "https://127.0.0.1:7432",
+            "https://localhost:3002",
+            "https://127.0.0.1:3002",
+          ]
+        : [
+            "http://localhost:7432",
+            "http://127.0.0.1:7432",
+            "https://localhost:7432",
+            "https://127.0.0.1:7432",
+            "http://localhost:3002",
+            "http://127.0.0.1:3002",
+            "https://localhost:3002",
+            "https://127.0.0.1:3002",
+          ];
 
       let status: {
         camera?: { available?: boolean; cameras?: { model: string; port: string }[] };
@@ -254,15 +266,23 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     };
     saveHardwareSettings(booth.slug, settings);
     // Sync to sessionStorage so CameraScreen picks up the same deviceId + mirror
-    if (deviceId) sessionStorage.setItem("booth_camera_deviceId", deviceId);
-    else          sessionStorage.removeItem("booth_camera_deviceId");
-    sessionStorage.setItem("booth_camera_mirror", String(mirror));
-    sessionStorage.setItem("booth_camera_source", captureSource);
+    try {
+      if (deviceId) sessionStorage.setItem("booth_camera_deviceId", deviceId);
+      else          sessionStorage.removeItem("booth_camera_deviceId");
+      sessionStorage.setItem("booth_camera_mirror", String(mirror));
+      sessionStorage.setItem("booth_camera_source", captureSource);
+    } catch {
+      // Ignore storage quota issues; runtime state remains in memory.
+    }
     onDone(settings);
   };
 
   const handleReset = () => {
-    localStorage.removeItem(`${STORAGE_KEY}_${booth.slug}`);
+    try {
+      localStorage.removeItem(`${STORAGE_KEY}_${booth.slug}`);
+    } catch {
+      // Ignore storage failures.
+    }
     window.location.reload();
   };
 

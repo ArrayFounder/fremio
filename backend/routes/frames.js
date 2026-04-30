@@ -23,6 +23,14 @@ const router = express.Router();
 function normalizeSlots(rawSlots, layoutRaw, canvasW, canvasH) {
   const parsed = Array.isArray(rawSlots) ? rawSlots : [];
   if (parsed.length > 0) return parsed;
+
+  const directLayoutSlots =
+    (Array.isArray(layoutRaw?.photoAreas) && layoutRaw.photoAreas) ||
+    (Array.isArray(layoutRaw?.photoSlots) && layoutRaw.photoSlots) ||
+    (Array.isArray(layoutRaw?.slots) && layoutRaw.slots) ||
+    [];
+  if (directLayoutSlots.length > 0) return directLayoutSlots;
+
   // Try to derive from layout.elements photo elements
   const elements = layoutRaw?.elements;
   if (!Array.isArray(elements)) return parsed;
@@ -467,10 +475,12 @@ router.get("/", optionalAuth, async (req, res) => {
     }
 
     // Format frames for response
+    const allowStudioBoothDetails = source === "studio_booth";
+
     const frames = result.rows.map((frame) => {
       const isPremium = !!frame.is_premium;
       const canSeePremiumDetails =
-        allowHidden || !isPremium || accessibleSet.has(String(frame.id));
+        allowStudioBoothDetails || allowHidden || !isPremium || accessibleSet.has(String(frame.id));
 
       const rawSlotsValue =
         typeof frame.slots === "string"
@@ -923,6 +933,8 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
       tags,
       imagePath,
       image_path,
+      thumbnailPath,
+      thumbnail_path,
       isPremium,
       is_premium,
       is_hidden,
@@ -965,6 +977,7 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
     const frameId =
       id || `frame_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const finalImagePath = imagePath || image_path || null;
+    const finalThumbnailPath = thumbnailPath || thumbnail_path || finalImagePath;
     const finalMaxCaptures =
       maxCaptures || max_captures || parsedSlots?.length || 1;
     const finalCategory = category || (categories && categories[0]) || "custom";
@@ -1003,13 +1016,14 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
     // Use PostgreSQL for VPS mode
     try {
       const result = await pool.query(
-        `INSERT INTO frames (id, name, description, category, image_path, slots, max_captures, layout, canvas_background, canvas_width, canvas_height, created_by, is_active, is_hidden, is_premium, source, is_template)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, $14, $15, $16)
+        `INSERT INTO frames (id, name, description, category, image_path, thumbnail_path, slots, max_captures, layout, canvas_background, canvas_width, canvas_height, created_by, is_active, is_hidden, is_premium, source, is_template)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14, $15, $16, $17)
            ON CONFLICT (id) DO UPDATE SET
              name = EXCLUDED.name,
              description = EXCLUDED.description,
              category = EXCLUDED.category,
              image_path = EXCLUDED.image_path,
+             thumbnail_path = EXCLUDED.thumbnail_path,
              slots = EXCLUDED.slots,
              max_captures = EXCLUDED.max_captures,
              layout = EXCLUDED.layout,
@@ -1028,6 +1042,7 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
           description || "",
           finalCategory,
           finalImagePath,
+          finalThumbnailPath,
           JSON.stringify(parsedSlots || []),
           finalMaxCaptures,
           JSON.stringify(parsedLayout || {}),
@@ -1055,6 +1070,7 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
           description: frame.description,
           category: frame.category,
           imagePath: frame.image_path,
+          thumbnailPath: frame.thumbnail_path,
           slots: frame.slots,
           maxCaptures: frame.max_captures,
           is_hidden: frame.is_hidden,
@@ -1075,6 +1091,7 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
             description: description || "",
             category: finalCategory,
             imagePath: finalImagePath,
+            thumbnailPath: finalThumbnailPath,
             is_hidden: finalIsHidden,
             isPremium: finalIsPremium,
             is_premium: finalIsPremium,
@@ -1145,6 +1162,8 @@ router.put("/:id", verifyToken, requireAdmin, async (req, res) => {
       canvasHeight,
       imagePath,
       image_path,
+      thumbnailPath,
+      thumbnail_path,
       is_active,
       is_premium,
       is_hidden,
@@ -1187,11 +1206,11 @@ router.put("/:id", verifyToken, requireAdmin, async (req, res) => {
       updates.push(`max_captures = $${paramIndex++}`);
       values.push(parseInt(maxCaptures || max_captures));
     }
-    if (slots) {
+    if (slots !== undefined) {
       updates.push(`slots = $${paramIndex++}`);
       values.push(typeof slots === "string" ? slots : JSON.stringify(slots));
     }
-    if (layout) {
+    if (layout !== undefined) {
       updates.push(`layout = $${paramIndex++}`);
       values.push(typeof layout === "string" ? layout : JSON.stringify(layout));
     }
@@ -1210,6 +1229,10 @@ router.put("/:id", verifyToken, requireAdmin, async (req, res) => {
     if (imagePath || image_path) {
       updates.push(`image_path = $${paramIndex++}`);
       values.push(imagePath || image_path);
+    }
+    if (thumbnailPath !== undefined || thumbnail_path !== undefined) {
+      updates.push(`thumbnail_path = $${paramIndex++}`);
+      values.push(thumbnailPath ?? thumbnail_path ?? null);
     }
     if (is_active !== undefined) {
       updates.push(`is_active = $${paramIndex++}`);

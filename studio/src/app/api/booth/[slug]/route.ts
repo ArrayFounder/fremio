@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { normalizeImportedSlots } from "@/lib/fremioSlots";
 import type { ApiResponse } from "@/types";
 
 const TRIAL_ONLY_MODE = true;
@@ -85,13 +84,8 @@ export async function GET(
   const frames = (rawFrames as Array<{ id: string; category: string } & Record<string, unknown>>).map((f) => {
     const frameId = String(f.id);
     const override = frameCategoryOverrides[frameId];
-    const maxCaptures = Number(f.maxCaptures ?? 1);
-    const normalizedSlots = frameId.startsWith("fremio_")
-      ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1)
-      : f.slots;
     return {
       ...f,
-      slots: normalizedSlots,
       category: override && override.trim().length > 0 ? override : f.category,
     };
   });

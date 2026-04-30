@@ -18,7 +18,10 @@ function normalizeExplicitSlots(slots: PhotoSlot[]): PhotoSlot[] {
       rotation: toFiniteNumber(slot.rotation, 0),
       zIndex: toFiniteNumber(slot.zIndex, 0),
     }))
-    .sort((a, b) => a.photoIndex - b.photoIndex);
+    .sort((a, b) => {
+      if (a.zIndex !== b.zIndex) return a.zIndex - b.zIndex;
+      return a.photoIndex - b.photoIndex;
+    });
 }
 
 function inferAutoSlots(slotCount: number, forceTwoColumns: boolean): PhotoSlot[] {

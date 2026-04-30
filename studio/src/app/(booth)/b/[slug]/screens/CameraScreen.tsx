@@ -5,17 +5,7 @@ import { useCamera } from "../hooks/useCamera";
 import { getAdaptiveColors } from "../colorUtils";
 import type { BoothConfigData, FrameData, PhotoSlot } from "../types";
 import { getEffectiveCaptureCount, getEffectiveSlots, isEffectiveDuplicateMode } from "../frameSlotUtils";
-
-function isOverlayAsset(url: string): boolean {
-  if (!url) return false;
-  const path = url.split("?")[0];
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "png") return true;
-  const lastDot = path.lastIndexOf(".");
-  if (lastDot <= 0) return false;
-  const stem = path.substring(0, lastDot);
-  return stem.endsWith("_png");
-}
+import { isOverlayFrame } from "@/lib/frameEngine";
 
 function useIsPortrait() {
   const [portrait, setPortrait] = useState(false);
@@ -68,6 +58,36 @@ function drawCoverToCanvas(
   ctx.drawImage(src, dx + (dw - scaledW) / 2, dy + (dh - scaledH) / 2, scaledW, scaledH);
 }
 
+function toCaptureIndexResolver(slots: PhotoSlot[], isDuplicate: boolean): (slot: PhotoSlot) => number {
+  if (!isDuplicate) {
+    return (slot) => Math.max(0, Math.floor(Number(slot.photoIndex) || 0));
+  }
+
+  const finiteIndexes = slots
+    .map((slot) => Number(slot.photoIndex))
+    .filter((value) => Number.isFinite(value))
+    .map((value) => Math.floor(value));
+
+  const uniqueSorted = Array.from(new Set(finiteIndexes)).sort((a, b) => a - b);
+  const looksGroupedDuplicate = uniqueSorted.length > 0 && uniqueSorted.length <= Math.ceil(slots.length / 2);
+
+  if (looksGroupedDuplicate) {
+    const indexMap = new Map<number, number>(uniqueSorted.map((value, idx) => [value, idx]));
+    return (slot) => {
+      const raw = Math.floor(Number(slot.photoIndex) || 0);
+      return indexMap.get(raw) ?? 0;
+    };
+  }
+
+  const nRows = Math.max(1, Math.floor(slots.length / 2));
+  return (slot) => {
+    const pi = Math.max(0, Math.floor(Number(slot.photoIndex) || 0));
+    return pi % 2 === 0
+      ? Math.floor(pi / 2)
+      : nRows - 1 - Math.floor(pi / 2);
+  };
+}
+
 interface LivePreviewCanvasProps {
   stream:          MediaStream | null;
   mirror:          boolean;
@@ -93,6 +113,10 @@ function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDup
   const cw = frame.canvasWidth  || 1080;
   const ch = frame.canvasHeight || 1920;
   const n  = slots.length;
+  const resolveCaptureIndex = useMemo(
+    () => toCaptureIndexResolver(slots, isDuplicate),
+    [slots, isDuplicate]
+  );
 
   // Keep refs fresh so the RAF loop always reads the latest values without restarting
   useEffect(() => { capturedPhotosRef.current = capturedPhotos; }, [capturedPhotos]);
@@ -166,7 +190,7 @@ function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDup
 
       const baseFrameImg = frameBaseImgRef.current;
       const assetUrl = frame.assetUrl || "";
-      const drawBaseAfterSlots = !!assetUrl && isOverlayAsset(assetUrl);
+      const drawBaseAfterSlots = !!assetUrl && isOverlayFrame(assetUrl);
 
       // Background template draw (webp/jpg/opaque asset) BEFORE slots.
       if (!drawBaseAfterSlots && baseFrameImg?.complete) {
@@ -174,17 +198,8 @@ function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDup
       }
 
       // 2. Each slot: captured photo OR live video
-      // Untuk duplicate 2-kolom: kiri-row-r berpasangan dengan kanan-row-(nRows-1-r)
-      // Formula: col=pi%2, row=floor(pi/2), nRows=n/2
-      //   kiri (col=0): captureIdx = row
-      //   kanan (col=1): captureIdx = nRows - 1 - row
-      const nRows = isDuplicate ? n / 2 : 0;
       slots.forEach((slot) => {
-        const captureIdx = isDuplicate
-          ? (slot.photoIndex % 2 === 0
-              ? Math.floor(slot.photoIndex / 2)
-              : nRows - 1 - Math.floor(slot.photoIndex / 2))
-          : slot.photoIndex;
+        const captureIdx = resolveCaptureIndex(slot);
         const x = slot.left   * cw;
         const y = slot.top    * ch;
         const w = slot.width  * cw;
@@ -234,7 +249,7 @@ function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDup
     return () => cancelAnimationFrame(rafRef.current);
   // capturedPhotos & activeSlotIndex intentionally omitted — read via refs to avoid restarting RAF loop
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream, cw, ch, frame.backgroundColor, slots, isDuplicate, n, mirror, allPhotosDone]);
+  }, [stream, cw, ch, frame.backgroundColor, slots, isDuplicate, n, mirror, allPhotosDone, resolveCaptureIndex]);
 
   return (
     <>
@@ -262,6 +277,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const isPortrait = useIsPortrait();
   const isDuplicate = isEffectiveDuplicateMode(frame);
   const effectiveSlots = useMemo(() => getEffectiveSlots(frame), [frame]);
+  const resolveCaptureIndex = useMemo(
+    () => toCaptureIndexResolver(effectiveSlots, isDuplicate),
+    [effectiveSlots, isDuplicate]
+  );
   const totalPhotos = getEffectiveCaptureCount(frame);
   const remaining = totalPhotos - capturedCount;
 
@@ -293,16 +312,24 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   useEffect(() => {
     if (typeof window === "undefined") return;
     (async () => {
-      const candidates = [
-        "http://127.0.0.1:7432",
-        "http://localhost:7432",
-        "https://127.0.0.1:7432",
-        "https://localhost:7432",
-        "http://127.0.0.1:3002",
-        "http://localhost:3002",
-        "https://127.0.0.1:3002",
-        "https://localhost:3002",
-      ];
+      const isHttps = window.location.protocol === "https:";
+      const candidates = isHttps
+        ? [
+            "https://localhost:7432",
+            "https://127.0.0.1:7432",
+            "https://localhost:3002",
+            "https://127.0.0.1:3002",
+          ]
+        : [
+            "http://localhost:7432",
+            "http://127.0.0.1:7432",
+            "https://localhost:7432",
+            "https://127.0.0.1:7432",
+            "http://localhost:3002",
+            "http://127.0.0.1:3002",
+            "https://localhost:3002",
+            "https://127.0.0.1:3002",
+          ];
 
       let healthyBase: string | null = null;
 
@@ -420,8 +447,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   // ── Hitung zona aktif di viewfinder sesuai slot saat ini ──────────────────
   const slotOverlay = useMemo(() => {
     if (!effectiveSlots || effectiveSlots.length === 0) return null;
-    // En mode duplicate, le slot actif est capturedCount (pas n-1-capturedCount)
-    const currentSlot = effectiveSlots.find((s) => s.photoIndex === capturedCount);
+    const currentSlot = effectiveSlots
+      .filter((s) => resolveCaptureIndex(s) === capturedCount)
+      .sort((a, b) => (a.top - b.top) || (a.left - b.left))[0];
     if (!currentSlot) return null;
 
     const CAM_W = 1920, CAM_H = 1080;
@@ -439,7 +467,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       const activeFrac = (CAM_W / slotAspect) / CAM_H;  // 0-1
       return { type: "tb" as const, side: (1 - activeFrac) / 2 };
     }
-  }, [effectiveSlots, frame.canvasWidth, frame.canvasHeight, capturedCount]);
+  }, [effectiveSlots, frame.canvasWidth, frame.canvasHeight, capturedCount, resolveCaptureIndex]);
 
   const [countdown, setCountdown]       = useState<number | null>(null);
   const [cdState, setCdState]           = useState<CountdownState>("READY");
@@ -463,7 +491,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   }, [selectedDeviceId, mirror, dslrMode]);
 
   const changeDevice = (deviceId: string) => {
-    sessionStorage.setItem("booth_camera_deviceId", deviceId);
+    try {
+      sessionStorage.setItem("booth_camera_deviceId", deviceId);
+    } catch {
+      // Ignore storage quota issues; keep runtime state in memory.
+    }
     stop();
     setSelectedDeviceId(deviceId);
     setCdState("READY");
@@ -472,7 +504,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   const toggleMirror = () => {
     const next = !mirror;
-    sessionStorage.setItem("booth_camera_mirror", String(next));
+    try {
+      sessionStorage.setItem("booth_camera_mirror", String(next));
+    } catch {
+      // Ignore storage quota issues; keep runtime state in memory.
+    }
     setMirror(next);
   };
 
@@ -983,13 +1019,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
               />
               {/* Tombol × retake */}
               {allPhotosDone && effectiveSlots.map((slot) => {
-                const n = effectiveSlots.length;
-                const _nr = isDuplicate ? n / 2 : 0;
-                const captureIdx = isDuplicate
-                  ? (slot.photoIndex % 2 === 0
-                      ? Math.floor(slot.photoIndex / 2)
-                      : _nr - 1 - Math.floor(slot.photoIndex / 2))
-                  : slot.photoIndex;
+                const captureIdx = resolveCaptureIndex(slot);
                 const photo = capturedPhotos[captureIdx] || null;
                 if (!photo) return null;
                 return (
