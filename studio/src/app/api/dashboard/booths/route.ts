@@ -53,20 +53,21 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  // Cek limit booth sesuai subscription tier
+  // Cek limit booth berdasarkan jumlah kredit (credit-based)
   const operator = await prisma.operator.findUnique({
     where:  { id: session.user.id },
-    select: { subscriptionTier: true, subscriptionExpiry: true },
+    select: { credits: true },
   });
   if (!operator) return NextResponse.json<ApiResponse>({ success: false, error: "Operator tidak ditemukan" }, { status: 404 });
 
-  const isSubActive = operator.subscriptionExpiry && operator.subscriptionExpiry > new Date();
-  const maxBooths   = isSubActive ? TIER_LIMITS[operator.subscriptionTier].maxBooths : 1;
-
+  // 1 booth gratis (trial), selanjutnya butuh kredit
   const currentCount = await prisma.boothConfig.count({ where: { operatorId: session.user.id } });
-  if (currentCount >= maxBooths) {
+  const hasFreeSlot = currentCount < 1;
+  const hasCredits  = operator.credits > 0;
+
+  if (!hasFreeSlot && !hasCredits) {
     return NextResponse.json<ApiResponse>(
-      { success: false, error: `Tier ${operator.subscriptionTier} hanya bisa membuat ${maxBooths} booth. Upgrade untuk menambah lebih.` },
+      { success: false, error: "Booth gratis sudah terpakai. Beli kredit di halaman pricing untuk menambah booth." },
       { status: 403 }
     );
   }
@@ -77,8 +78,20 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json<ApiResponse>({ success: false, error: "Slug sudah dipakai, coba yang lain" }, { status: 409 });
   }
 
+  // Ambil semua frame aktif (termasuk imported dari fremio.id) untuk dijadikan default library
+  const allActiveFrames = await prisma.frame.findMany({
+    where: { isActive: true },
+    select: { id: true },
+    orderBy: { sortOrder: "asc" },
+  });
+  const defaultFrameIds = allActiveFrames.map((f) => f.id);
+
   const booth = await prisma.boothConfig.create({
-    data: { ...parsed.data, operatorId: session.user.id },
+    data: {
+      ...parsed.data,
+      operatorId: session.user.id,
+      allowedFrameIds: defaultFrameIds,
+    },
   });
 
   return NextResponse.json<ApiResponse>({ success: true, data: booth }, { status: 201 });

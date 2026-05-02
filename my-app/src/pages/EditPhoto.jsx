@@ -1876,7 +1876,32 @@ export default function EditPhoto() {
           config = safeStorage.getJSON("frameConfig");
           console.log("   frameConfig from localStorage:", !!config, config?.id);
         }
-        
+
+        // PRIORITY 2.5: If config is a lightweight ref (__draftId set but no designer.elements),
+        // load the full config from IndexedDB right now so overlay elements are not lost.
+        // This fires when activateDraftFrame stored only a lightweight ref to avoid QuotaExceededError.
+        if (config?.__draftId && !config.designer?.elements?.length && activeDraftId) {
+          console.log("🔄 [EditPhoto] Lightweight ref detected — loading full config from IndexedDB...");
+          try {
+            const draft = await loadDraftForRecovery();
+            if (draft) {
+              const { buildFrameConfigFromDraft } = draftHelpersModule ||
+                await import("../utils/draftHelpers.js");
+              const fullConfig = buildFrameConfigFromDraft(draft);
+              if (fullConfig?.designer?.elements?.length) {
+                config = fullConfig;
+                console.log("✅ [EditPhoto] Full config loaded from IndexedDB:", config.id,
+                  "elements:", config.designer.elements.length,
+                  "types:", config.designer.elements.map(e => e?.type));
+              } else {
+                console.warn("⚠️ [EditPhoto] IndexedDB build returned no elements, keeping lightweight ref");
+              }
+            }
+          } catch (e) {
+            console.warn("⚠️ [EditPhoto] Failed to load full config from IndexedDB:", e);
+          }
+        }
+
         // 🆕 FALLBACK: If no config in storage, try frameProvider memory
         if (!config || !config.id) {
           console.log("⚠️ No config in storage, checking frameProvider memory...");
@@ -2143,41 +2168,27 @@ export default function EditPhoto() {
                   const draftBackgroundPhoto = draft.elements.find(
                     (el) => el?.type === "background-photo"
                   );
-                  if (
-                    draftBackgroundPhoto &&
-                    draftBackgroundPhoto.data?.image
-                  ) {
-                    console.log(
-                      "✅ Found background photo image in draft, restoring..."
-                    );
-                    console.log(
-                      "  - Image length:",
-                      draftBackgroundPhoto.data.image.length
-                    );
-                    console.log(
-                      "  - Image preview:",
-                      draftBackgroundPhoto.data.image.substring(0, 50)
-                    );
+                  // Rebuild whenever: background-photo has image data OR
+                  // designer.elements is entirely missing (lightweight ref / upload-overlay frame)
+                  const shouldRebuild =
+                    (draftBackgroundPhoto && draftBackgroundPhoto.data?.image) ||
+                    !config.designer?.elements?.length;
+
+                  if (shouldRebuild) {
+                    if (draftBackgroundPhoto?.data?.image) {
+                      console.log("✅ Found background photo image in draft, restoring...");
+                    } else {
+                      console.log("✅ designer.elements missing — rebuilding full config from draft (overlay frame)...");
+                    }
 
                     // Rebuild frameConfig from draft to get complete data
                     // Use preloaded module or fallback
                     const { buildFrameConfigFromDraft } = draftHelpersModule || 
                       await import("../utils/draftHelpers.js");
                     config = buildFrameConfigFromDraft(draft);
-
-                    // Try to save complete frameConfig back to localStorage (might fail if too large)
-                    try {
-                      safeStorage.setJSON("frameConfig", config);
-                      console.log(
-                        "✅ Saved complete frameConfig to localStorage"
-                      );
-                    } catch (storageError) {
-                      console.warn(
-                        "⚠️ Could not save frameConfig to localStorage (too large):",
-                        storageError
-                      );
-                      // That's OK - we'll load from draft next time
-                    }
+                    console.log("✅ Rebuilt frameConfig from draft:", config.id,
+                      "elements:", config.designer?.elements?.length,
+                      "types:", config.designer?.elements?.map(e => e?.type));
                   } else {
                     console.warn(
                       "⚠️ No background photo with image found in draft"
@@ -2390,6 +2401,13 @@ export default function EditPhoto() {
           }
         }
 
+        // PRIMARY DUPLICATE-MODE SIGNAL: read before either code path (designer elements OR slots).
+        const _savedDupModeFlag = (() => {
+          try { return localStorage.getItem("friendsDuplicateMode"); } catch { return null; }
+        })();
+        const userExplicitlyDisabledDuplicate = _savedDupModeFlag === "0";
+        console.log(`🔑 [DUPE MODE SIGNAL] friendsDuplicateMode=${_savedDupModeFlag}, userExplicitlyDisabledDuplicate=${userExplicitlyDisabledDuplicate}`);
+
         // Load designer elements (unified layering system)
         // Support both custom frames and regular frames (converted from slots)
         if (Array.isArray(config.designer?.elements)) {
@@ -2483,6 +2501,37 @@ export default function EditPhoto() {
           
           // Always run coordinate detection and conversion
           config.designer.elements = detectAndConvertCoordinates(config.designer.elements, canvasW, canvasH);
+
+          // SEQUENTIAL REWRITE: overwrite stored photoIndex [0,1,1,0] with sequential [0,1,2,3].
+          // We use THREE independent signals – any one being true triggers the rewrite:
+          //   1. sessionStorage __fremio_edit_mode__.sequential = true  (set by TakeMoment handleEdit,
+          //      uses isDuplicateMode React state directly, immune to localStorage quota errors)
+          //   2. totalPhotos >= photoSlots  (4 unique photos taken → enough for every slot)
+          //   3. localStorage friendsDuplicateMode = "0"  (saved when user toggled off)
+          {
+            const _nPhotoSlots = config.designer.elements.filter(e => e?.type === 'photo').length;
+            let _forceSequential = false;
+            try {
+              const _editMode = JSON.parse(sessionStorage.getItem("__fremio_edit_mode__") || "{}");
+              if (_editMode.sequential === true) {
+                _forceSequential = true;
+                console.log("🔑 [SEQ REWRITE] forced via sessionStorage __fremio_edit_mode__.sequential=true");
+              }
+            } catch (_e) { /* ignore */ }
+            if (resolvedPhotos.length > 0 && (resolvedPhotos.length >= _nPhotoSlots || _forceSequential) && _nPhotoSlots > 0) {
+              let _si = 0;
+              config.designer.elements = config.designer.elements.map(el => {
+                if (el?.type === 'photo') {
+                  return { ...el, data: { ...(el.data || {}), photoIndex: _si++ } };
+                }
+                return el;
+              });
+              console.log(`📋 [SEQ REWRITE] photoIndex rewritten sequentially for ${_nPhotoSlots} slots (${resolvedPhotos.length} photos)`);
+            } else {
+              console.log(`🔁 [SEQ REWRITE] skipped – photos=${resolvedPhotos.length}, slots=${_nPhotoSlots} (duplicate mode)`);
+            }
+          }
+
           // Log resolvedPhotos status BEFORE using it
           console.log("📸 [PHOTO FILL] resolvedPhotos available:", resolvedPhotos.length);
           if (resolvedPhotos.length > 0) {
@@ -2564,12 +2613,12 @@ export default function EditPhoto() {
             const totalSlots = photoElements.length;
             const totalPhotos = resolvedPhotos.length;
             
-            // NEW: If slot has explicit photoIndex within range, use it directly.
-            // This is the frame-driven duplicate system: photoIndex encodes which unique
-            // captured photo (by capture order / slot number) belongs in each slot.
-            // Both left and right column slots that share a slotNumber share the same
-            // photoIndex, so the same photo renders in both positions.
-            if (typeof photoEl.data?.photoIndex === 'number' && totalPhotos > 0 && photoIndex < totalPhotos) {
+            // SEQUENTIAL when: (a) user explicitly disabled duplicate mode, OR
+            //                  (b) enough unique photos were taken for every slot.
+            if (userExplicitlyDisabledDuplicate || (totalPhotos > 0 && totalPhotos >= totalSlots)) {
+              effectivePhotoIndex = idx;
+              console.log(`📋 Slot ${idx}: sequential mapping (${totalPhotos} photos ≥ ${totalSlots} slots) → photoIndex ${idx}`);
+            } else if (typeof photoEl.data?.photoIndex === 'number' && totalPhotos > 0 && photoIndex < totalPhotos) {
               effectivePhotoIndex = photoIndex;
               console.log(`🎯 Slot ${idx}: using explicit photoIndex ${effectivePhotoIndex}`);
             } else if (totalPhotos > 0 && totalSlots > totalPhotos) {
@@ -2868,9 +2917,12 @@ export default function EditPhoto() {
               const width = (slot.width || 0.5) * canvasWidth;
               const height = (slot.height || 0.5) * canvasHeight;
               
-              // PAIRED DUPLICATION: Calculate effective photo index
+              // Calculate effective photo index
               let effectivePhotoIndex;
-              if (totalPhotos > 0 && totalSlots > totalPhotos) {
+              if (userExplicitlyDisabledDuplicate || (totalPhotos > 0 && totalPhotos >= totalSlots)) {
+                // Sequential: user disabled duplicate OR enough unique photos for every slot
+                effectivePhotoIndex = idx;
+              } else if (totalPhotos > 0 && totalSlots > totalPhotos) {
                 const slotsPerPhoto = Math.ceil(totalSlots / totalPhotos);
                 effectivePhotoIndex = Math.floor(idx / slotsPerPhoto);
                 if (effectivePhotoIndex >= totalPhotos) {
@@ -2984,26 +3036,27 @@ export default function EditPhoto() {
     console.log(`   Found ${photoSlots.length} photo slots`);
     console.log(`   Available photos: ${photos.length}`);
 
-    // PAIRED DUPLICATION: Each photo fills 2 consecutive slots
-    // Pattern: Photo 1 → Slot 1,2 | Photo 2 → Slot 3,4 | Photo 3 → Slot 5,6
+    // Determine if user wants sequential (non-duplicate) mapping
+    let _fillSequential = false;
+    try { if (localStorage.getItem("friendsDuplicateMode") === "0") _fillSequential = true; } catch(_e) {}
+    try {
+      const _em = JSON.parse(sessionStorage.getItem("__fremio_edit_mode__") || "{}");
+      if (_em.sequential === true) _fillSequential = true;
+    } catch(_e) {}
+
     let photosToUse = [...photos];
-    if (photosToUse.length > 0 && photosToUse.length < photoSlots.length) {
+    if (!_fillSequential && photosToUse.length > 0 && photosToUse.length < photoSlots.length) {
+      // PAIRED DUPLICATION only in duplicate mode:
+      // Pattern: Photo 1 → Slot 1,2 | Photo 2 → Slot 3,4
       console.log("🔁 [EDITPHOTO] Duplicating photos in PAIRS to fill slots...");
-      console.log(`   - Original photos: ${photosToUse.length}`);
-      console.log(`   - Photo slots: ${photoSlots.length}`);
-      
-      // Create paired duplication: each photo appears twice consecutively
       const duplicatedPhotos = [];
       for (let i = 0; i < photosToUse.length; i++) {
-        // Add each photo twice for paired slots
         duplicatedPhotos.push(photosToUse[i]);
         duplicatedPhotos.push(photosToUse[i]);
       }
-      
-      // Trim to match slot count
       photosToUse = duplicatedPhotos.slice(0, photoSlots.length);
-      console.log(`   - After paired duplication: ${photosToUse.length} photos`);
-      console.log(`   - Pattern: Photo 1→Slot 1,2 | Photo 2→Slot 3,4 | Photo 3→Slot 5,6`);
+    } else if (_fillSequential) {
+      console.log("📋 [FILL] Sequential mode — skipping pair-duplication");
     }
 
     // Build a map of photo slots for auto-index assignment
@@ -3013,19 +3066,15 @@ export default function EditPhoto() {
       // Support both "upload" (built-in frames) and "photo" (custom frames) types
       // CRITICAL: Skip overlay elements - they should keep their original image
       if ((el.type === "upload" || el.type === "photo") && !el.data?.__isOverlay) {
-        // CRITICAL FIX: Auto-assign photoIndex if not defined, using sequential counter
-        let photoIndex = el.data?.photoIndex;
-        
-        // If photoIndex is not defined or not a number, use the sequential counter
-        if (typeof photoIndex !== "number") {
+        // In sequential mode always use the slot counter (ignores any stored mirror mapping).
+        // In duplicate mode use the stored photoIndex (may be mirror-mapped [0,1,1,0]).
+        let photoIndex;
+        if (_fillSequential) {
           photoIndex = photoSlotCounter;
-          console.log(`📌 Auto-assigning photoIndex ${photoIndex} to slot (no photoIndex defined)`);
-        }
-        
-        // If photoIndex is out of range, use the sequential counter (use photosToUse for duplication support)
-        if (photoIndex >= photosToUse.length) {
-          console.warn(`⚠️ photoIndex ${photoIndex} out of range (max: ${photosToUse.length - 1}), using counter ${photoSlotCounter}`);
-          photoIndex = photoSlotCounter;
+        } else {
+          photoIndex = el.data?.photoIndex;
+          if (typeof photoIndex !== "number") photoIndex = photoSlotCounter;
+          if (photoIndex >= photosToUse.length) photoIndex = photoSlotCounter;
         }
         
         // Increment counter for next photo slot

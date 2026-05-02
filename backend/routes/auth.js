@@ -673,4 +673,103 @@ router.put(
   }
 );
 
+/**
+ * POST /api/auth/google
+ * Google OAuth login
+ */
+router.post("/google", async (req, res) => {
+  try {
+    const { credential } = req.body;
+
+    if (!credential) {
+      return res.status(400).json({
+        success: false,
+        error: "Google credential diperlukan",
+      });
+    }
+
+    // Verify Google token with Google
+    const tokenResponse = await fetch(
+      `https://www.googleapis.com/oauth2/v3/tokeninfo?id_token=${credential}`
+    );
+    const payload = await tokenResponse.json();
+
+    if (!tokenResponse.ok || !payload.email) {
+      return res.status(401).json({
+        success: false,
+        error: "Token Google tidak valid",
+      });
+    }
+
+    const email = payload.email.toLowerCase();
+    const displayName = payload.name || email.split("@")[0];
+    const photoUrl = payload.picture || null;
+
+    // Find user
+    let result = await pool.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
+
+    let user;
+    if (result.rows.length === 0) {
+      // Create new user (OAuth without password)
+      result = await pool.query(
+        `INSERT INTO users (email, password_hash, display_name, photo_url, role, is_active)
+         VALUES ($1, NULL, $2, $3, 'user', true)
+         RETURNING id, email, display_name, role, photo_url, created_at`,
+        [email, displayName, photoUrl]
+      );
+      console.log(`✅ New Google user registered: ${email}`);
+    } else {
+      user = result.rows[0];
+      if (!user.is_active) {
+        return res.status(403).json({
+          success: false,
+          error: "Akun dinonaktifkan",
+        });
+      }
+      // Update photo_url if changed
+      if (photoUrl && user.photo_url !== photoUrl) {
+        await pool.query(
+          "UPDATE users SET photo_url = $1, updated_at = NOW() WHERE id = $2",
+          [photoUrl, user.id]
+        );
+        user.photo_url = photoUrl;
+      }
+    }
+
+    user = result.rows[0];
+
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      success: true,
+      message: "Login Google berhasil",
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.display_name,
+        role: user.role,
+        photoUrl: user.photo_url,
+      },
+      token,
+    });
+  } catch (error) {
+    console.error("Google login error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Login Google gagal. Coba lagi.",
+    });
+  }
+});
+
 export default router;

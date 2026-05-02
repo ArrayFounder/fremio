@@ -40,6 +40,23 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     booth.printEnabled && photoUrl ? "pending" : "unavailable"
   );
 
+  // Delivery channels from booth prefs
+  const prefs = booth.welcomeScreenPrefs as Record<string, unknown> | null;
+  const channels = (prefs?.deliveryChannels as string[]) ?? ["DOWNLOAD", "WHATSAPP", "EMAIL"];
+  const waEnabled = channels.includes("WHATSAPP");
+  const emailEnabled = channels.includes("EMAIL");
+
+  // WA / Email send states
+  const [waNumber, setWaNumber] = useState("");
+  const [waSending, setWaSending] = useState(false);
+  const [waSent, setWaSent] = useState(false);
+  const [waError, setWaError] = useState<string | null>(null);
+
+  const [emailAddress, setEmailAddress] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+
   // Gunakan override ukuran kertas jika diset, atau auto-detect dari dimensi frame
   const paperSize = (paperSizeOverride ? getPaperSizeByName(paperSizeOverride) : null)
     ?? detectPaperSize(canvasWidth ?? 1080, canvasHeight ?? 1920);
@@ -194,6 +211,64 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     triggerSystemPrint();
   }, [isMobileOrTablet, photoUrl, triggerSystemPrint]);
 
+  const handleSendWhatsApp = useCallback(async () => {
+    if (!waNumber.trim() || !downloadUrl) return;
+    setWaSending(true);
+    setWaError(null);
+    setWaSent(false);
+    try {
+      const res = await fetch("/api/delivery/send-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: waNumber.trim(),
+          downloadUrl,
+          boothConfigId: booth.id,
+          boothName: booth.boothName,
+        }),
+      });
+      const json = await res.json().catch(() => ({ success: false, error: "Gagal kirim." }));
+      if (!json.success) {
+        setWaError(json.error ?? "Gagal kirim ke WhatsApp.");
+      } else {
+        setWaSent(true);
+        setWaNumber("");
+      }
+    } catch {
+      setWaError("Gagal kirim ke WhatsApp. Cek koneksi.");
+    }
+    setWaSending(false);
+  }, [waNumber, downloadUrl, booth.id, booth.boothName]);
+
+  const handleSendEmail = useCallback(async () => {
+    if (!emailAddress.trim() || !downloadUrl) return;
+    setEmailSending(true);
+    setEmailError(null);
+    setEmailSent(false);
+    try {
+      const res = await fetch("/api/delivery/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: emailAddress.trim(),
+          downloadUrl,
+          boothName: booth.boothName,
+          boothConfigId: booth.id,
+        }),
+      });
+      const json = await res.json().catch(() => ({ success: false, error: "Gagal kirim." }));
+      if (!json.success) {
+        setEmailError(json.error ?? "Gagal kirim ke Email.");
+      } else {
+        setEmailSent(true);
+        setEmailAddress("");
+      }
+    } catch {
+      setEmailError("Gagal kirim ke Email. Cek koneksi.");
+    }
+    setEmailSending(false);
+  }, [emailAddress, downloadUrl, booth.boothName, booth.id]);
+
   return (
     <div
       className="flex flex-col h-full items-center gap-6 overflow-y-auto py-8 px-6 select-none"
@@ -241,6 +316,61 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
           </p>
         )}
       </div>
+
+      {/* WhatsApp input */}
+      {waEnabled && (
+        <div className="flex flex-col gap-2 w-full max-w-sm">
+          <div className="flex gap-2">
+            <input
+              type="tel"
+              inputMode="numeric"
+              value={waNumber}
+              onChange={(e) => { setWaNumber(e.target.value); setWaError(null); setWaSent(false); }}
+              placeholder="Nomor WhatsApp (08xx...)"
+              className="flex-1 rounded-2xl px-4 py-3 text-sm font-semibold outline-none border"
+              style={{ borderColor: surfaceBorder, background: surfaceBg, color: textPrimary }}
+              disabled={waSending}
+            />
+            <button
+              onClick={handleSendWhatsApp}
+              disabled={waSending || !waNumber.trim()}
+              className="px-4 py-3 rounded-2xl text-sm font-bold disabled:opacity-40 active:scale-95 transition-transform"
+              style={{ backgroundColor: accentColor, color: primaryColor }}
+            >
+              {waSending ? "Mengirim..." : "Kirim WA"}
+            </button>
+          </div>
+          {waError && <p className="text-xs text-red-300 text-center">{waError}</p>}
+          {waSent && <p className="text-xs text-green-300 text-center">✓ Link hasil foto terkirim ke WhatsApp!</p>}
+        </div>
+      )}
+
+      {/* Email input */}
+      {emailEnabled && (
+        <div className="flex flex-col gap-2 w-full max-w-sm">
+          <div className="flex gap-2">
+            <input
+              type="email"
+              value={emailAddress}
+              onChange={(e) => { setEmailAddress(e.target.value); setEmailError(null); setEmailSent(false); }}
+              placeholder="Alamat email"
+              className="flex-1 rounded-2xl px-4 py-3 text-sm font-semibold outline-none border"
+              style={{ borderColor: surfaceBorder, background: surfaceBg, color: textPrimary }}
+              disabled={emailSending}
+            />
+            <button
+              onClick={handleSendEmail}
+              disabled={emailSending || !emailAddress.trim()}
+              className="px-4 py-3 rounded-2xl text-sm font-bold disabled:opacity-40 active:scale-95 transition-transform"
+              style={{ backgroundColor: accentColor, color: primaryColor }}
+            >
+              {emailSending ? "Mengirim..." : "Kirim Email"}
+            </button>
+          </div>
+          {emailError && <p className="text-xs text-red-300 text-center">{emailError}</p>}
+          {emailSent && <p className="text-xs text-green-300 text-center">✓ Link hasil foto terkirim ke Email!</p>}
+        </div>
+      )}
 
       {/* Countdown + tombol */}
       <div className="flex flex-col items-center gap-4 w-full max-w-sm">

@@ -946,7 +946,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   // ─── Fullscreen ───────────────────────────────────────────────────────────
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fsToast, setFsToast]     = useState<string | null>(null);
-  const [showHiddenFsButton, setShowHiddenFsButton] = useState(false);
   const [showSettingsButton, setShowSettingsButton] = useState(false);
   const [idleSettingsOpen, setIdleSettingsOpen] = useState(false);
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -955,8 +954,15 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   const [pinUnlocked, setPinUnlocked] = useState<boolean>(() => !requiresPinGate);
   const [pinActiveIndex, setPinActiveIndex] = useState(0);
   const pinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
-  const hiddenFsTapTimesRef = useRef<number[]>([]);
-  const hiddenFsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── Settings PIN gate ─────────────────────────────────────────────────
+  const [settingsPinUnlockedAt, setSettingsPinUnlockedAt] = useState<number | null>(null);
+  const [showSettingsPinGate, setShowSettingsPinGate] = useState(false);
+  const [settingsPinDigits, setSettingsPinDigits] = useState<string[]>(Array.from({ length: 6 }, () => ""));
+  const [settingsPinError, setSettingsPinError] = useState<string | null>(null);
+  const [settingsPinActiveIndex, setSettingsPinActiveIndex] = useState(0);
+  const settingsPinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+
   const idleSettingsTapTimesRef = useRef<number[]>([]);
   const idleSettingsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deviceIdRef = useRef<string | null>(null);
@@ -1229,6 +1235,144 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     return () => clearTimeout(id);
   }, [handlePinSubmit, pinUnlocked, pinValue, requiresPinGate]);
 
+  // ─── Settings PIN gate helpers ──────────────────────────────────────────
+  const isSettingsAccessValid =
+    settingsPinUnlockedAt !== null &&
+    Date.now() - settingsPinUnlockedAt < 2 * 60 * 1000;
+
+  const focusSettingsPinInput = useCallback((index: number) => {
+    const el = settingsPinInputRefs.current[index];
+    if (!el) return;
+    el.focus();
+    el.select();
+    setSettingsPinActiveIndex(index);
+  }, []);
+
+  const handleSettingsPinDigitChange = useCallback((index: number, rawValue: string) => {
+    const digitsOnly = rawValue.replace(/\D/g, "");
+    if (digitsOnly.length === 0) {
+      setSettingsPinDigits((prev) => {
+        const next = [...prev];
+        next[index] = "";
+        return next;
+      });
+      setSettingsPinActiveIndex(index);
+      if (settingsPinError) setSettingsPinError(null);
+      return;
+    }
+    if (digitsOnly.length > 1) {
+      let cursor = index;
+      setSettingsPinDigits((prev) => {
+        const next = [...prev];
+        for (const char of digitsOnly) {
+          if (cursor >= 6) break;
+          next[cursor] = char;
+          cursor++;
+        }
+        return next;
+      });
+      const target = Math.min(cursor, 5);
+      setTimeout(() => focusSettingsPinInput(target), 0);
+      if (settingsPinError) setSettingsPinError(null);
+      return;
+    }
+    setSettingsPinDigits((prev) => {
+      const next = [...prev];
+      next[index] = digitsOnly;
+      return next;
+    });
+    const target = index < 5 ? index + 1 : 5;
+    setTimeout(() => focusSettingsPinInput(target), 0);
+    if (settingsPinError) setSettingsPinError(null);
+  }, [focusSettingsPinInput, settingsPinError]);
+
+  const handleSettingsPinKeyDown = useCallback((index: number, key: string) => {
+    if (key === "ArrowLeft") {
+      if (index > 0) setTimeout(() => focusSettingsPinInput(index - 1), 0);
+      return;
+    }
+    if (key === "ArrowRight") {
+      if (index < 5) setTimeout(() => focusSettingsPinInput(index + 1), 0);
+      return;
+    }
+    if (key !== "Backspace" && key !== "Delete") return;
+    if (settingsPinDigits[index]) {
+      setSettingsPinDigits((prev) => {
+        const next = [...prev];
+        next[index] = "";
+        return next;
+      });
+      setTimeout(() => focusSettingsPinInput(index), 0);
+    } else if (index > 0) {
+      setSettingsPinDigits((prev) => {
+        const next = [...prev];
+        next[index - 1] = "";
+        return next;
+      });
+      setTimeout(() => focusSettingsPinInput(index - 1), 0);
+    }
+    if (settingsPinError) setSettingsPinError(null);
+  }, [focusSettingsPinInput, settingsPinDigits, settingsPinError]);
+
+  const handleSettingsPinDelete = useCallback(() => {
+    const idx = settingsPinActiveIndex;
+    if (settingsPinDigits[idx]) {
+      setSettingsPinDigits((prev) => { const next = [...prev]; next[idx] = ""; return next; });
+      setTimeout(() => focusSettingsPinInput(idx), 0);
+      if (settingsPinError) setSettingsPinError(null);
+      return;
+    }
+    if (idx > 0) {
+      setSettingsPinDigits((prev) => { const next = [...prev]; next[idx - 1] = ""; return next; });
+      setTimeout(() => focusSettingsPinInput(idx - 1), 0);
+      if (settingsPinError) setSettingsPinError(null);
+      return;
+    }
+    if (settingsPinDigits[0]) {
+      setSettingsPinDigits((prev) => { const next = [...prev]; next[0] = ""; return next; });
+      setTimeout(() => focusSettingsPinInput(0), 0);
+    }
+    if (settingsPinError) setSettingsPinError(null);
+  }, [focusSettingsPinInput, settingsPinActiveIndex, settingsPinDigits, settingsPinError]);
+
+  const handleSettingsPinSubmit = useCallback(() => {
+    const pinInput = settingsPinDigits.join("");
+    if (!/^\d{6}$/.test(pinInput)) {
+      setSettingsPinError("Masukkan 6 digit PIN.");
+      return;
+    }
+    if (pinInput !== configuredPin) {
+      setSettingsPinError("PIN salah. Coba lagi.");
+      setSettingsPinDigits(Array.from({ length: 6 }, () => ""));
+      setTimeout(() => focusSettingsPinInput(0), 0);
+      return;
+    }
+    setSettingsPinUnlockedAt(Date.now());
+    setSettingsPinError(null);
+    setShowSettingsPinGate(false);
+    setIdleSettingsOpen(true);
+    setSettingsPinDigits(Array.from({ length: 6 }, () => ""));
+  }, [configuredPin, focusSettingsPinInput, settingsPinDigits]);
+
+  const settingsPinValue = settingsPinDigits.join("");
+  useEffect(() => {
+    if (!showSettingsPinGate) return;
+    if (!/^\d{6}$/.test(settingsPinValue)) return;
+    const id = setTimeout(() => handleSettingsPinSubmit(), 40);
+    return () => clearTimeout(id);
+  }, [handleSettingsPinSubmit, settingsPinValue, showSettingsPinGate]);
+
+  // Auto-expire settings access after 2 minutes
+  useEffect(() => {
+    if (settingsPinUnlockedAt === null) return;
+    const elapsed = Date.now() - settingsPinUnlockedAt;
+    const remaining = Math.max(0, 2 * 60 * 1000 - elapsed);
+    const timer = setTimeout(() => {
+      setSettingsPinUnlockedAt(null);
+    }, remaining);
+    return () => clearTimeout(timer);
+  }, [settingsPinUnlockedAt]);
+
   useEffect(() => {
     const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFsChange);
@@ -1256,31 +1400,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     }
   }, []);
 
-  const registerHiddenFullscreenTap = useCallback(() => {
-    if (screen === "BOOTH_SETUP") return;
-
-    const now = Date.now();
-    
-    // Different logic for IDLE vs other screens
-    const isIdleScreen = screen === "IDLE";
-    const threshold = now - (isIdleScreen ? 1000 : 1500); // 1s for IDLE, 1.5s for others
-    const requiredTaps = isIdleScreen ? 2 : 3; // 2 taps for IDLE, 3 taps for others
-    
-    const recent = hiddenFsTapTimesRef.current.filter((ts) => ts >= threshold);
-    recent.push(now);
-    hiddenFsTapTimesRef.current = recent;
-
-    if (recent.length < requiredTaps) return;
-
-    hiddenFsTapTimesRef.current = [];
-    setShowHiddenFsButton(true);
-
-    if (hiddenFsHideTimerRef.current) clearTimeout(hiddenFsHideTimerRef.current);
-    hiddenFsHideTimerRef.current = setTimeout(() => {
-      setShowHiddenFsButton(false);
-    }, 8000);
-  }, [screen]);
-
   const registerIdleSettingsTap = useCallback(() => {
     if (screen !== "IDLE") return;
 
@@ -1301,7 +1420,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
   useEffect(() => {
     return () => {
-      if (hiddenFsHideTimerRef.current) clearTimeout(hiddenFsHideTimerRef.current);
       if (idleSettingsHideTimerRef.current) clearTimeout(idleSettingsHideTimerRef.current);
     };
   }, []);
@@ -1332,7 +1450,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
       className={`fixed inset-0 ${screen === "BOOTH_SETUP" ? "overflow-y-auto" : "overflow-hidden"}`}
       style={{ backgroundColor: primaryColor, color: textPrimary }}
       onPointerDownCapture={(e) => {
-        registerHiddenFullscreenTap();
         registerIdleSettingsTap();
       }}
     >
@@ -1392,20 +1509,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
           style={{ background: "rgba(18,18,18,0.88)", color: "#f5f5f5", border: "1px solid rgba(255,255,255,0.12)" }}>
           Internet terputus. Timer ditahan sampai koneksi kembali.
         </div>
-      )}
-
-      {/* ── Fullscreen button — pojok kiri bawah ── */}
-      {screen !== "BOOTH_SETUP" && showHiddenFsButton && (
-        <button
-          onClick={toggleFullscreen}
-          className="absolute bottom-3 left-3 z-50 w-9 h-9 rounded-xl flex items-center justify-center
-                     text-base transition-opacity opacity-20 hover:opacity-70 active:opacity-100"
-          style={{ background: "rgba(0,0,0,0.35)", color: "white" }}
-          title={isFullscreen ? "Keluar fullscreen" : "Fullscreen (F11)"}
-        >
-          {isFullscreen ? "✕FS" : "⛶"}
-          <span className="sr-only">{isFullscreen ? "Exit fullscreen" : "Fullscreen"}</span>
-        </button>
       )}
 
       {/* ── Fullscreen tip toast ── */}
@@ -1511,6 +1614,92 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
                 Masuk
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Settings PIN gate ── */}
+      {showSettingsPinGate && (
+        <div
+          className="absolute inset-0 z-[1210] flex items-center justify-center p-6"
+          style={{ background: "rgba(0,0,0,0.82)", backdropFilter: "blur(4px)" }}
+          onClick={() => setShowSettingsPinGate(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl p-6 shadow-2xl"
+            style={{ background: "#171717", border: "1px solid rgba(255,255,255,0.15)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-white text-xl font-bold">Kunci Akses Link Booth</p>
+            <p className="text-white/60 text-sm mt-1.5">Masukkan PIN 6 digit untuk membuka pengaturan booth.</p>
+
+            <div className="mt-5 flex justify-center gap-2">
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <input
+                  key={idx}
+                  ref={(el) => { settingsPinInputRefs.current[idx] = el; }}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={1}
+                  value={settingsPinDigits[idx] ?? ""}
+                  onChange={(e) => handleSettingsPinDigitChange(idx, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleSettingsPinSubmit();
+                      return;
+                    }
+                    if (e.key === "Backspace" || e.key === "Delete") {
+                      e.preventDefault();
+                      handleSettingsPinKeyDown(idx, e.key);
+                      return;
+                    }
+                    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                      e.preventDefault();
+                      handleSettingsPinKeyDown(idx, e.key);
+                    }
+                  }}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onClick={() => setSettingsPinActiveIndex(idx)}
+                  onFocusCapture={() => setSettingsPinActiveIndex(idx)}
+                  className="h-12 w-10 rounded-xl border text-center text-lg font-bold outline-none"
+                  style={{
+                    borderColor: "rgba(255,255,255,0.22)",
+                    background: "rgba(255,255,255,0.06)",
+                    color: "rgba(255,255,255,0.92)",
+                  }}
+                />
+              ))}
+            </div>
+
+            {settingsPinError && <p className="mt-2 text-xs text-red-300">{settingsPinError}</p>}
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                onClick={handleSettingsPinDelete}
+                className="w-full py-3 rounded-2xl text-sm font-bold"
+                style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.9)" }}
+              >
+                Hapus
+              </button>
+              <button
+                onClick={handleSettingsPinSubmit}
+                className="w-full py-3 rounded-2xl text-sm font-bold"
+                style={{ background: accentColor, color: primaryColor }}
+              >
+                Masuk
+              </button>
+            </div>
+            <button
+              onClick={() => {
+                setShowSettingsPinGate(false);
+                setSettingsPinDigits(Array.from({ length: 6 }, () => ""));
+                setSettingsPinError(null);
+              }}
+              className="mt-2 w-full py-2 rounded-2xl text-xs font-semibold text-white/50 hover:text-white/80 hover:bg-white/5 transition-colors"
+            >
+              Batal
+            </button>
           </div>
         </div>
       )}
@@ -1646,7 +1835,17 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             />
             {showSettingsButton && (
               <button
-                onClick={() => setIdleSettingsOpen((prev) => !prev)}
+                onClick={() => {
+                  if (requiresPinGate && !isSettingsAccessValid) {
+                    setShowSettingsPinGate(true);
+                    setTimeout(() => {
+                      const el = settingsPinInputRefs.current[0];
+                      if (el) { el.focus(); el.select(); setSettingsPinActiveIndex(0); }
+                    }, 0);
+                  } else {
+                    setIdleSettingsOpen((prev) => !prev);
+                  }
+                }}
                 className="absolute top-3 right-3 p-2 rounded-xl text-white/25 hover:text-white/60
                            hover:bg-white/10 transition-colors text-sm"
                 title="Menu pengaturan booth"

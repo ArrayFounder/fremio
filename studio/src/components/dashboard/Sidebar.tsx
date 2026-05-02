@@ -9,7 +9,6 @@ const NAV = [
   { href: "/dashboard",     label: "Beranda",       icon: "🏠" },
   { href: "/booths",        label: "Booth",         icon: "📷" },
   { href: "/sessions",      label: "Transaksi",     icon: "💳" },
-  { href: "/settings",      label: "Pengaturan",    icon: "⚙️" },
   { href: "/agent",         label: "Fremio Studio", icon: "🖨️" },
 ];
 

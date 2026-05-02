@@ -231,7 +231,29 @@ export const buildFrameConfigFromDraft = (draft) => {
     throw new Error("Draft is required to build frame configuration");
   }
 
-  const sourceElements = extractDraftElements(draft);
+  const rawElements = extractDraftElements(draft);
+  const sourceElements = rawElements.map((element, index) => {
+    if (!element || typeof element !== "object") return element;
+
+    const isUploadOverlayCandidate =
+      element.type === "upload" &&
+      typeof element?.data?.image === "string" &&
+      element.data.image.length > 0 &&
+      !Number.isFinite(element?.data?.photoIndex);
+
+    if (!isUploadOverlayCandidate) {
+      return element;
+    }
+
+    return {
+      ...element,
+      zIndex: Math.max(Number(element.zIndex) || 0, 500 + index),
+      data: {
+        ...element.data,
+        __isOverlay: true,
+      },
+    };
+  });
 
   console.log("🔍 [buildFrameConfigFromDraft] Source elements:", {
     total: sourceElements.length,
@@ -387,8 +409,9 @@ export const buildFrameConfigFromDraft = (draft) => {
 export const activateDraftFrame = (draft) => {
   const frameConfig = buildFrameConfigFromDraft(draft);
 
-  // Store FULL frameConfig (with images) to IndexedDB for large data
-  // Don't sanitize - we need all images for TakeMoment to work!
+  // Store FULL frameConfig to localStorage ONLY if no draftId is available.
+  // When draftId exists, TakeMoment loads from IndexedDB directly — no need to write
+  // potentially multi-MB base64 data to localStorage (causes QuotaExceededError).
   console.log("💾 [activateDraftFrame] Storing full frameConfig:", {
     id: frameConfig.id,
     hasDesignerElements: !!frameConfig.designer?.elements,
@@ -420,35 +443,36 @@ export const activateDraftFrame = (draft) => {
     userStorage.removeItem("activeDraftSignature");
   }
 
-  // Store FULL frameConfig to localStorage for Editor/TakeMoment
-  // This is the CRITICAL FIX - don't sanitize, store complete data
-  let configPersisted = false;
-  try {
-    // Add timestamp for session validation
-    const configWithTimestamp = {
-      ...frameConfig,
-      __timestamp: Date.now(),
+  const now = Date.now();
+  safeStorage.setItem("frameConfigTimestamp", String(now));
+
+  // If a draftId is present, TakeMoment will load the full frameConfig from IndexedDB.
+  // Skipping the heavy localStorage write entirely avoids QuotaExceededError and
+  // the multiple retry-fallback loops that slow down the "Gunakan Frame" action.
+  if (draft?.id) {
+    // Save a tiny reference config so any legacy code that reads "frameConfig" gets
+    // a coherent (but lightweight) object instead of stale data from a previous frame.
+    const lightweightRef = {
+      id: frameConfig.id,
+      name: frameConfig.name,
+      isCustom: true,
+      maxCaptures: frameConfig.maxCaptures,
+      slots: frameConfig.slots,
+      __timestamp: now,
       __selectedAt: new Date().toISOString(),
+      __draftId: draft.id,
     };
-
-    configPersisted = safeStorage.setJSON("frameConfig", configWithTimestamp);
-
-    // Save timestamp separately for validation
-    safeStorage.setItem(
-      "frameConfigTimestamp",
-      String(configWithTimestamp.__timestamp)
-    );
-
-    console.log(
-      "✅ [activateDraftFrame] Full frameConfig stored to localStorage with timestamp"
-    );
-  } catch (error) {
-    console.warn(
-      "⚠️ [activateDraftFrame] localStorage failed (too large), frameConfig will load from draft:",
-      error
-    );
-    // Don't throw error - TakeMoment can load from draft directly via activeDraftId
-    configPersisted = true; // Mark as successful since we have activeDraftId fallback
+    safeStorage.setJSON("frameConfig", lightweightRef);
+    console.log("✅ [activateDraftFrame] Lightweight ref stored; full config loads from IndexedDB via activeDraftId");
+  } else {
+    // No draftId — must write full config to localStorage (best-effort)
+    try {
+      const configWithTimestamp = { ...frameConfig, __timestamp: now, __selectedAt: new Date().toISOString() };
+      safeStorage.setJSON("frameConfig", configWithTimestamp);
+      console.log("✅ [activateDraftFrame] Full frameConfig stored to localStorage");
+    } catch (error) {
+      console.warn("⚠️ [activateDraftFrame] localStorage full, proceeding without cached config:", error);
+    }
   }
 
   if (!idPersisted) {

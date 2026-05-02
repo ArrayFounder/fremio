@@ -62,6 +62,13 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
+    if (!operatorWithPassword.password) {
+      return NextResponse.json<LauncherLoginResponse>(
+        { success: false, error: "Akun ini tidak mendukung login password. Gunakan Google Sign-in." },
+        { status: 401 }
+      );
+    }
+
     const isValid = await bcrypt.compare(parsed.data.password, operatorWithPassword.password);
     if (!isValid) {
       return NextResponse.json<LauncherLoginResponse>(

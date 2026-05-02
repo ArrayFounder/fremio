@@ -35,8 +35,14 @@
           "package-lock.json",
           ".env.example",
           "src/**/*",
+          "dist/**/*",
           "node_modules/**/*"
         ]
+      },
+      {
+        "from": "tools",
+        "to": "tools",
+        "filter": ["**/*"]
       }
     ],
     "win": {

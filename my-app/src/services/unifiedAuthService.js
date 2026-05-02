@@ -75,6 +75,20 @@ class VPSAuthClient {
     return data;
   }
 
+  async googleLogin(credential) {
+    const data = await this.request('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ credential })
+    });
+
+    if (data.token) {
+      this.setToken(data.token);
+      localStorage.setItem('current_user', JSON.stringify(data.user));
+    }
+
+    return data;
+  }
+
   async logout() {
     try {
       await this.request('/auth/logout', { method: 'POST' });
@@ -166,6 +180,14 @@ const unifiedAuthService = {
       return await authClient.login(email, password);
     }
     throw new Error('Use AuthContext for Firebase login');
+  },
+
+  // Google Login (VPS only)
+  async googleLogin(credential) {
+    if (isVPSMode()) {
+      return await authClient.googleLogin(credential);
+    }
+    throw new Error('Google login not available in Firebase mode');
   },
 
   // Logout

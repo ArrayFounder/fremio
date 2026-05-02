@@ -784,6 +784,7 @@ function CanvasPreviewComponent({
   isBackgroundLocked = false,
   onToggleBackgroundLock,
   onResetBackground,
+  passthroughFrameOverlayPointerEvents = false,
 }) {
   // State for text editing mode
   const [editingTextId, setEditingTextId] = useState(null);
@@ -1704,7 +1705,8 @@ function CanvasPreviewComponent({
 
           const isCapturedOverlayElement =
             element.type === "upload" &&
-            element.data?.__capturedOverlay === true;
+            (element.data?.__capturedOverlay === true ||
+              (passthroughFrameOverlayPointerEvents && element.data?.__isOverlay === true));
           const elementClassName = [
             baseClassName,
             "creator-element",
@@ -1803,12 +1805,8 @@ function CanvasPreviewComponent({
 
             if (!isSelected) {
               onSelect(element.id, { interaction: "pointerdown" });
-              // Don't stop pointer tracking for background photo - allow drag immediately
-              if (!isBackgroundPhoto) {
-                meta.pointerActive = false;
-                return;
-              }
-              // For background photo, continue to allow drag even on first click
+              // Keep pointer tracking active so element can be dragged immediately
+              // on first interaction after selection.
             }
 
             startHoldTimer(meta);
@@ -1825,11 +1823,6 @@ function CanvasPreviewComponent({
             }
 
             if (!meta.pointerActive) {
-              return;
-            }
-
-            // Allow drag for background photo even if not selected initially
-            if (!isSelected && !isBackgroundPhoto) {
               return;
             }
 

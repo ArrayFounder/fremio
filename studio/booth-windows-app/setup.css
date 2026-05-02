@@ -111,6 +111,53 @@ h1 {
   font-size: 12px;
 }
 
+.device-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(11, 19, 31, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.device-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.device-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.device-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #d8e0ef;
+}
+
+.device-status {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: #96a3bf;
+}
+
+.device-notes {
+  margin: 8px 0 0;
+  padding-left: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #b7c1d4;
+  font-size: 11px;
+}
+
 .bridge-actions {
   margin-top: 14px;
   display: flex;

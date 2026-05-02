@@ -25,6 +25,8 @@ let hardwareAgentProcess = null;
 let hardwareAgentExit = null;
 let hardwareAgentStdout = "";
 let hardwareAgentStderr = "";
+let bridgeWatchdogTimer = null;
+let bridgeHealthFailCount = 0;
 
 function trimLog(input) {
   return input.length > MAX_LOG_CHARS ? input.slice(-MAX_LOG_CHARS) : input;
@@ -51,16 +53,31 @@ function getAgentRootPath() {
 }
 
 function getAgentEntryPath() {
-  return path.join(getAgentRootPath(), "src", "index.js");
+  return path.join(getAgentRootPath(), "dist", "server.js");
+}
+
+function getBundledToolsPath(subPath) {
+  if (!process.resourcesPath) return null;
+  return path.join(process.resourcesPath, "tools", subPath);
 }
 
 function findWindowsGphoto2Path() {
   if (process.platform !== "win32") return null;
 
+  const pathCandidates = String(process.env.PATH || "")
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => path.join(entry, "gphoto2.exe"));
+
   const candidates = [
     process.env.GPHOTO2_PATH,
+    getBundledToolsPath(path.join("gphoto2", "gphoto2.exe")),
     "C:\\msys64\\mingw64\\bin\\gphoto2.exe",
     "C:\\msys64\\ucrt64\\bin\\gphoto2.exe",
+    "C:\\Program Files\\gPhoto2\\bin\\gphoto2.exe",
+    "C:\\Program Files (x86)\\gPhoto2\\bin\\gphoto2.exe",
+    ...pathCandidates,
   ].filter(Boolean);
 
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
@@ -84,6 +101,7 @@ function startHardwareAgent() {
 
   const gphoto2Path = findWindowsGphoto2Path();
   if (gphoto2Path) env.GPHOTO2_PATH = gphoto2Path;
+  appendAgentLog("stdout", `\n[launcher] start hardware bridge; gphoto2=${env.GPHOTO2_PATH || "PATH"}`);
 
   hardwareAgentExit = null;
   hardwareAgentProcess = spawn(process.execPath, [agentEntryPath], {
@@ -97,12 +115,14 @@ function startHardwareAgent() {
   hardwareAgentProcess.stderr?.on("data", (chunk) => appendAgentLog("stderr", chunk));
 
   hardwareAgentProcess.on("error", (error) => {
+    appendAgentLog("stderr", `\n[launcher] bridge process error: ${error.message}`);
     hardwareAgentStderr = trimLog(`${hardwareAgentStderr}\n${error.message}`);
     hardwareAgentExit = { code: null, signal: null, at: new Date().toISOString() };
     hardwareAgentProcess = null;
   });
 
   hardwareAgentProcess.on("exit", (code, signal) => {
+    appendAgentLog("stderr", `\n[launcher] bridge process exit: code=${code} signal=${signal}`);
     hardwareAgentExit = { code, signal, at: new Date().toISOString() };
     hardwareAgentProcess = null;
   });
@@ -111,6 +131,37 @@ function startHardwareAgent() {
 function stopHardwareAgent() {
   if (!hardwareAgentProcess || hardwareAgentProcess.killed) return;
   hardwareAgentProcess.kill();
+}
+
+function startBridgeWatchdog() {
+  if (bridgeWatchdogTimer) return;
+
+  bridgeWatchdogTimer = setInterval(async () => {
+    if (!hardwareAgentProcess || hardwareAgentProcess.killed) {
+      startHardwareAgent();
+      return;
+    }
+
+    try {
+      await requestJson(BRIDGE_STATUS_URL, 1200);
+      bridgeHealthFailCount = 0;
+    } catch {
+      bridgeHealthFailCount += 1;
+      if (bridgeHealthFailCount >= 3) {
+        appendAgentLog("stderr", "\n[launcher] bridge health-check failed 3x, restarting...");
+        stopHardwareAgent();
+        startHardwareAgent();
+        bridgeHealthFailCount = 0;
+      }
+    }
+  }, 5000);
+}
+
+function stopBridgeWatchdog() {
+  if (!bridgeWatchdogTimer) return;
+  clearInterval(bridgeWatchdogTimer);
+  bridgeWatchdogTimer = null;
+  bridgeHealthFailCount = 0;
 }
 
 function requestJson(url, timeoutMs = 1500) {
@@ -163,22 +214,14 @@ function simplifyBridgeError(errorText) {
 async function getBridgeStatus() {
   try {
     const payload = await requestJson(BRIDGE_STATUS_URL);
-    const cameraAvailable = Boolean(payload?.camera?.available);
-    const printerCount = Number(payload?.printer?.count || 0);
-    const cameraCount = Number(payload?.camera?.count || 0);
-    const notes = [];
-
-    if (cameraAvailable) {
-      notes.push(`${cameraCount} kamera terdeteksi`);
-    } else if (payload?.camera?.error) {
-      notes.push(simplifyBridgeError(payload.camera.error));
-    } else {
-      notes.push("Bridge aktif, tetapi belum ada kamera DSLR yang terbaca");
-    }
-
-    if (printerCount > 0) {
-      notes.push(`${printerCount} printer terdeteksi`);
-    }
+    const camera = payload?.camera || {};
+    const printers = Array.isArray(payload?.printers) ? payload.printers : [];
+    const cameraAvailable = Boolean(camera.available);
+    const cameraCount = Number(camera.count || 0);
+    const cameraType = camera.type || "none";
+    const cameraDevices = Array.isArray(camera.devices) ? camera.devices : [];
+    const cameraError = camera.error || "";
+    const printerCount = printers.length;
 
     return {
       ok: true,
@@ -190,8 +233,11 @@ async function getBridgeStatus() {
         : "Kalau kamera belum muncul, nyalakan kamera lalu cabut-colok kabel USB sekali.",
       cameraAvailable,
       cameraCount,
+      cameraType,
+      cameraDevices,
+      cameraError,
       printerCount,
-      notes,
+      printers,
       raw: payload,
       agentPid: hardwareAgentProcess?.pid || null,
     };
@@ -218,8 +264,12 @@ async function getBridgeStatus() {
       action: "Biarkan app tetap terbuka 5-10 detik, lalu klik cek lagi.",
       cameraAvailable: false,
       cameraCount: 0,
+      cameraType: "none",
+      cameraDevices: [],
+      cameraError: "",
       printerCount: 0,
-      notes,
+      printers: [],
+      raw: {},
       agentPid: hardwareAgentProcess?.pid || null,
     };
   }
@@ -418,6 +468,7 @@ function registerShortcuts() {
 app.whenReady().then(async () => {
   currentConfig = loadConfig();
   startHardwareAgent();
+  startBridgeWatchdog();
   applyPermissionRules();
   registerIpcHandlers();
   registerShortcuts();
@@ -428,6 +479,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  stopBridgeWatchdog();
   stopHardwareAgent();
   if (process.platform !== "darwin") app.quit();
 });
@@ -437,6 +489,7 @@ app.on("activate", () => {
 });
 
 app.on("will-quit", () => {
+  stopBridgeWatchdog();
   stopHardwareAgent();
   globalShortcut.unregisterAll();
 });

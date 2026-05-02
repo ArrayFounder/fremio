@@ -59,11 +59,15 @@ app.get('/preview', async (_req, res) => {
   try {
     result = await camera.capturePreview();
   } catch (err) {
+    const statusCode = err && err.code === 'LIVE_VIEW_UNSUPPORTED' ? 409 : 500;
     logger.error('GET /preview error', { message: err.message });
-    return res.status(500).json({
+    return res.status(statusCode).json({
       ok: false,
       error: err.message,
-      hint: 'Pastikan kamera mendukung preview dan mode PTP/PC Remote aktif.',
+      code: err && err.code ? err.code : 'PREVIEW_ERROR',
+      hint: err && err.code === 'LIVE_VIEW_UNSUPPORTED'
+        ? 'Model kamera ini berjalan di mode capture-only. Tombol Ambil Foto tetap bisa dipakai.'
+        : 'Pastikan kamera mendukung preview dan mode PTP/PC Remote aktif.',
     });
   }
 
@@ -85,7 +89,7 @@ app.get('/status', async (_req, res) => {
   logger.info('GET /status — checking hardware');
 
   const [cameraResult, printerResult] = await Promise.allSettled([
-    camera.detectCamera(),
+    camera.getCameraStatus(),
     printer.detectPrinters(),
   ]);
 
@@ -110,6 +114,11 @@ app.get('/status', async (_req, res) => {
       available:    cameraData.available,
       count:        cameraData.cameras?.length ?? 0,
       cameras:      cameraData.cameras ?? [],
+      capabilities: cameraData.capabilities ?? {
+        supportsCapture: false,
+        supportsLiveView: false,
+        mode: 'unknown',
+      },
       ...(cameraData.error ? { error: cameraData.error } : {}),
     },
     printer: {
@@ -234,6 +243,29 @@ app.listen(PORT, '127.0.0.1', () => {
   logger.info(`Printer: ${process.env.DEFAULT_PRINTER || '(sistem default)'}`);
   logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   logger.info('Jalankan GET /status untuk cek hardware');
+
+  void Promise.allSettled([
+    camera.getCameraStatus({ refreshCapabilities: true }),
+    printer.detectPrinters(),
+  ]).then(([cameraWarmup, printerWarmup]) => {
+    if (cameraWarmup.status === 'fulfilled') {
+      logger.info('Warmup camera status ready', {
+        available: cameraWarmup.value.available,
+        capabilities: cameraWarmup.value.capabilities,
+      });
+    } else {
+      logger.warn('Warmup camera status failed', { message: cameraWarmup.reason?.message });
+    }
+
+    if (printerWarmup.status === 'fulfilled') {
+      logger.info('Warmup printer status ready', {
+        available: printerWarmup.value.available,
+        count: printerWarmup.value.printers?.length ?? 0,
+      });
+    } else {
+      logger.warn('Warmup printer status failed', { message: printerWarmup.reason?.message });
+    }
+  });
 });
 
 // ─── Graceful shutdown ────────────────────────────────────────────────────────

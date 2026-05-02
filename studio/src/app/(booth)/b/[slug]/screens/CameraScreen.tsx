@@ -305,6 +305,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   // ── DSLR via Local Agent ────────────────────────────────────────────────────
   const [dslrAvailable, setDslrAvailable] = useState<boolean>(false);
   const [dslrModel,     setDslrModel]     = useState<string | null>(null);
+  const [dslrSupportsCapture, setDslrSupportsCapture] = useState<boolean>(false);
+  const [dslrSupportsLiveView, setDslrSupportsLiveView] = useState<boolean | null>(null);
   const [dslrPreviewUrl, setDslrPreviewUrl] = useState<string | null>(null);
   const [dslrPreviewError, setDslrPreviewError] = useState<string | null>(null);
   const agentBaseRef = useRef<string | null>(null);
@@ -337,12 +339,29 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         try {
           const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(2500) });
           if (!res.ok) continue;
-          const data = await res.json() as { camera?: { available: boolean; cameras?: { model: string }[] } };
+          const data = await res.json() as {
+            camera?: {
+              available: boolean;
+              cameras?: { model: string }[];
+              capabilities?: {
+                supportsCapture?: boolean;
+                supportsLiveView?: boolean;
+                mode?: string;
+              };
+            };
+          };
           if (!healthyBase) healthyBase = base;
           if (data.camera?.available) {
+            const capabilities = data.camera.capabilities;
             agentBaseRef.current = base;
             setDslrAvailable(true);
             setDslrModel(data.camera.cameras?.[0]?.model ?? "DSLR");
+            setDslrSupportsCapture(capabilities?.supportsCapture !== false);
+            setDslrSupportsLiveView(
+              typeof capabilities?.supportsLiveView === "boolean"
+                ? capabilities.supportsLiveView
+                : null
+            );
             return;
           }
         } catch { /* agent tidak ada atau error → skip */ }
@@ -353,6 +372,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
       setDslrAvailable(false);
       setDslrModel(null);
+      setDslrSupportsCapture(false);
+      setDslrSupportsLiveView(null);
     })();
   }, []);
 
@@ -363,6 +384,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         return null;
       });
       setDslrPreviewError(null);
+      return;
+    }
+
+    if (dslrSupportsLiveView === false) {
+      setDslrPreviewError("Kamera berjalan di mode capture-only. Live preview DSLR tidak tersedia, tetapi capture tetap berfungsi.");
       return;
     }
 
@@ -384,7 +410,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const base = agentBaseRef.current;
         if (!base) return;
         const res = await fetch(`${base}/preview`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
-        if (!res.ok) throw new Error(`preview ${res.status}`);
+        if (!res.ok) {
+          if (res.status === 409) {
+            setDslrSupportsLiveView(false);
+            setDslrPreviewError("Kamera berjalan di mode capture-only. Live preview DSLR tidak tersedia, tetapi capture tetap berfungsi.");
+          }
+          throw new Error(`preview ${res.status}`);
+        }
         const blob = await res.blob();
         if (!blob.size) throw new Error("preview empty");
         const nextUrl = URL.createObjectURL(blob);
@@ -418,7 +450,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (timer) clearTimeout(timer);
       if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     };
-  }, [dslrMode]);
+  }, [dslrMode, dslrSupportsLiveView]);
 
   const captureFromAgent = useCallback(async (): Promise<string | null> => {
     const base = agentBaseRef.current;
@@ -597,7 +629,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const cw = frame.canvasWidth  || 1080;
   const ch = frame.canvasHeight || 1920;
   const frameAspect = cw / ch;
-  const canTriggerCapture = dslrMode ? cdState === "READY" : isReady && cdState === "READY";
+  const canTriggerCapture = dslrMode
+    ? dslrAvailable && dslrSupportsCapture && cdState === "READY"
+    : isReady && cdState === "READY";
 
   return (
     <div
@@ -720,7 +754,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
               className="absolute left-3 right-3 top-12 rounded-xl px-3 py-1.5 text-[10px] font-semibold pointer-events-none"
               style={{ background: "rgba(15,23,42,0.75)", color: "#e2e8f0" }}
             >
-              {dslrPreviewUrl
+              {dslrSupportsLiveView === false
+                ? "Mode capture-only aktif. Live preview DSLR tidak tersedia, capture tetap dari DSLR local agent."
+                : dslrPreviewUrl
                 ? "Live preview dari DSLR aktif."
                 : "Preview pakai webcam sebagai fallback. Capture tetap diambil dari DSLR local agent."}
             </div>

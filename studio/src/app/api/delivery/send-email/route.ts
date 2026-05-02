@@ -1,24 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { z } from "zod";
+import { prisma } from "@/lib/prisma";
 
 const schema = z.object({
   email:       z.string().email(),
   downloadUrl: z.string().url(),
   boothName:   z.string().max(100).optional(),
+  boothConfigId: z.string().min(1).optional(),
 });
 
 export async function POST(req: NextRequest) {
-  // Validasi env vars
-  const gmailUser = process.env.GMAIL_USER;
-  const gmailPass = process.env.GMAIL_APP_PASSWORD;
-  if (!gmailUser || !gmailPass) {
-    return NextResponse.json(
-      { success: false, error: "Email service belum dikonfigurasi." },
-      { status: 503 }
-    );
-  }
-
   // Validasi input
   let body: z.infer<typeof schema>;
   try {
@@ -27,7 +19,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Input tidak valid." }, { status: 400 });
   }
 
-  const { email, downloadUrl, boothName } = body;
+  const { email, downloadUrl, boothName, boothConfigId } = body;
+
+  // Resolve Gmail credentials: booth prefs first, then env vars fallback
+  let gmailUser = process.env.GMAIL_USER ?? "";
+  let gmailPass = process.env.GMAIL_APP_PASSWORD ?? "";
+
+  if (boothConfigId) {
+    try {
+      const booth = await prisma.boothConfig.findUnique({
+        where: { id: boothConfigId },
+        select: { welcomeScreenPrefs: true },
+      });
+      if (booth) {
+        const prefs = booth.welcomeScreenPrefs as Record<string, unknown> | null;
+        const boothUser = prefs?.deliveryGmailUser as string | undefined;
+        const boothPass = prefs?.deliveryGmailAppPassword as string | undefined;
+        if (boothUser) gmailUser = boothUser;
+        if (boothPass) gmailPass = boothPass;
+      }
+    } catch {
+      // ignore lookup errors, fall back to env vars
+    }
+  }
+
+  if (!gmailUser || !gmailPass) {
+    return NextResponse.json(
+      { success: false, error: "Email service belum dikonfigurasi. Atur di pengaturan booth." },
+      { status: 503 }
+    );
+  }
+
   const displayName = boothName ?? "Fremio Photobox";
 
   const transporter = nodemailer.createTransport({

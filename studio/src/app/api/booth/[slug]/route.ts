@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { ApiResponse } from "@/types";
 
-const TRIAL_ONLY_MODE = true;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/booth/[slug]
 //
@@ -19,7 +17,7 @@ export async function GET(
     where:   { slug: params.slug, isActive: true },
     include: {
       operator: {
-        select: { subscriptionTier: true, subscriptionExpiry: true, isActive: true },
+        select: { isActive: true },
       },
     },
   });
@@ -31,18 +29,16 @@ export async function GET(
     );
   }
 
-  // Trial rollout: abaikan gate subscription sementara.
-  if (
-    !booth.operator.isActive ||
-    (!TRIAL_ONLY_MODE &&
-      (!booth.operator.subscriptionExpiry ||
-        booth.operator.subscriptionExpiry < new Date()))
-  ) {
+  // Booth hanya aktif jika operator-nya aktif
+  if (!booth.operator.isActive) {
     return NextResponse.json<ApiResponse>(
       { success: false, error: "Booth sedang tidak aktif" },
       { status: 403 }
     );
   }
+
+  // Watermark trial hanya muncul jika booth TIDAK menggunakan kredit
+  const showTrialWatermark = !booth.usesCredit;
 
   // Ambil frames yang tersedia
   // Jika allowedFrameIds kosong → ambil semua frame publik aktif
@@ -97,7 +93,7 @@ export async function GET(
         id:                    booth.id,
         boothName:             booth.boothName,
         slug:                  booth.slug,
-        showTrialWatermark:    TRIAL_ONLY_MODE,
+        showTrialWatermark:    showTrialWatermark,
         pricePerSession:       booth.pricePerSession,
         printPricePerSheet:    booth.printPricePerSheet,
         sessionDurationSeconds: booth.sessionDurationSeconds,

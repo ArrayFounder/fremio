@@ -299,6 +299,9 @@ router.get("/", optionalAuth, async (req, res) => {
         queryParams.push(source);
       }
       paramIndex++;
+    } else {
+      // Public endpoint: exclude admin-only frames (studio_booth and designer) unless explicitly requested
+      queryText += ` AND (source IS NULL OR (source != 'studio_booth' AND source != 'designer'))`;
     }
 
     // Deterministic ordering avoids "random" disappearance when paging/limits apply
@@ -336,6 +339,9 @@ router.get("/", optionalAuth, async (req, res) => {
           countQuery += ` AND source = $${countParams.length + 1}`;
           countParams.push(source);
         }
+      } else {
+        // Public endpoint: exclude admin-only frames from count
+        countQuery += ` AND (source IS NULL OR (source != 'studio_booth' AND source != 'designer'))`;
       }
       const countResult = await pool.query(countQuery, countParams);
       total = parseInt(countResult.rows[0].count);

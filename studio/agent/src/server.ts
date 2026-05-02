@@ -55,6 +55,208 @@ app.use(express.json({ limit: "50mb" }));
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const isWin = process.platform === "win32";
+const isMac = process.platform === "darwin";
+
+/** Bundled tools path — used when gphoto2 is packaged inside the Electron app */
+function getBundledGphoto2Dir(): string | null {
+  if (!isWin) return null;
+  // When running from Electron packaged app, resourcesPath points to app.asar.unpacked or resources
+  const bundled = (process as any).resourcesPath
+    ? path.join((process as any).resourcesPath, "tools", "gphoto2")
+    : null;
+  return bundled && fs.existsSync(bundled) ? bundled : null;
+}
+
+/** Cari path gphoto2.exe di Windows (termasuk yang dibundle dalam Electron) */
+function findWindowsGphoto2Path(): string | null {
+  if (!isWin) return null;
+  const pathCandidates = String(process.env.PATH || "")
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => path.join(entry, "gphoto2.exe"));
+
+  const bundledDir = getBundledGphoto2Dir();
+
+  const candidates = [
+    process.env.GPHOTO2_PATH,
+    bundledDir ? path.join(bundledDir, "gphoto2.exe") : null,
+    "C:\\msys64\\mingw64\\bin\\gphoto2.exe",
+    "C:\\msys64\\ucrt64\\bin\\gphoto2.exe",
+    "C:\\Program Files\\gPhoto2\\bin\\gphoto2.exe",
+    "C:\\Program Files (x86)\\gPhoto2\\bin\\gphoto2.exe",
+    ...pathCandidates,
+  ].filter(Boolean) as string[];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+/** Parse gphoto2 --auto-detect output into structured { model, port } */
+function parseDslrDevices(stdout: string): { model: string; port: string }[] {
+  const lines = stdout.split(/\r?\n/).filter((l) => l.trim().length > 0 && !/^(Model|Port|[-]+)$/i.test(l.trim()));
+  const devices: { model: string; port: string }[] = [];
+  for (const raw of lines) {
+    const l = raw.trim().replace(/\s+/g, " ");
+    if (l.length < 4 || l.toLowerCase().includes("no camera")) continue;
+    // gphoto2 --auto-detect format: "Model Name              usb:001,003"
+    // We split on whitespace runs; the port starts with usb:
+    const match = l.match(/^(.+?)\s+(usb:\d+,\d+)$/);
+    if (match) {
+      devices.push({ model: match[1].trim(), port: match[2].trim() });
+    } else {
+      // Fallback: just use the whole line as model
+      devices.push({ model: l, port: "" });
+    }
+  }
+  return devices;
+}
+
+/** Deteksi kamera DSLR via gphoto2 (cross-platform) */
+async function detectDslr(): Promise<{ available: boolean; devices: { model: string; port: string }[]; error?: string }> {
+  const gphoto2Path = isWin ? findWindowsGphoto2Path() : "gphoto2";
+  if (!gphoto2Path) return { available: false, devices: [], error: "gphoto2 tidak ditemukan" };
+
+  try {
+    const { stdout, stderr } = await execAsync(`"${gphoto2Path}" --auto-detect`, { timeout: 8000 });
+    if (stderr && !stdout) {
+      return { available: false, devices: [], error: stderr.trim() };
+    }
+    const devices = parseDslrDevices(stdout);
+    return {
+      available: devices.length > 0,
+      devices,
+      error: devices.length === 0 ? "gphoto2 aktif, tidak ada kamera DSLR terdeteksi" : undefined,
+    };
+  } catch (err: any) {
+    return { available: false, devices: [], error: err?.stderr || err?.message || String(err) };
+  }
+}
+
+/** Cek apakah DSLR mendukung live view via gphoto2 --capture-preview */
+async function detectDslrCapabilities(gphoto2Path: string): Promise<{
+  supportsCapture: boolean;
+  supportsLiveView: boolean;
+  mode: "live-view" | "capture-only";
+}> {
+  // All detected gphoto2 cameras support capture by default
+  let supportsCapture = true;
+  let supportsLiveView = false;
+
+  try {
+    // Quick test: try to capture a preview frame (timeout 5s)
+    const { stdout } = await execAsync(`"${gphoto2Path}" --capture-preview --stdout`, {
+      timeout: 5000,
+      encoding: "buffer", // we just need to know it produced output
+      maxBuffer: 2 * 1024 * 1024, // 2MB preview max
+    });
+    if (stdout && stdout.length > 100) {
+      supportsLiveView = true;
+    }
+  } catch {
+    // Live view not supported or camera doesn't support preview
+    supportsLiveView = false;
+  }
+
+  return {
+    supportsCapture,
+    supportsLiveView,
+    mode: supportsLiveView ? "live-view" : "capture-only",
+  };
+}
+
+/** Deteksi webcam di Windows via PowerShell PnP devices */
+async function detectWindowsWebcam(): Promise<{ available: boolean; devices: string[]; error?: string }> {
+  try {
+    // Metode 1: Get-PnpDevice (Windows 10+)
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -Command "Get-PnpDevice -Class Camera -Status OK | Select-Object -ExpandProperty FriendlyName"`,
+      { timeout: 6000 }
+    );
+    const devices = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (devices.length > 0) return { available: true, devices };
+  } catch { /* lanjut fallback */ }
+
+  try {
+    // Metode 2: WMI Win32_PnPEntity
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -Command "Get-WmiObject Win32_PnPEntity | Where-Object { \$_.PNPClass -eq 'Camera' -or \$_.Name -like '*Camera*' -or \$_.Name -like '*Webcam*' } | Select-Object -ExpandProperty Name"`,
+      { timeout: 6000 }
+    );
+    const devices = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (devices.length > 0) return { available: true, devices };
+  } catch { /* lanjut fallback */ }
+
+  try {
+    // Metode 3: USB Video Class devices via PNPClass
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -Command "Get-PnpDevice -PresentOnly | Where-Object { \$_.InstanceId -like '*VID_*&*PID_*' -and (\$_.FriendlyName -like '*Camera*' -or \$_.FriendlyName -like '*Webcam*' -or \$_.FriendlyName -like '*Video*') } | Select-Object -ExpandProperty FriendlyName"`,
+      { timeout: 6000 }
+    );
+    const devices = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (devices.length > 0) return { available: true, devices };
+  } catch { /* no webcam detected */ }
+
+  return { available: false, devices: [], error: "Tidak ada webcam terdeteksi di Windows" };
+}
+
+/** Deteksi kamera generik (macOS/Linux) */
+async function detectGenericCamera(): Promise<{ available: boolean; devices: string[]; error?: string }> {
+  if (isMac) {
+    try {
+      const { stdout } = await execAsync("system_profiler SPCameraDataType -json", { timeout: 6000 });
+      const parsed = JSON.parse(stdout);
+      const cameras: string[] = [];
+      const entries = parsed?.["SPCameraDataType"] || [];
+      for (const entry of entries) {
+        const name = entry?._name || entry?.name || entry?.["Camera Name"];
+        if (name && typeof name === "string") cameras.push(name);
+      }
+      if (cameras.length > 0) return { available: true, devices: cameras };
+    } catch { /* ignore */ }
+  }
+
+  if (process.platform === "linux") {
+    try {
+      const { stdout } = await execAsync("ls /dev/video* 2>/dev/null", { timeout: 3000 });
+      const devices = stdout.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+      if (devices.length > 0) return { available: true, devices };
+    } catch { /* ignore */ }
+  }
+
+  return { available: false, devices: [] };
+}
+
+/** Deteksi semua kamera: DSLR (gphoto2) lalu webcam */
+async function detectCameras(): Promise<{
+  available: boolean;
+  count: number;
+  devices: string[] | { model: string; port: string }[];
+  type: "dslr" | "webcam" | "none";
+  error?: string;
+}> {
+  // 1. Coba DSLR via gphoto2
+  const dslr = await detectDslr();
+  if (dslr.available) {
+    return { available: true, count: dslr.devices.length, devices: dslr.devices as { model: string; port: string }[], type: "dslr" };
+  }
+
+  // 2. Coba webcam
+  if (isWin) {
+    const webcam = await detectWindowsWebcam();
+    if (webcam.available) {
+      return { available: true, count: webcam.devices.length, devices: webcam.devices, type: "webcam" };
+    }
+    return { available: false, count: 0, devices: [], type: "none", error: webcam.error };
+  }
+
+  // 3. Generic (macOS/Linux)
+  const generic = await detectGenericCamera();
+  if (generic.available) {
+    return { available: true, count: generic.devices.length, devices: generic.devices, type: "webcam" };
+  }
+
+  return { available: false, count: 0, devices: [], type: "none", error: dslr.error || "Tidak ada kamera terdeteksi" };
+}
 
 /** Tulis base64 image (raw/dataURL) atau ambil dari URL ke file temp, return path */
 async function resolveToTempFile(input: string): Promise<string> {
@@ -283,18 +485,107 @@ async function printFile(
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 app.get("/status", async (_req: Request, res: Response) => {
-  const printers = await listPrinters();
+  const [printers, camera] = await Promise.all([listPrinters(), detectCameras()]);
+
+  // Enhance DSLR response with capabilities when available
+  let capabilities: { supportsCapture: boolean; supportsLiveView: boolean; mode: "live-view" | "capture-only" } | undefined;
+  if (camera.type === "dslr" && camera.available && isWin) {
+    const gphoto2Path = findWindowsGphoto2Path();
+    if (gphoto2Path) {
+      capabilities = await detectDslrCapabilities(gphoto2Path);
+    }
+  }
+
   res.json({
     ok:       true,
     version:  VERSION,
     platform: process.platform,
     printers,
+    camera: {
+      available: camera.available,
+      count:     camera.count,
+      cameras:   camera.type === "dslr" ? (camera.devices as any) : undefined,
+      devices:   camera.devices,
+      type:      camera.type,
+      error:     camera.error,
+      capabilities,
+    },
   });
 });
 
 app.get("/printers", async (_req: Request, res: Response) => {
   const printers = await listPrinters();
   res.json({ ok: true, printers });
+});
+
+app.post("/capture", async (_req: Request, res: Response) => {
+  const gphoto2Path = isWin ? findWindowsGphoto2Path() : "gphoto2";
+  if (!gphoto2Path) {
+    res.status(503).json({ ok: false, error: "gphoto2 tidak tersedia" });
+    return;
+  }
+
+  const tmpDir = os.tmpdir();
+  const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
+
+  try {
+    // Capture and download to temp file
+    await execAsync(
+      `"${gphoto2Path}" --capture-image-and-download --filename "${tmpFile}" --force-overwrite`,
+      { timeout: 15000, cwd: tmpDir }
+    );
+
+    if (!fs.existsSync(tmpFile)) {
+      res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
+      return;
+    }
+
+    const buf = fs.readFileSync(tmpFile);
+    const base64 = buf.toString("base64");
+
+    res.json({
+      ok: true,
+      image: {
+        base64,
+        mimeType: "image/jpeg",
+      },
+    });
+  } catch (err: any) {
+    console.error("[agent] Capture error:", err);
+    res.status(500).json({ ok: false, error: err?.stderr || err?.message || String(err) });
+  } finally {
+    if (fs.existsSync(tmpFile)) {
+      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
+  }
+});
+
+app.get("/preview", async (_req: Request, res: Response) => {
+  const gphoto2Path = isWin ? findWindowsGphoto2Path() : "gphoto2";
+  if (!gphoto2Path) {
+    res.status(503).send("gphoto2 tidak tersedia");
+    return;
+  }
+
+  try {
+    const { stdout } = await execAsync(`"${gphoto2Path}" --capture-preview --stdout`, {
+      timeout: 8000,
+      encoding: "buffer",
+      maxBuffer: 4 * 1024 * 1024,
+    });
+
+    if (!stdout || stdout.length === 0) {
+      res.status(500).send("Preview kosong");
+      return;
+    }
+
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.send(stdout);
+  } catch (err: any) {
+    console.error("[agent] Preview error:", err);
+    res.status(500).send("Gagal ambil preview");
+  }
 });
 
 app.post("/print", async (req: Request, res: Response) => {
@@ -390,7 +681,6 @@ TqbbwuTRFiZzBCbQKR34tPM=
 // Windows  → HTTP  (Chrome/Edge treat http://127.0.0.1 as secure context)
 // macOS    → HTTPS (Safari requires HTTPS even for loopback; cert must be trusted once)
 
-const isMac = process.platform === "darwin";
 const proto = isMac ? "https" : "http";
 
 const server = isMac

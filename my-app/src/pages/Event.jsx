@@ -98,10 +98,7 @@ export default function Event() {
   const [myShareLinks, setMyShareLinks] = useState([]);
   const [loadingMyShareLinks, setLoadingMyShareLinks] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const currentMonth = new Date().getMonth() + 1;
-    return MONTH_FILTERS.some((item) => item.value === currentMonth) ? currentMonth : 5;
-  });
+  const [selectedMonth, setSelectedMonth] = useState(5);
 
   const loadEvents = useCallback(async (query = "") => {
     try {

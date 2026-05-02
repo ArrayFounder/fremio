@@ -84,6 +84,11 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
   // ── DSLR state ────────────────────────────────────────────────────
   const [dslrCameras, setDslrCameras] = useState<{ model: string; port: string }[]>([]);
+  const [dslrCapabilities, setDslrCapabilities] = useState<{
+    supportsCapture?: boolean;
+    supportsLiveView?: boolean;
+    mode?: string;
+  } | null>(null);
   const [captureSource, setCaptureSource] = useState<CaptureSource>("auto");
 
   // ── Paper size state ──────────────────────────────────────────────────────
@@ -201,7 +206,15 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
           ];
 
       let status: {
-        camera?: { available?: boolean; cameras?: { model: string; port: string }[] };
+        camera?: {
+          available?: boolean;
+          cameras?: { model: string; port: string }[];
+          capabilities?: {
+            supportsCapture?: boolean;
+            supportsLiveView?: boolean;
+            mode?: string;
+          };
+        };
         printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
       } | null = null;
       let connectedBase: string | null = null;
@@ -212,7 +225,15 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
           const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(8000) });
           if (!res.ok) throw new Error(`status ${res.status}`);
           status = await res.json() as {
-            camera?: { available?: boolean; cameras?: { model: string; port: string }[] };
+            camera?: {
+              available?: boolean;
+              cameras?: { model: string; port: string }[];
+              capabilities?: {
+                supportsCapture?: boolean;
+                supportsLiveView?: boolean;
+                mode?: string;
+              };
+            };
             printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
           };
           connectedBase = base;
@@ -229,6 +250,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       setAgentOnline(true);
       const cams = status.camera?.cameras ?? [];
       setDslrCameras(cams);
+      setDslrCapabilities(status.camera?.capabilities ?? null);
 
       const printerList = status.printer?.printers?.map((p) => p.name) ?? [];
       setPrinters(printerList);
@@ -242,6 +264,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     } catch {
       setAgentOnline(false);
       setDslrCameras([]);
+      setDslrCapabilities(null);
       setPrinters([]);
       if (captureSource === "dslr") {
         setCaptureSource("auto");
@@ -420,9 +443,21 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             <div className="flex items-center justify-between">
               <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>KAMERA DSLR / MIRRORLESS</p>
               {agentOnline === true && dslrCameras.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/50 text-green-400">
-                  ✓ {dslrCameras.length} Terdeteksi
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/50 text-green-400">
+                    ✓ {dslrCameras.length} Terdeteksi
+                  </span>
+                  {dslrCapabilities?.mode === "capture-only" && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "rgba(234,179,8,0.15)", color: "#fde047" }}>
+                      Capture-only
+                    </span>
+                  )}
+                  {dslrCapabilities?.mode === "live-view" && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "rgba(34,197,94,0.18)", color: "#86efac" }}>
+                      Live View
+                    </span>
+                  )}
+                </div>
               )}
               {agentOnline === true && dslrCameras.length === 0 && (
                 <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: surfaceBg, color: textTertiary }}>Belum ada</span>
@@ -462,9 +497,8 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               <p className="text-xs font-bold" style={{ color: textPrimary }}>📸 Cara Hubungkan Kamera DSLR / Mirrorless</p>
               <ol className="space-y-2 text-[11px] leading-relaxed" style={{ color: textSecondary }}>
                 <li>
-                  <span className="font-semibold" style={{ color: textPrimary }}>1. Jalankan Local Agent</span><br/>
-                  Untuk DSLR Canon/Nikon di Windows, jalankan Hardware Agent lokal terpisah yang membuka endpoint <strong>127.0.0.1:7432</strong>.
-                  Launcher booth / printer saja tidak cukup untuk mendeteksi kamera DSLR.
+                  <span className="font-semibold" style={{ color: textPrimary }}>1. Buka Studio Booth App (agent auto-start)</span><br/>
+                  Versi terbaru app akan menyalakan hardware agent lokal otomatis di background (<strong>127.0.0.1:7432</strong>) saat aplikasi dibuka.
                 </li>
                 <li>
                   <span className="font-semibold" style={{ color: textPrimary }}>2. Hubungkan kamera via kabel USB</span><br/>
@@ -506,6 +540,12 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                 <div className="rounded-xl px-2.5 py-2 text-[10px]"
                   style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.3)", color: "#fde047" }}>
                   ⚠️ Agent aktif tapi kamera belum terdeteksi. Pastikan kabel USB terpasang, kamera menyala, dan mode diset ke PTP.
+                </div>
+              )}
+              {agentOnline === true && dslrCapabilities?.mode === "capture-only" && (
+                <div className="rounded-xl px-2.5 py-2 text-[10px]"
+                  style={{ background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.3)", color: "#bfdbfe" }}>
+                  ℹ️ Kamera terdeteksi di mode capture-only. Live preview mungkin tidak tersedia, tetapi tombol Ambil Foto tetap akan men-trigger shutter DSLR.
                 </div>
               )}
             </div>

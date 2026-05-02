@@ -131,24 +131,43 @@ export async function POST(req: Request): Promise<Response> {
   const imported = results.filter((r) => r.status === "fulfilled").length;
   const failed   = results.filter((r) => r.status === "rejected").length;
 
-  // Jika ada boothId + booth punya allowedFrameIds spesifik, tambahkan frame yang baru diimport
-  if (boothId && imported > 0) {
-    const successIds = results
-      .map((r, i) => (r.status === "fulfilled" ? `fremio_sb_${framesToImport[i].fremioId}` : null))
-      .filter(Boolean) as string[];
-    const booth = await prisma.boothConfig.findFirst({
-      where: { id: boothId, operatorId: session.user.id },
-      select: { allowedFrameIds: true },
-    });
-    if (booth && booth.allowedFrameIds.length > 0) {
-      const toAdd = successIds.filter((id) => !booth.allowedFrameIds.includes(id));
-      if (toAdd.length > 0) {
-        await prisma.boothConfig.update({
-          where: { id: boothId },
-          data: { allowedFrameIds: { push: toAdd } },
-        });
+  // ID frame yang berhasil diimport
+  const successIds = results
+    .map((r, i) => (r.status === "fulfilled" ? `fremio_sb_${framesToImport[i].fremioId}` : null))
+    .filter(Boolean) as string[];
+
+  if (imported > 0) {
+    // 1. Jika ada boothId spesifik, tambahkan ke booth tersebut
+    if (boothId) {
+      const booth = await prisma.boothConfig.findFirst({
+        where: { id: boothId, operatorId: session.user.id },
+        select: { allowedFrameIds: true },
+      });
+      if (booth && booth.allowedFrameIds.length > 0) {
+        const toAdd = successIds.filter((id) => !booth.allowedFrameIds.includes(id));
+        if (toAdd.length > 0) {
+          await prisma.boothConfig.update({
+            where: { id: boothId },
+            data: { allowedFrameIds: { push: toAdd } },
+          });
+        }
       }
     }
+
+    // 2. Tambahkan juga ke semua booth yang punya allowedFrameIds kosong (belum pernah diisi)
+    //    agar booth yang masih default juga langsung dapat frame baru
+    const allBoothsWithEmptyList = await prisma.boothConfig.findMany({
+      where: { allowedFrameIds: { isEmpty: true } },
+      select: { id: true },
+    });
+    await Promise.all(
+      allBoothsWithEmptyList.map((b) =>
+        prisma.boothConfig.update({
+          where: { id: b.id },
+          data: { allowedFrameIds: successIds },
+        })
+      )
+    );
   }
 
   return NextResponse.json<ApiResponse>({
