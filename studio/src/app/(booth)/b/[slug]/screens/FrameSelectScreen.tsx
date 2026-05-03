@@ -363,16 +363,13 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
         {/* Frame grid */}
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {filteredFrames.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 gap-1">
-              <p className="text-sm" style={{ color: textSecondary }}>Tidak ada frame</p>
+            <div className="h-full min-h-[180px] flex flex-col items-center justify-center text-center">
+              <div className="text-4xl mb-2 opacity-30">🖼️</div>
+              <p className="font-semibold" style={{ color: textPrimary }}>Tidak ada frame</p>
               <p className="text-xs" style={{ color: textSecondary }}>di kategori ini</p>
             </div>
           ) : (
-<<<<<<< HEAD
-            <div className={`grid gap-2 ${isPortrait ? "grid-cols-3" : "grid-cols-5"}`}>
-=======
             <div className={`grid gap-1.5 ${isPortrait ? "grid-cols-3" : "grid-cols-6"}`}>
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               {filteredFrames.map((frame) => {
                 const isSelected = selectedId === frame.id;
                 const cw = frame.canvasWidth  || 1080;

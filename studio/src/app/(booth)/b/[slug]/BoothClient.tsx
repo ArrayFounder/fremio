@@ -946,10 +946,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   // ─── Fullscreen ───────────────────────────────────────────────────────────
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fsToast, setFsToast]     = useState<string | null>(null);
-<<<<<<< HEAD
-  const [showHiddenFsButton, setShowHiddenFsButton] = useState(false);
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const [showSettingsButton, setShowSettingsButton] = useState(false);
   const [idleSettingsOpen, setIdleSettingsOpen] = useState(false);
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -958,10 +954,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   const [pinUnlocked, setPinUnlocked] = useState<boolean>(() => !requiresPinGate);
   const [pinActiveIndex, setPinActiveIndex] = useState(0);
   const pinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
-<<<<<<< HEAD
-  const hiddenFsTapTimesRef = useRef<number[]>([]);
-  const hiddenFsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-=======
 
   // ─── Settings PIN gate ─────────────────────────────────────────────────
   const [settingsPinUnlockedAt, setSettingsPinUnlockedAt] = useState<number | null>(null);
@@ -970,8 +962,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   const [settingsPinError, setSettingsPinError] = useState<string | null>(null);
   const [settingsPinActiveIndex, setSettingsPinActiveIndex] = useState(0);
   const settingsPinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const idleSettingsTapTimesRef = useRef<number[]>([]);
   const idleSettingsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deviceIdRef = useRef<string | null>(null);
@@ -990,15 +980,11 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     let deviceId = window.localStorage.getItem(storageKey);
     if (!deviceId) {
       deviceId = `dev_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
-<<<<<<< HEAD
-      window.localStorage.setItem(storageKey, deviceId);
-=======
       try {
         window.localStorage.setItem(storageKey, deviceId);
       } catch {
         // Ignore quota/storage failures; keep deviceId in memory for this session.
       }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     }
     deviceIdRef.current = deviceId;
 
@@ -1229,15 +1215,11 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     }
     if (typeof window !== "undefined") {
       const key = `booth_pin_unlock_${booth.slug}_${configuredPin}`;
-<<<<<<< HEAD
-      window.sessionStorage.setItem(key, "1");
-=======
       try {
         window.sessionStorage.setItem(key, "1");
       } catch {
         // Ignore quota/storage failures; keep unlock state in memory.
       }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     }
     setPinUnlocked(true);
     setPinError(null);
@@ -1252,8 +1234,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     return () => clearTimeout(id);
   }, [handlePinSubmit, pinUnlocked, pinValue, requiresPinGate]);
 
-<<<<<<< HEAD
-=======
   // ─── Settings PIN gate helpers ──────────────────────────────────────────
   const isSettingsAccessValid =
     settingsPinUnlockedAt !== null &&
@@ -1391,8 +1371,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     }, remaining);
     return () => clearTimeout(timer);
   }, [settingsPinUnlockedAt]);
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   useEffect(() => {
     const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFsChange);
@@ -1420,34 +1398,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     }
   }, []);
 
-<<<<<<< HEAD
-  const registerHiddenFullscreenTap = useCallback(() => {
-    if (screen === "BOOTH_SETUP") return;
-
-    const now = Date.now();
-    
-    // Different logic for IDLE vs other screens
-    const isIdleScreen = screen === "IDLE";
-    const threshold = now - (isIdleScreen ? 1000 : 1500); // 1s for IDLE, 1.5s for others
-    const requiredTaps = isIdleScreen ? 2 : 3; // 2 taps for IDLE, 3 taps for others
-    
-    const recent = hiddenFsTapTimesRef.current.filter((ts) => ts >= threshold);
-    recent.push(now);
-    hiddenFsTapTimesRef.current = recent;
-
-    if (recent.length < requiredTaps) return;
-
-    hiddenFsTapTimesRef.current = [];
-    setShowHiddenFsButton(true);
-
-    if (hiddenFsHideTimerRef.current) clearTimeout(hiddenFsHideTimerRef.current);
-    hiddenFsHideTimerRef.current = setTimeout(() => {
-      setShowHiddenFsButton(false);
-    }, 8000);
-  }, [screen]);
-
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const registerIdleSettingsTap = useCallback(() => {
     if (screen !== "IDLE") return;
 
@@ -1468,10 +1418,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
   useEffect(() => {
     return () => {
-<<<<<<< HEAD
-      if (hiddenFsHideTimerRef.current) clearTimeout(hiddenFsHideTimerRef.current);
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       if (idleSettingsHideTimerRef.current) clearTimeout(idleSettingsHideTimerRef.current);
     };
   }, []);
@@ -1502,10 +1448,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
       className={`fixed inset-0 ${screen === "BOOTH_SETUP" ? "overflow-y-auto" : "overflow-hidden"}`}
       style={{ backgroundColor: primaryColor, color: textPrimary }}
       onPointerDownCapture={(e) => {
-<<<<<<< HEAD
-        registerHiddenFullscreenTap();
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         registerIdleSettingsTap();
       }}
     >
@@ -1567,23 +1509,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         </div>
       )}
 
-<<<<<<< HEAD
-      {/* ── Fullscreen button — pojok kiri bawah ── */}
-      {screen !== "BOOTH_SETUP" && showHiddenFsButton && (
-        <button
-          onClick={toggleFullscreen}
-          className="absolute bottom-3 left-3 z-50 w-9 h-9 rounded-xl flex items-center justify-center
-                     text-base transition-opacity opacity-20 hover:opacity-70 active:opacity-100"
-          style={{ background: "rgba(0,0,0,0.35)", color: "white" }}
-          title={isFullscreen ? "Keluar fullscreen" : "Fullscreen (F11)"}
-        >
-          {isFullscreen ? "✕FS" : "⛶"}
-          <span className="sr-only">{isFullscreen ? "Exit fullscreen" : "Fullscreen"}</span>
-        </button>
-      )}
-
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       {/* ── Fullscreen tip toast ── */}
       {fsToast && (
         <div className="absolute bottom-14 left-3 z-50 max-w-xs rounded-2xl px-4 py-3 text-xs leading-relaxed shadow-2xl"
@@ -1691,8 +1616,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         </div>
       )}
 
-<<<<<<< HEAD
-=======
       {/* ── Settings PIN gate ── */}
       {showSettingsPinGate && (
         <div
@@ -1778,8 +1701,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
           </div>
         </div>
       )}
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       {recoveryConfirm && (
         <div className="absolute inset-0 z-[1000] flex items-center justify-center p-6"
           style={{ background: "rgba(0,0,0,0.76)" }}
@@ -1911,9 +1832,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             />
             {showSettingsButton && (
               <button
-<<<<<<< HEAD
-                onClick={() => setIdleSettingsOpen((prev) => !prev)}
-=======
                 onClick={() => {
                   if (requiresPinGate && !isSettingsAccessValid) {
                     setShowSettingsPinGate(true);
@@ -1925,7 +1843,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
                     setIdleSettingsOpen((prev) => !prev);
                   }
                 }}
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                 className="absolute top-3 right-3 p-2 rounded-xl text-white/25 hover:text-white/60
                            hover:bg-white/10 transition-colors text-sm"
                 title="Menu pengaturan booth"

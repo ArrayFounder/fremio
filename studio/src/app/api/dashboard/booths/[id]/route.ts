@@ -8,10 +8,7 @@ import type { ApiResponse } from "@/types";
 
 const updateSchema = z.object({
   boothName:              z.string().min(2).trim().optional(),
-<<<<<<< HEAD
-=======
   slug:                   z.string().min(3).max(50).regex(/^[a-z0-9-]+$/, "Slug hanya boleh huruf kecil, angka, dan tanda hubung").optional(),
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   pricePerSession:        z.number().int().min(1000).optional(),
   printPricePerSheet:     z.number().int().min(0).optional(),
   sessionDurationSeconds: z.number().int().min(60).max(1800).optional(),
@@ -34,13 +31,8 @@ const updateSchema = z.object({
 async function getOwnedBooth(boothId: string, operatorId: string) {
   const b = await prisma.boothConfig.findUnique({
     where: { id: boothId },
-<<<<<<< HEAD
-    select: { operatorId: true, primaryColor: true, welcomeScreenPrefs: true },
-  });
-=======
     select: { operatorId: true, primaryColor: true, welcomeScreenPrefs: true, slugUpdatedAt: true } as any,
   }) as any;
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   if (!b || b.operatorId !== operatorId) return null;
   return b;
 }
@@ -67,11 +59,6 @@ export async function PATCH(
     );
   }
 
-<<<<<<< HEAD
-  const { welcomeScreenPrefs, ...rest } = parsed.data;
-  const updateData: Prisma.BoothConfigUpdateInput = { ...rest };
-
-=======
   // Cek batasan 1 hari untuk perubahan slug
   if (parsed.data.slug) {
     const lastChange = (current as any).slugUpdatedAt;
@@ -96,8 +83,6 @@ export async function PATCH(
   if (parsed.data.slug) {
     (updateData as Prisma.BoothConfigUpdateInput & { slugUpdatedAt?: Date }).slugUpdatedAt = new Date();
   }
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   if (welcomeScreenPrefs !== undefined) {
     // Caller explicitly set welcomeScreenPrefs
     updateData.welcomeScreenPrefs = welcomeScreenPrefs === null

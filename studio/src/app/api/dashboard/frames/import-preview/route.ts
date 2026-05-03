@@ -29,14 +29,11 @@ function mapCategory(raw: string): string {
   return CATEGORY_MAP[raw] ?? "CUSTOM";
 }
 
-<<<<<<< HEAD
-=======
 function toAbsoluteFremioUrl(value: string): string {
   if (!value) return "";
   return value.startsWith("http") ? value : `https://fremio.id${value}`;
 }
 
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 /** URL gambar background frame (background-photo atau non-overlay upload). */
 function extractBackgroundUrl(frame: Record<string, unknown>): string {
   try {
@@ -47,26 +44,17 @@ function extractBackgroundUrl(frame: Record<string, unknown>): string {
           const data = el.data as Record<string, unknown> | null;
           const img = (typeof data?.image === "string" ? data.image : "") ||
                       (typeof el.src === "string" ? (el.src as string) : "");
-<<<<<<< HEAD
-          if (img) return img.startsWith("http") ? img : `https://fremio.id${img}`;
-=======
           if (img) return toAbsoluteFremioUrl(img);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         }
       }
     }
   } catch {
     // fall through
   }
-<<<<<<< HEAD
-  // Fallback: thumbnail / imageUrl / imagePath
-  return (frame.thumbnailUrl ?? frame.imageUrl ?? frame.imagePath ?? "") as string;
-=======
   // Fallback priority: imagePath (actual frame asset) > imageUrl > thumbnail.
   // Using thumbnail first can break overlay detection and layering.
   const fallback = (frame.imagePath ?? frame.image_path ?? frame.imageUrl ?? frame.thumbnailUrl ?? "") as string;
   return toAbsoluteFremioUrl(fallback);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 }
 
 /** URL overlay PNG dekorasi (stiker, watermark) — null jika tidak ada. */
@@ -78,11 +66,7 @@ function extractOverlayUrl(frame: Record<string, unknown>): string | null {
         const data = el.data as Record<string, unknown> | null;
         if (data?.__isOverlay && typeof data.image === "string" && data.image) {
           const img = data.image as string;
-<<<<<<< HEAD
-          return img.startsWith("http") ? img : `https://fremio.id${img}`;
-=======
           return toAbsoluteFremioUrl(img);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         }
       }
     }
@@ -149,13 +133,10 @@ export async function GET(req: Request): Promise<Response> {
       const sourceId = String(f.id ?? "").trim();
       const studioId = `fremio_sb_${sourceId}`;
       const layout = f.layout as Record<string, unknown> | null;
-<<<<<<< HEAD
-=======
       const backgroundAssetUrl = extractBackgroundUrl(f);
       const overlayAssetUrl = extractOverlayUrl(f);
       const resolvedAssetUrl = backgroundAssetUrl || overlayAssetUrl || toAbsoluteFremioUrl(String(f.imagePath ?? f.image_url ?? f.imageUrl ?? f.thumbnailUrl ?? ""));
       const resolvedOverlayUrl = backgroundAssetUrl ? overlayAssetUrl : null;
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       const aspectRatio = (layout?.aspectRatio as string | null) ?? "9:16";
       // Prefer explicit canvasWidth/Height from API, then from layout JSON
       // (AdminFrameCreator stores them there), then derive from aspectRatio.
@@ -194,24 +175,15 @@ export async function GET(req: Request): Promise<Response> {
         name:           f.name as string,
         category:       mapCategory(String(f.category ?? "")),
         fremioCategory: String(f.category ?? "CUSTOM"),
-<<<<<<< HEAD
-        thumbnailUrl:   (f.thumbnailUrl ?? f.imageUrl ?? f.imagePath) as string,
-        assetUrl:       extractBackgroundUrl(f),
-        overlayUrl:     extractOverlayUrl(f),
-=======
         thumbnailUrl:   toAbsoluteFremioUrl(String(f.thumbnailUrl ?? f.thumbnailPath ?? f.imageUrl ?? f.imagePath ?? "")),
         assetUrl:       resolvedAssetUrl,
         overlayUrl:     resolvedOverlayUrl,
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         aspectRatio,
         canvasWidth,
         canvasHeight,
         maxCaptures:    Math.max(1, (f.maxCaptures as number | null) ?? 1),
         isPremium:      (f.isPremium as boolean | null) ?? false,
         captureMode:    (f.captureMode as string | null) ?? (f.duplicatePhotos ? "duplicate" : "single"),
-<<<<<<< HEAD
-        slots:          normalizeImportedSlots((f.slots as unknown[] | null) ?? null, Math.max(1, (f.maxCaptures as number | null) ?? 1)),
-=======
         rawSlots:       (f.slots as unknown) ?? null,
         layout,
         slots:          normalizeImportedSlots(
@@ -223,7 +195,6 @@ export async function GET(req: Request): Promise<Response> {
             layout,
           }
         ),
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         // alreadyImported: frame aktif DAN sudah di booth (hijau, non-selectable)
         alreadyImported: isInBooth,
         // isDeactivated: frame ada di DB tapi belum/tidak aktif di booth (kuning, bisa dipilih ulang)

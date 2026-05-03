@@ -19,17 +19,33 @@ echo ""
 
 # Step 2: Upload to server
 echo "📤 Step 2: Uploading to VPS..."
-rsync -avz --delete \
-  --exclude 'node_modules' \
-  --exclude '.next/cache' \
-  --exclude '.env' \
-  --exclude '.env.production' \
-  --exclude '.env.local' \
-  --exclude '.env.production.local' \
-  --exclude 'uploads' \
-  --exclude '.git' \
-  --exclude '.gitignore' \
-  "$LOCAL_PATH/" "$SERVER:$REMOTE_PATH/"
+if command -v rsync >/dev/null 2>&1 && ssh "$SERVER" "command -v rsync >/dev/null 2>&1"; then
+  rsync -avz --delete \
+    --exclude 'node_modules' \
+    --exclude '.next/cache' \
+    --exclude '.env' \
+    --exclude '.env.production' \
+    --exclude '.env.local' \
+    --exclude '.env.production.local' \
+    --exclude 'uploads' \
+    --exclude '.git' \
+    --exclude '.gitignore' \
+    "$LOCAL_PATH/" "$SERVER:$REMOTE_PATH/"
+else
+  echo "⚠️ rsync tidak tersedia. Pakai fallback tar+ssh..."
+  tar -czf - \
+    -C "$LOCAL_PATH" \
+    --exclude='node_modules' \
+    --exclude='.next/cache' \
+    --exclude='.env' \
+    --exclude='.env.production' \
+    --exclude='.env.local' \
+    --exclude='.env.production.local' \
+    --exclude='uploads' \
+    --exclude='.git' \
+    --exclude='.gitignore' \
+    . | ssh "$SERVER" "mkdir -p '$REMOTE_PATH' && tar -xzf - -C '$REMOTE_PATH'"
+fi
 echo "✅ Upload complete"
 echo ""
 
@@ -38,8 +54,6 @@ echo "🔄 Step 3: Installing dependencies and restarting on server..."
 ssh "$SERVER" << 'EOF'
 cd /root/fremio-studio
 npm install --production
-<<<<<<< HEAD
-=======
 # Copy env file temporarily for Prisma CLI
 if [ -f .env.production.local ]; then
   cp .env.production.local .env.prisma_tmp
@@ -51,7 +65,6 @@ npx prisma migrate deploy
 cat << 'SQL' | npx prisma db execute --stdin --schema prisma/schema.prisma
 ALTER TABLE "booth_configs" ADD COLUMN IF NOT EXISTS "slugUpdatedAt" TIMESTAMP(3);
 SQL
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 pm2 restart fremio-studio || pm2 start npm --name fremio-studio -- start
 pm2 save
 echo "✅ Server restarted"

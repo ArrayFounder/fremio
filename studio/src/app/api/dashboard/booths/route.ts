@@ -53,22 +53,6 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-<<<<<<< HEAD
-  // Cek limit booth sesuai subscription tier
-  const operator = await prisma.operator.findUnique({
-    where:  { id: session.user.id },
-    select: { subscriptionTier: true, subscriptionExpiry: true },
-  });
-  if (!operator) return NextResponse.json<ApiResponse>({ success: false, error: "Operator tidak ditemukan" }, { status: 404 });
-
-  const isSubActive = operator.subscriptionExpiry && operator.subscriptionExpiry > new Date();
-  const maxBooths   = isSubActive ? TIER_LIMITS[operator.subscriptionTier].maxBooths : 1;
-
-  const currentCount = await prisma.boothConfig.count({ where: { operatorId: session.user.id } });
-  if (currentCount >= maxBooths) {
-    return NextResponse.json<ApiResponse>(
-      { success: false, error: `Tier ${operator.subscriptionTier} hanya bisa membuat ${maxBooths} booth. Upgrade untuk menambah lebih.` },
-=======
   // Cek limit booth berdasarkan jumlah kredit (credit-based)
   const operator = await prisma.operator.findUnique({
     where:  { id: session.user.id },
@@ -84,7 +68,6 @@ export async function POST(req: Request): Promise<Response> {
   if (!hasFreeSlot && !hasCredits) {
     return NextResponse.json<ApiResponse>(
       { success: false, error: "Booth gratis sudah terpakai. Beli kredit di halaman pricing untuk menambah booth." },
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       { status: 403 }
     );
   }
@@ -95,10 +78,6 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json<ApiResponse>({ success: false, error: "Slug sudah dipakai, coba yang lain" }, { status: 409 });
   }
 
-<<<<<<< HEAD
-  const booth = await prisma.boothConfig.create({
-    data: { ...parsed.data, operatorId: session.user.id },
-=======
   // Ambil semua frame aktif (termasuk imported dari fremio.id) untuk dijadikan default library
   const allActiveFrames = await prisma.frame.findMany({
     where: { isActive: true },
@@ -113,7 +92,6 @@ export async function POST(req: Request): Promise<Response> {
       operatorId: session.user.id,
       allowedFrameIds: defaultFrameIds,
     },
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   });
 
   return NextResponse.json<ApiResponse>({ success: true, data: booth }, { status: 201 });

@@ -13,10 +13,6 @@ const path         = require('path');
 const os           = require('os');
 const logger       = require('./logger');
 
-<<<<<<< HEAD
-const GPHOTO2 = process.env.GPHOTO2_PATH || 'gphoto2';
-const TMPDIR  = os.tmpdir();
-=======
 function resolveGphoto2Path() {
   const envPath = process.env.GPHOTO2_PATH;
   if (envPath) return envPath;
@@ -50,7 +46,6 @@ const liveViewProbeCache = {
   value: null,
   expiresAt: 0,
 };
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,8 +74,6 @@ function parseAutoDetect(stdout) {
     .filter(Boolean);
 }
 
-<<<<<<< HEAD
-=======
 async function getCameraStatus({ refreshCapabilities = false } = {}) {
   const detection = await detectCamera();
   const cameraKey = cameraKeyFromList(detection.cameras);
@@ -129,8 +122,6 @@ async function getCameraStatus({ refreshCapabilities = false } = {}) {
     },
   };
 }
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 /**
  * Build a human-readable hint from gphoto2 stderr.
  */
@@ -172,8 +163,6 @@ function extractJpegFrame(buffer) {
   return buffer.subarray(soi, eoi + 2);
 }
 
-<<<<<<< HEAD
-=======
 function cameraKeyFromList(cameras) {
   if (!Array.isArray(cameras) || cameras.length === 0) return 'none';
   const first = cameras[0];
@@ -232,8 +221,6 @@ async function tryPreviewStrategies({ timeoutScale = 1 } = {}) {
 
   return { ok: false, frame: null, strategy: null, errors };
 }
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -355,79 +342,6 @@ async function capturePhoto({ keepOnCamera = false } = {}) {
  */
 async function capturePreview() {
   const t0 = Date.now();
-<<<<<<< HEAD
-  const attempts = [
-    {
-      name: 'capture-movie eosviewfinder',
-      args: ['--set-config', 'eosviewfinder=1', '--capture-movie', '--frames', '1', '--stdout'],
-      timeout: 2500,
-      allowKilled: false,
-    },
-    {
-      name: 'capture-movie viewfinder',
-      args: ['--set-config', 'viewfinder=1', '--capture-movie', '--frames', '1', '--stdout'],
-      timeout: 2500,
-      allowKilled: false,
-    },
-  ];
-
-  const errors = [];
-
-  for (const attempt of attempts) {
-    try {
-      logger.debug(`Executing live preview (${attempt.name}): ${GPHOTO2} ${attempt.args.join(' ')}`);
-      const stdout = await new Promise((resolve, reject) => {
-        execFile(
-          GPHOTO2,
-          attempt.args,
-          { timeout: attempt.timeout, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
-          (err, out, stderr) => {
-            if (err && err.killed && attempt.allowKilled) {
-              resolve(Buffer.isBuffer(out) ? out : Buffer.from(out || ''));
-              return;
-            }
-            if (err) {
-              reject(new Error(`${attempt.name} failed: ${err.message}; stderr: ${stderr || '(kosong)'}`));
-              return;
-            }
-            resolve(Buffer.isBuffer(out) ? out : Buffer.from(out || ''));
-          }
-        );
-      });
-
-      const frame = extractJpegFrame(stdout);
-      if (frame && frame.length > 0) {
-        const elapsedMs = Date.now() - t0;
-        logger.debug('gphoto2 preview frame captured', {
-          strategy: attempt.name,
-          sizeKb: (frame.length / 1024).toFixed(1),
-          elapsedMs,
-        });
-        return {
-          buffer: frame,
-          mimeType: 'image/jpeg',
-          size: frame.length,
-          elapsedMs,
-        };
-      }
-
-      errors.push(`${attempt.name}: tidak menemukan frame JPEG di stdout`);
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  const elapsedMs = Date.now() - t0;
-  logger.error('capture live preview unavailable', { elapsedMs, errors });
-  throw new Error(
-    `Live preview non-shutter tidak tersedia setelah ${elapsedMs}ms.\n` +
-    `Detail: ${errors.join(' | ')}\n` +
-    'Hint: aktifkan Live View / PC Remote di kamera Canon.'
-  );
-}
-
-module.exports = { detectCamera, capturePhoto, capturePreview };
-=======
   const previewResult = await tryPreviewStrategies();
 
   if (previewResult.ok && previewResult.frame) {
@@ -457,4 +371,3 @@ module.exports = { detectCamera, capturePhoto, capturePreview };
 }
 
 module.exports = { detectCamera, getCameraStatus, capturePhoto, capturePreview };
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d

@@ -8,24 +8,20 @@ function toFiniteNumber(value: unknown, fallback: number): number {
 function normalizeExplicitSlots(slots: PhotoSlot[]): PhotoSlot[] {
   return slots
     .filter((slot) => slot && slot.width > 0 && slot.height > 0)
-    .map((slot, index) => ({
-      top: toFiniteNumber(slot.top, 0),
+    .map((slot) => ({
+      ...slot,
+      photoIndex: toFiniteNumber(slot.photoIndex, 0),
       left: toFiniteNumber(slot.left, 0),
-      width: toFiniteNumber(slot.width, 0),
-      height: toFiniteNumber(slot.height, 0),
-      photoIndex: Number.isFinite(slot.photoIndex) ? Number(slot.photoIndex) : index,
-      borderRadius: toFiniteNumber(slot.borderRadius, 0),
+      top: toFiniteNumber(slot.top, 0),
+      width: toFiniteNumber(slot.width, 1),
+      height: toFiniteNumber(slot.height, 1),
       rotation: toFiniteNumber(slot.rotation, 0),
       zIndex: toFiniteNumber(slot.zIndex, 0),
     }))
-<<<<<<< HEAD
-    .sort((a, b) => a.photoIndex - b.photoIndex);
-=======
     .sort((a, b) => {
       if (a.zIndex !== b.zIndex) return a.zIndex - b.zIndex;
       return a.photoIndex - b.photoIndex;
     });
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 }
 
 function inferAutoSlots(slotCount: number, forceTwoColumns: boolean): PhotoSlot[] {

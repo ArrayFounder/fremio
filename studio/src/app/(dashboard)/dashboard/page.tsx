@@ -126,13 +126,8 @@ export default function DashboardPage() {
               <p className="font-bold">Mulai dari sini!</p>
               <p className="text-white/60 text-sm mt-0.5">Belum ada booth aktif. Ikuti panduan setup untuk mengkonfigurasi fotobox kamu.</p>
             </div>
-<<<<<<< HEAD
-            <Link href="/setup" className="shrink-0 px-5 py-2.5 rounded-xl font-bold text-sm text-primary-900 whitespace-nowrap" style={{ backgroundColor: "#d4a017" }}>
-              Lihat Panduan →
-=======
             <Link href="/booths" className="shrink-0 px-5 py-2.5 rounded-xl font-bold text-sm text-primary-900 whitespace-nowrap" style={{ backgroundColor: "#d4a017" }}>
               Buka Booth →
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
             </Link>
           </div>
         )}

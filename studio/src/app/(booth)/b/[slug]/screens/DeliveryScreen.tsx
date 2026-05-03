@@ -40,8 +40,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     booth.printEnabled && photoUrl ? "pending" : "unavailable"
   );
 
-<<<<<<< HEAD
-=======
   // Delivery channels from booth prefs
   const prefs = booth.welcomeScreenPrefs as Record<string, unknown> | null;
   const channels = (prefs?.deliveryChannels as string[]) ?? ["DOWNLOAD", "WHATSAPP", "EMAIL"];
@@ -58,8 +56,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
   const [emailSending, setEmailSending] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   // Gunakan override ukuran kertas jika diset, atau auto-detect dari dimensi frame
   const paperSize = (paperSizeOverride ? getPaperSizeByName(paperSizeOverride) : null)
     ?? detectPaperSize(canvasWidth ?? 1080, canvasHeight ?? 1920);
@@ -86,9 +82,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
       const res = await fetch(`/api/sessions/${sessionId}/print-success`, { method: "POST" });
       if (res.ok) {
         paperUsageReportedRef.current = true;
-<<<<<<< HEAD
-        if (typeof window !== "undefined") sessionStorage.setItem(storageKey, "1");
-=======
         if (typeof window !== "undefined") {
           try {
             sessionStorage.setItem(storageKey, "1");
@@ -96,7 +89,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
             // Ignore storage quota issues; backend has already been notified.
           }
         }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       }
     } catch {
       // Best-effort tracking; printing flow should not fail because of this.
@@ -218,8 +210,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     triggerSystemPrint();
   }, [isMobileOrTablet, photoUrl, triggerSystemPrint]);
 
-<<<<<<< HEAD
-=======
   const handleSendWhatsApp = useCallback(async () => {
     if (!waNumber.trim() || !downloadUrl) return;
     setWaSending(true);
@@ -277,8 +267,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     }
     setEmailSending(false);
   }, [emailAddress, downloadUrl, booth.boothName, booth.id]);
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   return (
     <div
       className="flex flex-col h-full items-center gap-6 overflow-y-auto py-8 px-6 select-none"
@@ -327,8 +315,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
         )}
       </div>
 
-<<<<<<< HEAD
-=======
       {/* WhatsApp input */}
       {waEnabled && (
         <div className="flex flex-col gap-2 w-full max-w-sm">
@@ -383,8 +369,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
           {emailSent && <p className="text-xs text-green-300 text-center">✓ Link hasil foto terkirim ke Email!</p>}
         </div>
       )}
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       {/* Countdown + tombol */}
       <div className="flex flex-col items-center gap-4 w-full max-w-sm">
         <p className="text-sm" style={{ color: textTertiary }}>

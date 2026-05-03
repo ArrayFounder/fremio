@@ -5,8 +5,6 @@ import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
-<<<<<<< HEAD
-=======
 function GoogleIcon() {
   return (
     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -18,7 +16,6 @@ function GoogleIcon() {
   );
 }
 
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 function LoginForm() {
   const router       = useRouter();
   const searchParams = useSearchParams();
@@ -98,8 +95,6 @@ function LoginForm() {
         </button>
       </form>
 
-<<<<<<< HEAD
-=======
       <div className="relative my-4">
         <div className="absolute inset-0 flex items-center">
           <div className="w-full border-t border-gray-200" />
@@ -117,7 +112,6 @@ function LoginForm() {
         Masuk dengan Google
       </button>
 
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       <p className="text-center text-sm text-gray-400 mt-6">
         Belum punya akun?{" "}
         <Link href="/register" className="text-primary-700 font-semibold hover:underline">

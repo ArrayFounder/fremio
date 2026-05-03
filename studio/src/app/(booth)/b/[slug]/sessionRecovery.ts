@@ -38,15 +38,11 @@ function readAll(boothSlug: string): Record<string, RecoverySnapshot> {
 
 function writeAll(boothSlug: string, snapshots: Record<string, RecoverySnapshot>): void {
   if (!isStorageAvailable()) return;
-<<<<<<< HEAD
-  localStorage.setItem(getStorageKey(boothSlug), JSON.stringify(snapshots));
-=======
   try {
     localStorage.setItem(getStorageKey(boothSlug), JSON.stringify(snapshots));
   } catch {
     // Ignore quota/storage failures so booth flow never crashes.
   }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 }
 
 export function cleanupRecoverySnapshots(boothSlug: string): void {

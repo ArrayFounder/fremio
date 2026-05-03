@@ -43,8 +43,6 @@ export async function GET(req: Request) {
   );
 }
 
-<<<<<<< HEAD
-=======
 export async function PUT(req: Request) {
   const auth = req.headers.get("authorization");
   if (!ADMIN_SECRET || auth !== `Bearer ${ADMIN_SECRET}`) {
@@ -97,7 +95,6 @@ export async function PUT(req: Request) {
   }
 }
 
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 export async function OPTIONS(req: Request) {
   const origin  = req.headers.get("origin") ?? "";
   const allowed = ["https://fremio.id", "https://www.fremio.id"];
@@ -105,11 +102,7 @@ export async function OPTIONS(req: Request) {
     status: 204,
     headers: {
       "Access-Control-Allow-Origin":  allowed.includes(origin) ? origin : "https://fremio.id",
-<<<<<<< HEAD
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-=======
       "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
     },
   });

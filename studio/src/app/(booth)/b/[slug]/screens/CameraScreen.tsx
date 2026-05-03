@@ -5,21 +5,7 @@ import { useCamera } from "../hooks/useCamera";
 import { getAdaptiveColors } from "../colorUtils";
 import type { BoothConfigData, FrameData, PhotoSlot } from "../types";
 import { getEffectiveCaptureCount, getEffectiveSlots, isEffectiveDuplicateMode } from "../frameSlotUtils";
-<<<<<<< HEAD
-
-function isOverlayAsset(url: string): boolean {
-  if (!url) return false;
-  const path = url.split("?")[0];
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "png") return true;
-  const lastDot = path.lastIndexOf(".");
-  if (lastDot <= 0) return false;
-  const stem = path.substring(0, lastDot);
-  return stem.endsWith("_png");
-}
-=======
 import { isOverlayFrame } from "@/lib/frameEngine";
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
 function useIsPortrait() {
   const [portrait, setPortrait] = useState(false);
@@ -72,8 +58,6 @@ function drawCoverToCanvas(
   ctx.drawImage(src, dx + (dw - scaledW) / 2, dy + (dh - scaledH) / 2, scaledW, scaledH);
 }
 
-<<<<<<< HEAD
-=======
 function toCaptureIndexResolver(slots: PhotoSlot[], isDuplicate: boolean): (slot: PhotoSlot) => number {
   if (!isDuplicate) {
     return (slot) => Math.max(0, Math.floor(Number(slot.photoIndex) || 0));
@@ -103,8 +87,6 @@ function toCaptureIndexResolver(slots: PhotoSlot[], isDuplicate: boolean): (slot
       : nRows - 1 - Math.floor(pi / 2);
   };
 }
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 interface LivePreviewCanvasProps {
   stream:          MediaStream | null;
   mirror:          boolean;
@@ -130,13 +112,10 @@ function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDup
   const cw = frame.canvasWidth  || 1080;
   const ch = frame.canvasHeight || 1920;
   const n  = slots.length;
-<<<<<<< HEAD
-=======
   const resolveCaptureIndex = useMemo(
     () => toCaptureIndexResolver(slots, isDuplicate),
     [slots, isDuplicate]
   );
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   // Keep refs fresh so the RAF loop always reads the latest values without restarting
   useEffect(() => { capturedPhotosRef.current = capturedPhotos; }, [capturedPhotos]);
@@ -210,11 +189,7 @@ function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDup
 
       const baseFrameImg = frameBaseImgRef.current;
       const assetUrl = frame.assetUrl || "";
-<<<<<<< HEAD
-      const drawBaseAfterSlots = !!assetUrl && isOverlayAsset(assetUrl);
-=======
       const drawBaseAfterSlots = !!assetUrl && isOverlayFrame(assetUrl);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
       // Background template draw (webp/jpg/opaque asset) BEFORE slots.
       if (!drawBaseAfterSlots && baseFrameImg?.complete) {
@@ -222,22 +197,8 @@ function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDup
       }
 
       // 2. Each slot: captured photo OR live video
-<<<<<<< HEAD
-      // Untuk duplicate 2-kolom: kiri-row-r berpasangan dengan kanan-row-(nRows-1-r)
-      // Formula: col=pi%2, row=floor(pi/2), nRows=n/2
-      //   kiri (col=0): captureIdx = row
-      //   kanan (col=1): captureIdx = nRows - 1 - row
-      const nRows = isDuplicate ? n / 2 : 0;
-      slots.forEach((slot) => {
-        const captureIdx = isDuplicate
-          ? (slot.photoIndex % 2 === 0
-              ? Math.floor(slot.photoIndex / 2)
-              : nRows - 1 - Math.floor(slot.photoIndex / 2))
-          : slot.photoIndex;
-=======
       slots.forEach((slot) => {
         const captureIdx = resolveCaptureIndex(slot);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         const x = slot.left   * cw;
         const y = slot.top    * ch;
         const w = slot.width  * cw;
@@ -287,11 +248,7 @@ function LivePreviewCanvas({ stream, mirror, frame, slots, capturedPhotos, isDup
     return () => cancelAnimationFrame(rafRef.current);
   // capturedPhotos & activeSlotIndex intentionally omitted — read via refs to avoid restarting RAF loop
   // eslint-disable-next-line react-hooks/exhaustive-deps
-<<<<<<< HEAD
-  }, [stream, cw, ch, frame.backgroundColor, slots, isDuplicate, n, mirror, allPhotosDone]);
-=======
   }, [stream, cw, ch, frame.backgroundColor, slots, isDuplicate, n, mirror, allPhotosDone, resolveCaptureIndex]);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   return (
     <>
@@ -319,13 +276,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const isPortrait = useIsPortrait();
   const isDuplicate = isEffectiveDuplicateMode(frame);
   const effectiveSlots = useMemo(() => getEffectiveSlots(frame), [frame]);
-<<<<<<< HEAD
-=======
   const resolveCaptureIndex = useMemo(
     () => toCaptureIndexResolver(effectiveSlots, isDuplicate),
     [effectiveSlots, isDuplicate]
   );
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const totalPhotos = getEffectiveCaptureCount(frame);
   const remaining = totalPhotos - capturedCount;
 
@@ -350,11 +304,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   // ── DSLR via Local Agent ────────────────────────────────────────────────────
   const [dslrAvailable, setDslrAvailable] = useState<boolean>(false);
   const [dslrModel,     setDslrModel]     = useState<string | null>(null);
-<<<<<<< HEAD
-=======
   const [dslrSupportsCapture, setDslrSupportsCapture] = useState<boolean>(false);
   const [dslrSupportsLiveView, setDslrSupportsLiveView] = useState<boolean | null>(null);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const [dslrPreviewUrl, setDslrPreviewUrl] = useState<string | null>(null);
   const [dslrPreviewError, setDslrPreviewError] = useState<string | null>(null);
   const agentBaseRef = useRef<string | null>(null);
@@ -362,18 +313,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   useEffect(() => {
     if (typeof window === "undefined") return;
     (async () => {
-<<<<<<< HEAD
-      const candidates = [
-        "http://127.0.0.1:7432",
-        "http://localhost:7432",
-        "https://127.0.0.1:7432",
-        "https://localhost:7432",
-        "http://127.0.0.1:3002",
-        "http://localhost:3002",
-        "https://127.0.0.1:3002",
-        "https://localhost:3002",
-      ];
-=======
       const isHttps = window.location.protocol === "https:";
       const candidates = isHttps
         ? [
@@ -381,6 +320,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             "https://127.0.0.1:7432",
             "https://localhost:3002",
             "https://127.0.0.1:3002",
+            "http://localhost:7432",
+            "http://127.0.0.1:7432",
+            "http://localhost:3002",
+            "http://127.0.0.1:3002",
           ]
         : [
             "http://localhost:7432",
@@ -392,7 +335,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             "https://localhost:3002",
             "https://127.0.0.1:3002",
           ];
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
       let healthyBase: string | null = null;
 
@@ -400,14 +342,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         try {
           const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(2500) });
           if (!res.ok) continue;
-<<<<<<< HEAD
-          const data = await res.json() as { camera?: { available: boolean; cameras?: { model: string }[] } };
-          if (!healthyBase) healthyBase = base;
-          if (data.camera?.available) {
-            agentBaseRef.current = base;
-            setDslrAvailable(true);
-            setDslrModel(data.camera.cameras?.[0]?.model ?? "DSLR");
-=======
           const data = await res.json() as {
             camera?: {
               available: boolean;
@@ -431,7 +365,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 ? capabilities.supportsLiveView
                 : null
             );
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
             return;
           }
         } catch { /* agent tidak ada atau error → skip */ }
@@ -442,11 +375,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
       setDslrAvailable(false);
       setDslrModel(null);
-<<<<<<< HEAD
-=======
       setDslrSupportsCapture(false);
       setDslrSupportsLiveView(null);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     })();
   }, []);
 
@@ -460,14 +390,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       return;
     }
 
-<<<<<<< HEAD
-=======
     if (dslrSupportsLiveView === false) {
       setDslrPreviewError("Kamera berjalan di mode capture-only. Live preview DSLR tidak tersedia, tetapi capture tetap berfungsi.");
       return;
     }
 
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     let mounted = true;
     let busy = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -486,9 +413,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const base = agentBaseRef.current;
         if (!base) return;
         const res = await fetch(`${base}/preview`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
-<<<<<<< HEAD
-        if (!res.ok) throw new Error(`preview ${res.status}`);
-=======
         if (!res.ok) {
           if (res.status === 409) {
             setDslrSupportsLiveView(false);
@@ -496,7 +420,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
           throw new Error(`preview ${res.status}`);
         }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         const blob = await res.blob();
         if (!blob.size) throw new Error("preview empty");
         const nextUrl = URL.createObjectURL(blob);
@@ -530,11 +453,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (timer) clearTimeout(timer);
       if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     };
-<<<<<<< HEAD
-  }, [dslrMode]);
-=======
   }, [dslrMode, dslrSupportsLiveView]);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   const captureFromAgent = useCallback(async (): Promise<string | null> => {
     const base = agentBaseRef.current;
@@ -563,14 +482,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   // ── Hitung zona aktif di viewfinder sesuai slot saat ini ──────────────────
   const slotOverlay = useMemo(() => {
     if (!effectiveSlots || effectiveSlots.length === 0) return null;
-<<<<<<< HEAD
-    // En mode duplicate, le slot actif est capturedCount (pas n-1-capturedCount)
-    const currentSlot = effectiveSlots.find((s) => s.photoIndex === capturedCount);
-=======
     const currentSlot = effectiveSlots
       .filter((s) => resolveCaptureIndex(s) === capturedCount)
       .sort((a, b) => (a.top - b.top) || (a.left - b.left))[0];
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     if (!currentSlot) return null;
 
     const CAM_W = 1920, CAM_H = 1080;
@@ -588,11 +502,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       const activeFrac = (CAM_W / slotAspect) / CAM_H;  // 0-1
       return { type: "tb" as const, side: (1 - activeFrac) / 2 };
     }
-<<<<<<< HEAD
-  }, [effectiveSlots, frame.canvasWidth, frame.canvasHeight, capturedCount]);
-=======
   }, [effectiveSlots, frame.canvasWidth, frame.canvasHeight, capturedCount, resolveCaptureIndex]);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   const [countdown, setCountdown]       = useState<number | null>(null);
   const [cdState, setCdState]           = useState<CountdownState>("READY");
@@ -616,15 +526,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   }, [selectedDeviceId, mirror, dslrMode]);
 
   const changeDevice = (deviceId: string) => {
-<<<<<<< HEAD
-    sessionStorage.setItem("booth_camera_deviceId", deviceId);
-=======
     try {
       sessionStorage.setItem("booth_camera_deviceId", deviceId);
     } catch {
       // Ignore storage quota issues; keep runtime state in memory.
     }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     stop();
     setSelectedDeviceId(deviceId);
     setCdState("READY");
@@ -633,15 +539,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   const toggleMirror = () => {
     const next = !mirror;
-<<<<<<< HEAD
-    sessionStorage.setItem("booth_camera_mirror", String(next));
-=======
     try {
       sessionStorage.setItem("booth_camera_mirror", String(next));
     } catch {
       // Ignore storage quota issues; keep runtime state in memory.
     }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     setMirror(next);
   };
 
@@ -730,13 +632,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const cw = frame.canvasWidth  || 1080;
   const ch = frame.canvasHeight || 1920;
   const frameAspect = cw / ch;
-<<<<<<< HEAD
-  const canTriggerCapture = dslrMode ? cdState === "READY" : isReady && cdState === "READY";
-=======
   const canTriggerCapture = dslrMode
     ? dslrAvailable && dslrSupportsCapture && cdState === "READY"
     : isReady && cdState === "READY";
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   return (
     <div
@@ -859,13 +757,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
               className="absolute left-3 right-3 top-12 rounded-xl px-3 py-1.5 text-[10px] font-semibold pointer-events-none"
               style={{ background: "rgba(15,23,42,0.75)", color: "#e2e8f0" }}
             >
-<<<<<<< HEAD
-              {dslrPreviewUrl
-=======
               {dslrSupportsLiveView === false
                 ? "Mode capture-only aktif. Live preview DSLR tidak tersedia, capture tetap dari DSLR local agent."
                 : dslrPreviewUrl
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                 ? "Live preview dari DSLR aktif."
                 : "Preview pakai webcam sebagai fallback. Capture tetap diambil dari DSLR local agent."}
             </div>
@@ -1164,17 +1058,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
               />
               {/* Tombol × retake */}
               {allPhotosDone && effectiveSlots.map((slot) => {
-<<<<<<< HEAD
-                const n = effectiveSlots.length;
-                const _nr = isDuplicate ? n / 2 : 0;
-                const captureIdx = isDuplicate
-                  ? (slot.photoIndex % 2 === 0
-                      ? Math.floor(slot.photoIndex / 2)
-                      : _nr - 1 - Math.floor(slot.photoIndex / 2))
-                  : slot.photoIndex;
-=======
                 const captureIdx = resolveCaptureIndex(slot);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                 const photo = capturedPhotos[captureIdx] || null;
                 if (!photo) return null;
                 return (
