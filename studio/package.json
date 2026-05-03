@@ -46,6 +46,10 @@
     "socket.io": "^4.7.5",
     "socket.io-client": "^4.7.5",
     "swr": "^2.4.1",
+<<<<<<< HEAD
+=======
+    "tsx": "^4.15.0",
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     "zod": "^3.23.8",
     "zustand": "^5.0.12"
   },
@@ -62,7 +66,10 @@
     "prisma": "^5.22.0",
     "tailwindcss": "^3.4.19",
     "ts-node": "^10.9.2",
+<<<<<<< HEAD
     "tsx": "^4.15.0",
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     "typescript": "^5"
   }
 }

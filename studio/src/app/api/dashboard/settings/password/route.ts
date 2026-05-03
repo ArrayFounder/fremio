@@ -31,6 +31,13 @@ export async function POST(req: Request): Promise<Response> {
   });
   if (!operator) return NextResponse.json<ApiResponse>({ success: false, error: "Operator tidak ditemukan" }, { status: 404 });
 
+  if (!operator.password) {
+    return NextResponse.json<ApiResponse>(
+      { success: false, error: "Akun ini tidak memiliki password. Gunakan Google Sign-in." },
+      { status: 400 }
+    );
+  }
+
   const valid = await bcrypt.compare(parsed.data.currentPassword, operator.password);
   if (!valid) {
     return NextResponse.json<ApiResponse>(

@@ -1,5 +1,5 @@
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "../config/firebase.js";
@@ -8,7 +8,11 @@ import { useTranslation } from "react-i18next";
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
+<<<<<<< HEAD
   const { authenticateUser } = useAuth();
+=======
+  const { authenticateUser, googleLogin } = useAuth();
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const { t } = useTranslation();
 
   const [formData, setFormData] = useState({
@@ -25,6 +29,71 @@ export default function Login() {
   const [resetEmail, setResetEmail] = useState("");
   const [resetSuccess, setResetSuccess] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const googleBtnRef = useRef(null);
+
+  // Google Identity Services callback
+  const handleGoogleCredentialResponse = async (response) => {
+    setGoogleLoading(true);
+    setError("");
+    try {
+      const result = await googleLogin(response.credential);
+      if (result.success) {
+        const storedUser = localStorage.getItem("fremio_user");
+        if (storedUser) {
+          const user = JSON.parse(storedUser);
+          if (user.role === "admin") {
+            navigate("/admin/dashboard", { replace: true });
+          } else {
+            const from = location.state?.from?.pathname || "/frames";
+            navigate(from, { replace: true });
+          }
+        } else {
+          const from = location.state?.from?.pathname || "/frames";
+          navigate(from, { replace: true });
+        }
+      } else {
+        setError(result.message || "Login Google gagal");
+      }
+    } catch (err) {
+      setError("Login Google gagal. Coba lagi.");
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  // Load Google Identity Services
+  useEffect(() => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    if (!clientId || !googleBtnRef.current) return;
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    document.body.appendChild(script);
+
+    script.onload = () => {
+      if (window.google?.accounts?.id) {
+        window.google.accounts.id.initialize({
+          client_id: clientId,
+          callback: handleGoogleCredentialResponse,
+          auto_select: false,
+        });
+        window.google.accounts.id.renderButton(googleBtnRef.current, {
+          theme: "outline",
+          size: "large",
+          width: googleBtnRef.current.offsetWidth || 320,
+          text: "signin_with",
+          shape: "rectangular",
+        });
+      }
+    };
+
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -262,6 +331,31 @@ export default function Login() {
                 <button className="auth-btn" type="submit" disabled={loading}>
                   {loading ? "Logging in..." : "Login"}
                 </button>
+
+                <div style={{ marginTop: "16px", textAlign: "center" }}>
+                  <p
+                    style={{
+                      fontSize: "0.85rem",
+                      color: "#94a3b8",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    or
+                  </p>
+                  <div
+                    ref={googleBtnRef}
+                    style={{
+                      display: "flex",
+                      justifyContent: "center",
+                      minHeight: "40px",
+                    }}
+                  />
+                  {googleLoading && (
+                    <p style={{ fontSize: "0.85rem", color: "#64748b", marginTop: "8px" }}>
+                      Signing in with Google…
+                    </p>
+                  )}
+                </div>
 
                 <p className="auth-help">
                   don't have account? <Link to="/register">register</Link>

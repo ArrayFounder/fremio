@@ -23,6 +23,7 @@ export async function GET(): Promise<Response> {
       businessName:       true,
       subscriptionTier:   true,
       subscriptionExpiry: true,
+      credits:            true,
       isActive:           true,
       createdAt:          true,
     },
@@ -50,7 +51,7 @@ export async function PATCH(req: Request): Promise<Response> {
   const updated = await prisma.operator.update({
     where:  { id: session.user.id },
     data:   parsed.data,
-    select: { id: true, email: true, businessName: true, subscriptionTier: true, subscriptionExpiry: true },
+    select: { id: true, email: true, businessName: true, subscriptionTier: true, subscriptionExpiry: true, credits: true },
   });
 
   return NextResponse.json<ApiResponse>({ success: true, data: updated });

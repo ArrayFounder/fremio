@@ -35,6 +35,8 @@ const FrameItemSchema = z.object({
   maxCaptures:  z.number().int().min(1).max(12).default(1),
   isPremium:    z.boolean().default(false),
   slots:        z.array(SlotSchema).nullable().default(null),
+  rawSlots:     z.unknown().optional().nullable(),
+  layout:       z.unknown().optional().nullable(),
 });
 
 const ImportSchema = z.object({
@@ -81,7 +83,15 @@ export async function POST(req: Request): Promise<Response> {
 
   const results = await Promise.allSettled(
     framesToImport.map((f) => {
-      const normalizedSlots = normalizeImportedSlots(f.slots, f.maxCaptures);
+      const sourceSlots = f.rawSlots ?? f.slots;
+      const normalizedSlots = normalizeImportedSlots(f.rawSlots ?? f.slots, f.maxCaptures, {
+        canvasWidth: f.canvasWidth,
+        canvasHeight: f.canvasHeight,
+        layout: f.layout,
+      });
+      const slotsToPersist = Array.isArray(sourceSlots) && sourceSlots.length > 0
+        ? sourceSlots
+        : normalizedSlots;
       return prisma.frame.upsert({
         where: { id: `fremio_sb_${f.fremioId}` },
         update: {
@@ -94,7 +104,7 @@ export async function POST(req: Request): Promise<Response> {
           canvasHeight: f.canvasHeight,
           maxCaptures:  f.maxCaptures,
           captureMode:  f.captureMode ?? "single",
-          slots:        normalizedSlots,
+          slots:        slotsToPersist,
           isActive:     true,
         },
         create: {
@@ -112,7 +122,7 @@ export async function POST(req: Request): Promise<Response> {
           isActive:     true,
           designerId:   null,
           maxCaptures:  f.maxCaptures,
-          slots:        normalizedSlots,
+          slots:        slotsToPersist,
         },
       })
     })
@@ -121,24 +131,64 @@ export async function POST(req: Request): Promise<Response> {
   const imported = results.filter((r) => r.status === "fulfilled").length;
   const failed   = results.filter((r) => r.status === "rejected").length;
 
-  // Jika ada boothId + booth punya allowedFrameIds spesifik, tambahkan frame yang baru diimport
-  if (boothId && imported > 0) {
-    const successIds = results
-      .map((r, i) => (r.status === "fulfilled" ? `fremio_sb_${framesToImport[i].fremioId}` : null))
-      .filter(Boolean) as string[];
-    const booth = await prisma.boothConfig.findFirst({
-      where: { id: boothId, operatorId: session.user.id },
-      select: { allowedFrameIds: true },
+  // ID frame yang berhasil diimport
+  const successIds = results
+    .map((r, i) => (r.status === "fulfilled" ? `fremio_sb_${framesToImport[i].fremioId}` : null))
+    .filter(Boolean) as string[];
+
+  if (imported > 0) {
+    // 1. Hapus frame lama yang TIDAK ada di daftar frame baru
+    const oldIds = (await prisma.frame.findMany({ where: { id: { startsWith: "fremio_sb_" } }, select: { id: true } }))
+      .map((f) => f.id);
+    const newIds = successIds;
+    const idsToDelete = oldIds.filter((id) => !newIds.includes(id));
+    if (idsToDelete.length > 0) {
+      await prisma.frame.updateMany({ where: { id: { in: idsToDelete } }, data: { isActive: false } });
+    }
+
+    // 2. Nonaktifkan seed frame lama (frame-*) dan custom user frames agar
+    //    hanya frame import fremio.id yang tersisa di library
+    await prisma.frame.updateMany({
+      where: {
+        AND: [
+          { NOT: { id: { startsWith: "fremio_sb_" } } },
+          { isActive: true },
+        ],
+      },
+      data: { isActive: false },
     });
-    if (booth && booth.allowedFrameIds.length > 0) {
-      const toAdd = successIds.filter((id) => !booth.allowedFrameIds.includes(id));
-      if (toAdd.length > 0) {
-        await prisma.boothConfig.update({
-          where: { id: boothId },
-          data: { allowedFrameIds: { push: toAdd } },
-        });
+
+    // 3. Jika ada boothId spesifik, tambahkan ke booth tersebut
+    if (boothId) {
+      const booth = await prisma.boothConfig.findFirst({
+        where: { id: boothId, operatorId: session.user.id },
+        select: { allowedFrameIds: true },
+      });
+      if (booth && booth.allowedFrameIds.length > 0) {
+        const toAdd = successIds.filter((id) => !booth.allowedFrameIds.includes(id));
+        if (toAdd.length > 0) {
+          await prisma.boothConfig.update({
+            where: { id: boothId },
+            data: { allowedFrameIds: { push: toAdd } },
+          });
+        }
       }
     }
+
+    // 4. Tambahkan juga ke semua booth yang punya allowedFrameIds kosong (belum pernah diisi)
+    //    agar booth yang masih default juga langsung dapat frame baru
+    const allBoothsWithEmptyList = await prisma.boothConfig.findMany({
+      where: { allowedFrameIds: { isEmpty: true } },
+      select: { id: true },
+    });
+    await Promise.all(
+      allBoothsWithEmptyList.map((b) =>
+        prisma.boothConfig.update({
+          where: { id: b.id },
+          data: { allowedFrameIds: successIds },
+        })
+      )
+    );
   }
 
   return NextResponse.json<ApiResponse>({

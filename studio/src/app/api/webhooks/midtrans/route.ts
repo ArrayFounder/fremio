@@ -23,8 +23,40 @@ export async function POST(req: Request) {
   }
 
   const { order_id, transaction_id, transaction_status, fraud_status } = body;
+  const newStatus = mapMidtransStatus(transaction_status, fraud_status);
 
-  // 2. Temukan transaksi
+  // ── CREDIT PURCHASE (order_id: FREMIO-CREDIT-{operatorId}-{timestamp}) ──
+  if (order_id.startsWith("FREMIO-CREDIT-")) {
+    const creditPurchase = await prisma.creditPurchase.findUnique({
+      where: { midtransOrderId: order_id },
+    });
+
+    if (!creditPurchase) {
+      console.warn(`[Midtrans webhook] Credit purchase tidak ditemukan: ${order_id}`);
+      return NextResponse.json({ received: true });
+    }
+
+    await prisma.creditPurchase.update({
+      where: { id: creditPurchase.id },
+      data: {
+        status:    newStatus,
+        midtransId: transaction_id,
+        paidAt:    newStatus === "SUCCESS" ? new Date() : undefined,
+      },
+    });
+
+    if (newStatus === "SUCCESS") {
+      await prisma.operator.update({
+        where: { id: creditPurchase.operatorId },
+        data:  { credits: { increment: creditPurchase.quantity } },
+      });
+      console.log(`[Midtrans webhook] Added ${creditPurchase.quantity} credits to operator ${creditPurchase.operatorId}`);
+    }
+
+    return NextResponse.json({ received: true });
+  }
+
+  // ── SUBSCRIPTION PAYMENT (existing flow) ──
   const transaction = await prisma.transaction.findUnique({
     where: { midtransOrderId: order_id },
   });
@@ -34,9 +66,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true });
   }
 
-  const newStatus = mapMidtransStatus(transaction_status, fraud_status);
-
-  // 3. Update status transaksi
   await prisma.transaction.update({
     where: { id: transaction.id },
     data: {
@@ -46,7 +75,6 @@ export async function POST(req: Request) {
     },
   });
 
-  // 4. Jika SUCCESS, perpanjang subscription operator (simpan di Operator langsung)
   if (newStatus === "SUCCESS") {
     const now     = new Date();
     const expiry  = new Date(now.getTime() + SUBSCRIPTION_DURATION_DAYS * 24 * 60 * 60 * 1000);

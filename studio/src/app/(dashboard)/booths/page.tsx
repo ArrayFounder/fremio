@@ -13,6 +13,10 @@ interface Booth {
   sessionDurationSeconds: number; printEnabled: boolean; isActive: boolean;
   primaryColor: string; accentColor: string;
   welcomeScreenPrefs?: Record<string, unknown> | null;
+<<<<<<< HEAD
+=======
+  slugUpdatedAt?: string | null;
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   timerTutorialSeconds:    number;
   timerFrameSelectSeconds: number;
   timerPrintCountSeconds:  number;
@@ -47,6 +51,25 @@ function isLightColor(hex: string): boolean {
   } catch { return true; }
 }
 
+<<<<<<< HEAD
+=======
+function ClientDate({ date }: { date: string }) {
+  const [formatted, setFormatted] = useState<string | null>(null);
+  useEffect(() => {
+    setFormatted(
+      new Date(date).toLocaleDateString("id-ID", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    );
+  }, [date]);
+  if (!formatted) return <span className="invisible">00</span>;
+  return <span>Terakhir diubah: {formatted}</span>;
+}
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 // ─── Screen Preview ───────────────────────────────────────────────────────────
 
 const SCREENS = [
@@ -728,7 +751,10 @@ function PaymentGatewayCard() {
 // ─── Payment Method Card ──────────────────────────────────────────────────────
 
 const ALL_PAYMENT_METHODS = [
+<<<<<<< HEAD
   { id: "TICKET",   emoji: "🎫", label: "Scan Ticket",  desc: "Tiket yang dibeli sebelumnya" },
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   { id: "CASHLESS", emoji: "💳", label: "Cashless / QRIS", desc: "QRIS, GoPay, OVO, e-wallet" },
   { id: "VOUCHER",  emoji: "🏷️", label: "Voucher",      desc: "Kode voucher diskon / gratis" },
   { id: "CASH",     emoji: "💵", label: "Bayar Tunai (Cash)", desc: "Bayar ke kasir — sesi langsung aktif, tanpa payment screen" },
@@ -739,7 +765,11 @@ function PaymentMethodCard({ boothId }: { boothId: string }) {
     "/api/dashboard/booths"
   );
 
+<<<<<<< HEAD
   const [enabled, setEnabled] = useState<Set<string>>(new Set(["TICKET", "CASHLESS", "VOUCHER", "CASH"]));
+=======
+  const [enabled, setEnabled] = useState<Set<string>>(new Set(["CASHLESS", "VOUCHER", "CASH"]));
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const [saving, setSaving] = useState(false);
   const [saveOk, setSaveOk] = useState(false);
   const [saveErr, setSaveErr] = useState("");
@@ -752,7 +782,11 @@ function PaymentMethodCard({ boothId }: { boothId: string }) {
     initialized.current = true;
     const prefs = booth.welcomeScreenPrefs as Record<string, unknown> | null;
     const saved = prefs?.enabledPaymentMethods as string[] | undefined;
+<<<<<<< HEAD
     setEnabled(new Set(saved ?? ["TICKET", "CASHLESS", "VOUCHER", "CASH"]));
+=======
+    setEnabled(new Set(saved ?? ["CASHLESS", "VOUCHER", "CASH"]));
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   }, [allBooths, boothId]);
 
   useEffect(() => {
@@ -1167,6 +1201,13 @@ function getLibFrameAspectStyle(frame: LibFrame): React.CSSProperties {
   return { aspectRatio: "2 / 3" };
 }
   const [enabled, setEnabled] = useState<Set<string>>(new Set(["DOWNLOAD", "WHATSAPP", "EMAIL"]));
+<<<<<<< HEAD
+=======
+  const [fonnteToken, setFonnteToken] = useState("");
+  const [waMessage, setWaMessage] = useState("Hai, terimakasih telah datang ke photobox kami. Hasil foto bisa kamu buka di link berikut [url]");
+  const [emailUser, setEmailUser] = useState("");
+  const [emailPassword, setEmailPassword] = useState("");
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const [saving, setSaving] = useState(false);
   const [saveOk, setSaveOk] = useState(false);
   const [saveErr, setSaveErr] = useState("");
@@ -1180,6 +1221,13 @@ function getLibFrameAspectStyle(frame: LibFrame): React.CSSProperties {
     const prefs = booth.welcomeScreenPrefs as Record<string, unknown> | null;
     const saved = prefs?.deliveryChannels as string[] | undefined;
     setEnabled(new Set(saved ?? ["DOWNLOAD", "WHATSAPP", "EMAIL"]));
+<<<<<<< HEAD
+=======
+    setFonnteToken((prefs?.deliveryFonnteToken as string) ?? "");
+    setWaMessage((prefs?.deliveryWaMessage as string) ?? "Hai, terimakasih telah datang ke photobox kami. Hasil foto bisa kamu buka di link berikut [url]");
+    setEmailUser((prefs?.deliveryGmailUser as string) ?? "");
+    setEmailPassword((prefs?.deliveryGmailAppPassword as string) ?? "");
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   }, [allBooths, boothId]);
 
   useEffect(() => {
@@ -1202,7 +1250,18 @@ function getLibFrameAspectStyle(frame: LibFrame): React.CSSProperties {
     try {
       const booth = allBooths?.data?.find((b) => b.id === boothId);
       const existing = (booth?.welcomeScreenPrefs ?? {}) as Record<string, unknown>;
+<<<<<<< HEAD
       const merged = { ...existing, deliveryChannels: Array.from(enabled) };
+=======
+      const merged = {
+        ...existing,
+        deliveryChannels: Array.from(enabled),
+        deliveryFonnteToken: fonnteToken,
+        deliveryWaMessage: waMessage,
+        deliveryGmailUser: emailUser,
+        deliveryGmailAppPassword: emailPassword,
+      };
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
       const res = await fetch(`/api/dashboard/booths/${boothId}`, {
         method: "PATCH",
@@ -1226,7 +1285,11 @@ function getLibFrameAspectStyle(frame: LibFrame): React.CSSProperties {
       <div className="space-y-3">
         <p className="text-xs text-gray-400">Atur channel pengiriman hasil foto ke customer.</p>
 
+<<<<<<< HEAD
         {DELIVERY_CHANNELS.map((c) => (
+=======
+        {DELIVERY_CHANNELS.filter((c) => c.id !== "DOWNLOAD").map((c) => (
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
           <div key={c.id} className="flex items-center justify-between">
             <p className="text-sm font-semibold text-gray-800">{c.label}</p>
             <button
@@ -1238,6 +1301,47 @@ function getLibFrameAspectStyle(frame: LibFrame): React.CSSProperties {
           </div>
         ))}
 
+<<<<<<< HEAD
+=======
+        <div className="pt-2 border-t border-gray-100">
+          <p className="text-[11px] font-semibold text-gray-700 mb-2">Integrasi WhatsApp (Fonnte)</p>
+          <input
+            type="text"
+            value={fonnteToken}
+            onChange={(e) => setFonnteToken(e.target.value)}
+            placeholder="Fonnte API Token"
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300 mb-2"
+          />
+          <textarea
+            value={waMessage}
+            onChange={(e) => setWaMessage(e.target.value)}
+            placeholder="Pesan WA (gunakan [url] untuk link foto)"
+            rows={2}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300 resize-none"
+          />
+          <p className="text-[10px] text-gray-400 mt-1">Gunakan <code className="text-gray-600 bg-gray-50 px-1 rounded">[url]</code> sebagai placeholder link foto.</p>
+        </div>
+
+        <div className="pt-2 border-t border-gray-100">
+          <p className="text-[11px] font-semibold text-gray-700 mb-2">Integrasi Email (Gmail)</p>
+          <input
+            type="text"
+            value={emailUser}
+            onChange={(e) => setEmailUser(e.target.value)}
+            placeholder="Gmail address (mis. nama@gmail.com)"
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300 mb-2"
+          />
+          <input
+            type="password"
+            value={emailPassword}
+            onChange={(e) => setEmailPassword(e.target.value)}
+            placeholder="Gmail App Password"
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300"
+          />
+          <p className="text-[10px] text-gray-400 mt-1">Gunakan <strong>App Password</strong> dari Google Account, bukan password Gmail biasa.</p>
+        </div>
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         {saveErr && <p className="text-xs text-red-500">{saveErr}</p>}
         {saveOk && <p className="text-xs text-green-600">✓ Tersimpan</p>}
 
@@ -1522,8 +1626,13 @@ function LibFrameCard({
           </a>
         )}
       </div>
+<<<<<<< HEAD
       <div className="p-2">
         <p className="text-xs font-semibold text-gray-800 truncate">{frame.name}</p>
+=======
+      <div className="p-1.5">
+        <p className="text-[11px] font-semibold text-gray-800 truncate">{frame.name}</p>
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         <p className="text-[10px] text-gray-400 flex items-center gap-1">
           <span>{FRAME_CAT_LABEL[frame.category] ?? frame.category}</span>
           {(() => {
@@ -1820,6 +1929,7 @@ function FrameSelectionCard({ boothId }: { boothId: string }) {
         )}
       </div>
 
+<<<<<<< HEAD
       <p className="text-xs text-gray-400 mb-3">
         {isLoading
           ? "Memuat frame…"
@@ -1828,6 +1938,8 @@ function FrameSelectionCard({ boothId }: { boothId: string }) {
             : `${activeCount} dari ${filtered.length} frame 4R aktif · Frame nonaktif disembunyikan dari katalog aktif`}
       </p>
 
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       {/* Category filter */}
       {categoryOptions.length > 1 && (
         <div className="mb-4 flex flex-wrap gap-2">
@@ -1856,8 +1968,13 @@ function FrameSelectionCard({ boothId }: { boothId: string }) {
       )}
 
       {isLoading ? (
+<<<<<<< HEAD
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
           {Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[2/3] bg-gray-100 rounded-xl animate-pulse" />)}
+=======
+        <div className="grid grid-cols-6 gap-1.5">
+          {Array.from({ length: 12 }).map((_, i) => <div key={i} className="aspect-[2/3] bg-gray-100 rounded-xl animate-pulse" />)}
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         </div>
       ) : visibleFrames.length === 0 ? (
         <div className="text-center py-8">
@@ -1866,7 +1983,11 @@ function FrameSelectionCard({ boothId }: { boothId: string }) {
           <p className="text-gray-400 text-xs">Pilih kategori lain atau aktifkan frame yang dibutuhkan.</p>
         </div>
       ) : (
+<<<<<<< HEAD
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+=======
+        <div className="grid grid-cols-6 gap-1.5">
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
           {visibleFrames.map((frame) => (
             <LibFrameCard
               key={frame.id} frame={frame} editable={isAdjusting}
@@ -2030,6 +2151,10 @@ export default function BoothsPage() {
 
   // Inline edit states
   const [editName,       setEditName]       = useState<string | null>(null);
+<<<<<<< HEAD
+=======
+  const [editSlug,       setEditSlug]       = useState<string | null>(null);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const [editPrice,      setEditPrice]      = useState<string | null>(null);
   const [editPrintPrice, setEditPrintPrice] = useState<string | null>(null);
   const [editDuration,   setEditDuration]   = useState<string | null>(null);
@@ -2339,6 +2464,7 @@ export default function BoothsPage() {
               <button onClick={() => setEditName(null)} className="shrink-0 text-xs px-2 py-1.5 rounded-lg border text-gray-500">✕</button>
             </div>
           ) : (
+<<<<<<< HEAD
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-gray-900 truncate">{booth.boothName}</h1>
               <button onClick={() => setEditName(booth.boothName)} className="text-gray-400 hover:text-gray-600 text-base" title="Ubah nama booth">✏️</button>
@@ -2350,6 +2476,8 @@ export default function BoothsPage() {
           {booth.isActive ? "Aktif" : "Nonaktif"}
         </span>
       </div>
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
       {/* ── Quick Scroll to Tool Categories ───────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4">

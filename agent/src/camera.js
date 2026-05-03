@@ -13,8 +13,44 @@ const path         = require('path');
 const os           = require('os');
 const logger       = require('./logger');
 
+<<<<<<< HEAD
 const GPHOTO2 = process.env.GPHOTO2_PATH || 'gphoto2';
 const TMPDIR  = os.tmpdir();
+=======
+function resolveGphoto2Path() {
+  const envPath = process.env.GPHOTO2_PATH;
+  if (envPath) return envPath;
+
+  if (process.platform !== 'win32') return 'gphoto2';
+
+  const candidates = [
+    'C:\\msys64\\mingw64\\bin\\gphoto2.exe',
+    'C:\\msys64\\ucrt64\\bin\\gphoto2.exe',
+    'C:\\Program Files\\gPhoto2\\bin\\gphoto2.exe',
+    'C:\\Program Files (x86)\\gPhoto2\\bin\\gphoto2.exe',
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // Ignore broken path checks and continue.
+    }
+  }
+
+  return 'gphoto2';
+}
+
+const GPHOTO2 = resolveGphoto2Path();
+const TMPDIR  = os.tmpdir();
+const LIVE_VIEW_PROBE_TTL_MS = 30_000;
+
+const liveViewProbeCache = {
+  key: null,
+  value: null,
+  expiresAt: 0,
+};
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +79,58 @@ function parseAutoDetect(stdout) {
     .filter(Boolean);
 }
 
+<<<<<<< HEAD
+=======
+async function getCameraStatus({ refreshCapabilities = false } = {}) {
+  const detection = await detectCamera();
+  const cameraKey = cameraKeyFromList(detection.cameras);
+
+  if (!detection.available) {
+    return {
+      ...detection,
+      capabilities: {
+        supportsCapture: false,
+        supportsLiveView: false,
+        mode: 'unavailable',
+      },
+    };
+  }
+
+  const now = Date.now();
+  const canUseCache =
+    !refreshCapabilities &&
+    liveViewProbeCache.value &&
+    liveViewProbeCache.key === cameraKey &&
+    liveViewProbeCache.expiresAt > now;
+
+  let probe = canUseCache ? liveViewProbeCache.value : null;
+  if (!probe) {
+    const previewResult = await tryPreviewStrategies({ timeoutScale: 0.8 });
+    probe = {
+      supported: previewResult.ok,
+      strategy: previewResult.strategy,
+      error: previewResult.ok ? undefined : previewResult.errors.join(' | '),
+      checkedAt: new Date().toISOString(),
+    };
+    liveViewProbeCache.key = cameraKey;
+    liveViewProbeCache.value = probe;
+    liveViewProbeCache.expiresAt = now + LIVE_VIEW_PROBE_TTL_MS;
+  }
+
+  return {
+    ...detection,
+    capabilities: {
+      supportsCapture: true,
+      supportsLiveView: probe.supported === true,
+      mode: probe.supported ? 'live-view' : 'capture-only',
+      liveViewStrategy: probe.strategy || null,
+      ...(probe.error ? { liveViewError: probe.error } : {}),
+      checkedAt: probe.checkedAt,
+    },
+  };
+}
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 /**
  * Build a human-readable hint from gphoto2 stderr.
  */
@@ -84,6 +172,68 @@ function extractJpegFrame(buffer) {
   return buffer.subarray(soi, eoi + 2);
 }
 
+<<<<<<< HEAD
+=======
+function cameraKeyFromList(cameras) {
+  if (!Array.isArray(cameras) || cameras.length === 0) return 'none';
+  const first = cameras[0];
+  return `${first.model || 'unknown'}@${first.port || 'unknown'}`;
+}
+
+async function tryPreviewStrategies({ timeoutScale = 1 } = {}) {
+  const attempts = [
+    {
+      name: 'capture-preview stdout',
+      args: ['--capture-preview', '--stdout'],
+      timeout: Math.round(2200 * timeoutScale),
+    },
+    {
+      name: 'capture-movie eosviewfinder',
+      args: ['--set-config', 'eosviewfinder=1', '--capture-movie', '--frames', '1', '--stdout'],
+      timeout: Math.round(2500 * timeoutScale),
+    },
+    {
+      name: 'capture-movie viewfinder',
+      args: ['--set-config', 'viewfinder=1', '--capture-movie', '--frames', '1', '--stdout'],
+      timeout: Math.round(2500 * timeoutScale),
+    },
+  ];
+
+  const errors = [];
+
+  for (const attempt of attempts) {
+    try {
+      logger.debug(`Executing live preview (${attempt.name}): ${GPHOTO2} ${attempt.args.join(' ')}`);
+      const stdout = await new Promise((resolve, reject) => {
+        execFile(
+          GPHOTO2,
+          attempt.args,
+          { timeout: attempt.timeout, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
+          (err, out, stderr) => {
+            if (err) {
+              reject(new Error(`${attempt.name} failed: ${err.message}; stderr: ${stderr || '(kosong)'}`));
+              return;
+            }
+            resolve(Buffer.isBuffer(out) ? out : Buffer.from(out || ''));
+          }
+        );
+      });
+
+      const frame = extractJpegFrame(stdout);
+      if (frame && frame.length > 0) {
+        return { ok: true, frame, strategy: attempt.name, errors };
+      }
+
+      errors.push(`${attempt.name}: tidak menemukan frame JPEG di stdout`);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return { ok: false, frame: null, strategy: null, errors };
+}
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -205,6 +355,7 @@ async function capturePhoto({ keepOnCamera = false } = {}) {
  */
 async function capturePreview() {
   const t0 = Date.now();
+<<<<<<< HEAD
   const attempts = [
     {
       name: 'capture-movie eosviewfinder',
@@ -276,3 +427,34 @@ async function capturePreview() {
 }
 
 module.exports = { detectCamera, capturePhoto, capturePreview };
+=======
+  const previewResult = await tryPreviewStrategies();
+
+  if (previewResult.ok && previewResult.frame) {
+    const elapsedMs = Date.now() - t0;
+    logger.debug('gphoto2 preview frame captured', {
+      strategy: previewResult.strategy,
+      sizeKb: (previewResult.frame.length / 1024).toFixed(1),
+      elapsedMs,
+    });
+    return {
+      buffer: previewResult.frame,
+      mimeType: 'image/jpeg',
+      size: previewResult.frame.length,
+      elapsedMs,
+    };
+  }
+
+  const elapsedMs = Date.now() - t0;
+  logger.error('capture live preview unavailable', { elapsedMs, errors: previewResult.errors });
+  const error = new Error(
+    `Live preview non-shutter tidak tersedia setelah ${elapsedMs}ms.\n` +
+    `Detail: ${previewResult.errors.join(' | ')}\n` +
+    'Hint: aktifkan Live View / PC Remote di kamera Canon.'
+  );
+  error.code = 'LIVE_VIEW_UNSUPPORTED';
+  throw error;
+}
+
+module.exports = { detectCamera, getCameraStatus, capturePhoto, capturePreview };
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d

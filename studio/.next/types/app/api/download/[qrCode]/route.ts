@@ -1,4 +1,4 @@
-// File: /Users/salwa/Documents/fremio copy/studio/src/app/api/download/[qrCode]/route.ts
+// File: C:\Users\A.r.r.a.y.19\fremio\studio\src\app\api\download\[qrCode]\route.ts
 import * as entry from '../../../../../../src/app/api/download/[qrCode]/route.js'
 import type { NextRequest } from 'next/server.js'
 

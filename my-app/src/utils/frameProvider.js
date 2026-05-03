@@ -29,17 +29,46 @@ const isCustomFrameId = (frameName) => {
   return frameName.startsWith(CUSTOM_FRAME_PREFIX) || isUUID(frameName);
 };
 
+<<<<<<< HEAD
 const normalizeSlotsWithMaps = (slots) => {
   const sourceSlots = Array.isArray(slots) ? slots : [];
   const { slotNumberMap, photoIndexMap, mode } = buildSlotMaps(sourceSlots);
+=======
+const normalizeSlotsWithMaps = (slots, options = {}) => {
+  const sourceSlots = Array.isArray(slots) ? slots : [];
+  const { slotNumberMap, photoIndexMap, mode } = buildSlotMaps(sourceSlots);
+  const explicitDuplicatePhotos =
+    typeof options.duplicatePhotos === "boolean" ? options.duplicatePhotos : null;
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   return {
     slots: sourceSlots.map((slot, index) => ({
       ...slot,
+<<<<<<< HEAD
       slotNumber: slotNumberMap[index] ?? index + 1,
       photoIndex: photoIndexMap[index] ?? index,
     })),
     duplicatePhotos: mode === "duplicate",
+=======
+      slotNumber:
+        // Only preserve stored slotNumber for explicit duplicate frames.
+        // For sequential frames the stored values may be mirror-mapped (from geometry detection).
+        explicitDuplicatePhotos === true
+          ? (Number.isFinite(slot?.slotNumber) ? slot.slotNumber : slotNumberMap[index] ?? index + 1)
+          : index + 1,
+      photoIndex:
+        // Only preserve stored photoIndex for EXPLICIT duplicate frames.
+        // The studio booth sync may have written mirror-mapped [0,1,1,0] values.
+        // When duplicatePhotos is not explicitly true, always use sequential [0,1,2,...].
+        explicitDuplicatePhotos === true
+          ? (Number.isFinite(slot?.photoIndex) ? slot.photoIndex : photoIndexMap[index] ?? index)
+          : index,
+    })),
+    duplicatePhotos:
+      explicitDuplicatePhotos !== null
+        ? explicitDuplicatePhotos
+        : mode === "duplicate",
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   };
 };
 
@@ -51,7 +80,7 @@ export class FrameDataProvider {
   }
 
   // Set custom frame from admin upload
-  async setCustomFrame(frameData) {
+  async setCustomFrame(frameData, options = {}) {
     console.log(`🎨 setCustomFrame called with:`, frameData);
     console.log(`📊 Frame data keys:`, Object.keys(frameData));
     console.log(`📦 frameData.layout:`, frameData.layout);
@@ -103,7 +132,13 @@ export class FrameDataProvider {
       }
 
       if (hasSlots) {
+<<<<<<< HEAD
         const normalized = normalizeSlotsWithMaps(frameData.slots);
+=======
+        const normalized = normalizeSlotsWithMaps(frameData.slots, {
+          duplicatePhotos: frameData.duplicatePhotos,
+        });
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         frameData = {
           ...frameData,
           slots: normalized.slots,
@@ -340,7 +375,9 @@ export class FrameDataProvider {
       console.log("  - Image path:", config.imagePath ? "✓" : "✗");
       console.log("  - Designer elements:", config.designer?.elements?.length || 0);
 
-      this.persistFrameSelection(frameData.id, config);
+      if (options.persistSelection !== false) {
+        this.persistFrameSelection(frameData.id, config);
+      }
       return true;
     } catch (error) {
       console.error(`❌ Error setting custom frame:`, error);
@@ -687,6 +724,54 @@ export class FrameDataProvider {
       const isCustomFrame = config.isCustom || 
                            frameName?.startsWith("custom-") || 
                            config.category === "custom";
+      const isSharedFrame =
+        config?.isSharedFrame ||
+        Boolean(config?.shareId) ||
+        frameName?.startsWith("shared-") ||
+        frameName?.startsWith("share-");
+
+      if (isSharedFrame) {
+        const imageUrl = [
+          config.imagePath,
+          config.frameImage,
+          config.thumbnailUrl,
+          config.image_url,
+        ].find((url) => typeof url === "string" && url && !url.startsWith("data:"));
+
+        const lightweightSharedConfig = {
+          id: config.id,
+          name: config.name,
+          title: config.title,
+          aspectRatio: config.aspectRatio,
+          maxCaptures: config.maxCaptures,
+          slots: config.slots,
+          canvasBackground: config.canvasBackground,
+          canvasWidth: config.canvasWidth,
+          canvasHeight: config.canvasHeight,
+          isCustom: true,
+          isSharedFrame: true,
+          shareId: config.shareId,
+          __timestamp: configWithTimestamp.__timestamp,
+          __selectedAt: configWithTimestamp.__selectedAt,
+          ...(imageUrl && {
+            imagePath: imageUrl,
+            frameImage: imageUrl,
+            thumbnailUrl: imageUrl,
+            image_url: imageUrl,
+          }),
+        };
+
+        safeStorage.setJSON("frameConfig", lightweightSharedConfig);
+        safeStorage.setItem(
+          "frameConfigTimestamp",
+          String(configWithTimestamp.__timestamp)
+        );
+
+        console.log(
+          "✅ [persistFrameSelection] Shared frame persisted with lightweight storage payload"
+        );
+        return;
+      }
       
       console.log("🔍 [persistFrameSelection] Checking frame type:");
       console.log("  - frameName:", frameName);
@@ -694,88 +779,54 @@ export class FrameDataProvider {
       console.log("  - config.category:", config.category);
       console.log("  - isCustomFrame:", isCustomFrame);
 
-      // For custom frames, try to save WITHOUT sanitizing first (to preserve all data)
+      // For custom frames backed by a draftId, TakeMoment loads the full config from
+      // IndexedDB directly. Skip all heavy localStorage write attempts to avoid the
+      // cascading QuotaExceededError retry loops that slow down "Gunakan Frame".
       let configSaved = false;
 
       if (isCustomFrame) {
-        console.log(
-          "💾 [persistFrameSelection] Attempting to save FULL custom frame config..."
-        );
-        console.log(
-          "  - Has designer.elements:",
-          !!configWithTimestamp.designer?.elements
-        );
-        console.log(
-          "  - Elements count:",
-          configWithTimestamp.designer?.elements?.length
-        );
-        console.log("  - Has frameImage:", !!configWithTimestamp.frameImage);
-        console.log("  - Has imagePath:", !!configWithTimestamp.imagePath);
+        const linkedDraftId = config?.metadata?.draftId || userStorage.getItem("activeDraftId");
 
-        try {
-          configSaved = safeStorage.setJSON("frameConfig", configWithTimestamp);
-          if (configSaved) {
-            console.log(
-              "✅ [persistFrameSelection] Full custom frame config saved successfully"
-            );
+        if (linkedDraftId) {
+          // Lightweight reference only — full data lives in IndexedDB
+          const lightweightRef = {
+            id: config.id,
+            name: config.name,
+            isCustom: true,
+            maxCaptures: config.maxCaptures,
+            slots: config.slots,
+            __timestamp: configWithTimestamp.__timestamp,
+            __selectedAt: configWithTimestamp.__selectedAt,
+            __draftId: linkedDraftId,
+          };
+          configSaved = safeStorage.setJSON("frameConfig", lightweightRef);
+          console.log("✅ [persistFrameSelection] Custom frame: lightweight ref stored (full config in IndexedDB)");
+        } else {
+          // No draftId — try full config, then sanitized fallback
+          try {
+            configSaved = safeStorage.setJSON("frameConfig", configWithTimestamp);
+            if (configSaved) {
+              console.log("✅ [persistFrameSelection] Full custom frame config saved successfully");
+            }
+          } catch (error) {
+            console.warn("⚠️ [persistFrameSelection] Full config too large:", error.message);
           }
-        } catch (error) {
-          console.warn(
-            "⚠️ [persistFrameSelection] Full config too large for localStorage:",
-            error.message
-          );
-          // Will try sanitized version below
+
+          if (!configSaved) {
+            const sanitizedConfig = sanitizeFrameConfigForStorage(configWithTimestamp);
+            if (sanitizedConfig) {
+              configSaved = safeStorage.setJSON("frameConfig", sanitizedConfig);
+            }
+          }
         }
       }
 
-      // If not saved yet (not custom OR custom but too large), try sanitized version
-      if (!configSaved) {
-        console.log(
-          "💾 [persistFrameSelection] Saving sanitized frame config..."
-        );
-        const sanitizedConfig =
-          sanitizeFrameConfigForStorage(configWithTimestamp);
-
+      // For non-custom frames that still need persisting
+      if (!configSaved && !isCustomFrame) {
+        console.log("💾 [persistFrameSelection] Saving sanitized frame config...");
+        const sanitizedConfig = sanitizeFrameConfigForStorage(configWithTimestamp);
         if (sanitizedConfig) {
           configSaved = safeStorage.setJSON("frameConfig", sanitizedConfig);
-        }
-
-        if (!configSaved && sanitizedConfig) {
-          console.warn(
-            "⚠️ Failed to store sanitized frame config, attempting fallback without large image data"
-          );
-          const fallbackConfig = { ...sanitizedConfig };
-          // Only remove base64 images, keep URL-based images!
-          if (fallbackConfig.imagePath?.startsWith('data:')) {
-            delete fallbackConfig.imagePath;
-          }
-          if (fallbackConfig.frameImage?.startsWith('data:')) {
-            delete fallbackConfig.frameImage;
-          }
-          if (fallbackConfig.thumbnailUrl?.startsWith('data:')) {
-            delete fallbackConfig.thumbnailUrl;
-          }
-          configSaved = safeStorage.setJSON("frameConfig", fallbackConfig);
-        }
-        
-        // Ultimate fallback - save minimal config but KEEP image URL
-        if (!configSaved) {
-          console.warn("⚠️ Saving minimal config as last resort...");
-          // Get a non-base64 image URL if available
-          const imageUrl = [config.imagePath, config.frameImage, config.thumbnailUrl, config.image_url]
-            .find(url => url && !url.startsWith('data:'));
-          
-          const minimalConfig = {
-            id: config.id,
-            name: config.name,
-            maxCaptures: config.maxCaptures,
-            slots: config.slots,
-            isCustom: true,
-            __timestamp: Date.now(),
-            // Always save image URL for fallback
-            ...(imageUrl && { imagePath: imageUrl, frameImage: imageUrl, image_url: imageUrl }),
-          };
-          configSaved = safeStorage.setJSON("frameConfig", minimalConfig);
         }
       }
 

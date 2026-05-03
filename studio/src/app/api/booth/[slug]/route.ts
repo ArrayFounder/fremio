@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+<<<<<<< HEAD
 import { normalizeImportedSlots } from "@/lib/fremioSlots";
 import type { ApiResponse } from "@/types";
 
 const TRIAL_ONLY_MODE = true;
 
+=======
+import type { ApiResponse } from "@/types";
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/booth/[slug]
 //
@@ -20,7 +25,11 @@ export async function GET(
     where:   { slug: params.slug, isActive: true },
     include: {
       operator: {
+<<<<<<< HEAD
         select: { subscriptionTier: true, subscriptionExpiry: true, isActive: true },
+=======
+        select: { isActive: true, subscriptionTier: true, subscriptionExpiry: true },
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       },
     },
   });
@@ -32,6 +41,7 @@ export async function GET(
     );
   }
 
+<<<<<<< HEAD
   // Trial rollout: abaikan gate subscription sementara.
   if (
     !booth.operator.isActive ||
@@ -39,12 +49,17 @@ export async function GET(
       (!booth.operator.subscriptionExpiry ||
         booth.operator.subscriptionExpiry < new Date()))
   ) {
+=======
+  // Booth hanya aktif jika operator-nya aktif
+  if (!booth.operator.isActive) {
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     return NextResponse.json<ApiResponse>(
       { success: false, error: "Booth sedang tidak aktif" },
       { status: 403 }
     );
   }
 
+<<<<<<< HEAD
   // Ambil frames yang tersedia
   // Jika allowedFrameIds kosong → ambil semua frame publik aktif
   const rawFrames = await prisma.frame.findMany({
@@ -53,6 +68,27 @@ export async function GET(
       ...(booth.allowedFrameIds.length > 0
         ? { id: { in: booth.allowedFrameIds } }
         : {}),
+=======
+  // Watermark trial: sembunyikan jika booth pakai kredit OR operator punya
+  // subscription PRO/ENTERPRISE yang belum expired
+  const op = booth.operator;
+  const hasValidSubscription = op.subscriptionTier === "PRO" || op.subscriptionTier === "ENTERPRISE"
+    ? (op.subscriptionExpiry && new Date(op.subscriptionExpiry) > new Date())
+    : false;
+  const showTrialWatermark = !(booth as any).usesCredit && !hasValidSubscription;
+
+  // Ambil frames yang tersedia
+  // Hanya tampilkan frame yang diimport dari fremio.id (prefix fremio_sb_)
+  const rawFrames = await prisma.frame.findMany({
+    where: {
+      isActive: true,
+      id: {
+        startsWith: "fremio_sb_",
+        ...(booth.allowedFrameIds.length > 0
+          ? { in: booth.allowedFrameIds }
+          : {}),
+      },
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     },
     select: {
       id:           true,
@@ -85,6 +121,7 @@ export async function GET(
   const frames = (rawFrames as Array<{ id: string; category: string } & Record<string, unknown>>).map((f) => {
     const frameId = String(f.id);
     const override = frameCategoryOverrides[frameId];
+<<<<<<< HEAD
     const maxCaptures = Number(f.maxCaptures ?? 1);
     const normalizedSlots = frameId.startsWith("fremio_")
       ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1)
@@ -92,6 +129,10 @@ export async function GET(
     return {
       ...f,
       slots: normalizedSlots,
+=======
+    return {
+      ...f,
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       category: override && override.trim().length > 0 ? override : f.category,
     };
   });
@@ -103,7 +144,11 @@ export async function GET(
         id:                    booth.id,
         boothName:             booth.boothName,
         slug:                  booth.slug,
+<<<<<<< HEAD
         showTrialWatermark:    TRIAL_ONLY_MODE,
+=======
+        showTrialWatermark:    showTrialWatermark,
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         pricePerSession:       booth.pricePerSession,
         printPricePerSheet:    booth.printPricePerSheet,
         sessionDurationSeconds: booth.sessionDurationSeconds,

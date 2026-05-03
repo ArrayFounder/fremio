@@ -22,7 +22,10 @@ interface PaymentMethodScreenProps {
 }
 
 const METHODS: { id: PaymentMethod; emoji: string; label: string; desc: string }[] = [
+<<<<<<< HEAD
   { id: "TICKET",   emoji: "🎫", label: "Scan Ticket",  desc: "Scan tiket yang sudah kamu beli sebelumnya" },
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   { id: "CASHLESS", emoji: "💳", label: "Cashless",     desc: "Bayar dengan QRIS, GoPay, OVO, atau e-wallet lainnya" },
   { id: "VOUCHER",  emoji: "🏷️", label: "Use Voucher",  desc: "Masukkan kode voucher diskon atau voucher gratis" },
   { id: "CASH",     emoji: "💵", label: "Bayar Tunai",  desc: "Bayar langsung ke kasir dengan uang kertas" },

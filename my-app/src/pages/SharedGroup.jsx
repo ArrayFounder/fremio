@@ -77,6 +77,19 @@ const loadTutorialSharePayload = (shareId) => {
   }
 };
 
+<<<<<<< HEAD
+=======
+const cacheSharedFrameShareId = (shareId) => {
+  if (!shareId || typeof window === "undefined") return false;
+  try {
+    window.sessionStorage.setItem("__fremio_share_id__", String(shareId));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 const normalizeTutorialFrameId = (value, fallbackTitle = "tutorial-frame") => {
   if (typeof value === "string" && value.trim()) return value;
   return String(fallbackTitle || "tutorial-frame")
@@ -213,6 +226,10 @@ const buildTutorialFrameConfig = (frameItem) => {
 
   return {
     id: frameId,
+<<<<<<< HEAD
+=======
+    shareId: frameShareId,
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     name: title,
     title,
     description: frameItem?.description || "",
@@ -248,6 +265,10 @@ const persistTutorialFrameSession = (frameConfig) => {
 
   try {
     window.sessionStorage.removeItem("__fremio_share_id__");
+<<<<<<< HEAD
+=======
+    window.sessionStorage.removeItem(SHARED_FRAME_KEY);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     window.sessionStorage.setItem(
       SHARED_FRAME_KEY,
       JSON.stringify({
@@ -271,6 +292,12 @@ const persistTutorialFrameSession = (frameConfig) => {
     );
     return true;
   } catch {
+<<<<<<< HEAD
+=======
+    try {
+      window.sessionStorage.removeItem(SHARED_FRAME_KEY);
+    } catch {}
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     return false;
   }
 };
@@ -1160,6 +1187,11 @@ export default function SharedGroup() {
                     const cardKey = frameShareId || frameItem?.id || idx;
                     setLoadingFrameId(cardKey);
                     try {
+<<<<<<< HEAD
+=======
+                      cacheSharedFrameShareId(frameShareId);
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                       const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
                       const resp = await fetch(`${API_URL}/drafts/share/${encodeURIComponent(frameShareId)}`);
                       if (!resp.ok) throw new Error(`Frame tidak ditemukan (${resp.status})`);
@@ -1177,9 +1209,24 @@ export default function SharedGroup() {
 
                       const frameConfig = await buildGroupFrameConfig(frameShareId, draft, parsedFrameData, frameItem);
                       const stored = persistTutorialFrameSession(frameConfig);
+<<<<<<< HEAD
                       if (!stored) throw new Error("Gagal menyimpan frame ke sesi");
 
                       window.location.assign(new URL("/take-moment", window.location.origin).toString());
+=======
+                      if (stored) {
+                        window.location.assign(new URL("/take-moment", window.location.origin).toString());
+                        return;
+                      }
+
+                      try {
+                        window.sessionStorage.removeItem(SHARED_FRAME_KEY);
+                      } catch {}
+
+                      const fallbackUrl = new URL("/take-moment", window.location.origin);
+                      fallbackUrl.searchParams.set("share", String(frameShareId));
+                      window.location.assign(fallbackUrl.toString());
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                     } catch (err) {
                       console.error("[SharedGroup] Failed to load frame:", err);
                       setLoadingFrameId(null);

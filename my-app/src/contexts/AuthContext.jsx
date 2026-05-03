@@ -152,6 +152,55 @@ export function AuthProvider({ children }) {
   }
 
   /**
+   * Login with Google credential (VPS API)
+   */
+  async function googleLogin(credential) {
+    try {
+      const response = await fetch(`${API_URL}/auth/google`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ credential }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          message: data.error || "Login Google gagal",
+        };
+      }
+
+      // Save auth data
+      const userData = {
+        id: data.user.id,
+        uid: data.user.id,
+        email: data.user.email,
+        displayName: data.user.displayName,
+        role: data.user.role,
+        photoUrl: data.user.photoUrl,
+      };
+
+      saveAuth(userData, data.token);
+      console.log("✅ User logged in with Google:", userData.email);
+
+      return {
+        success: true,
+        message: data.message || "Login Google berhasil",
+        user: userData,
+      };
+    } catch (error) {
+      console.error("❌ Google login error:", error);
+      return {
+        success: false,
+        message: "Network error. Periksa koneksi internet Anda.",
+      };
+    }
+  }
+
+  /**
    * Login user via VPS API
    */
   async function authenticateUser(email, password) {
@@ -380,6 +429,7 @@ export function AuthProvider({ children }) {
         logout,
         register,
         authenticateUser,
+        googleLogin,
         updateUser,
         changePassword,
         resetPassword,

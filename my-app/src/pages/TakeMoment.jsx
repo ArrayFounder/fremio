@@ -9,6 +9,7 @@ import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import frameProvider from "../utils/frameProvider.js";
 import safeStorage from "../utils/safeStorage.js";
+import userStorage from "../utils/userStorage.js";
 import { deriveFrameLayerPlan } from "../utils/frameLayerPlan.js";
 import { clearStaleFrameCache } from "../utils/frameCacheCleaner.js";
 import {
@@ -507,6 +508,22 @@ const generatePhotoEntryId = () => {
 export default function TakeMoment() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const getActiveDraftId = useCallback(
+    () =>
+      userStorage.getItem("activeDraftId") || safeStorage.getItem("activeDraftId"),
+    []
+  );
+  const setActiveDraftId = useCallback((draftId) => {
+    if (draftId) {
+      userStorage.setItem("activeDraftId", draftId);
+      // Legacy compatibility for older paths still reading global key
+      safeStorage.setItem("activeDraftId", draftId);
+      return;
+    }
+
+    userStorage.removeItem("activeDraftId");
+    safeStorage.removeItem("activeDraftId");
+  }, []);
   const roomParam = searchParams.get("room");
   const [friendsModeEnabled, setFriendsModeEnabled] = useState(Boolean(roomParam));
   const [friendsRoomId, setFriendsRoomId] = useState(roomParam || null);
@@ -902,14 +919,54 @@ export default function TakeMoment() {
       ? Math.ceil(maxCaptures / 2)
       : maxCaptures;
 
-  // Auto-set duplicate mode based on slot count:
-  // Odd slots → force duplicate OFF; Even slots → default duplicate ON
+  // When user disables duplicate mode, rewrite the cached frameConfig in localStorage
+  // to use sequential photoIndex [0,1,2,...] instead of the hardcoded mirror mapping
+  // [0,1,1,0] that may have been synced from the studio booth frame editor.
+  // This ensures EditPhoto can use sequential slot→photo mapping even on old browser cache.
+  useEffect(() => {
+    if (isDuplicateMode) return; // only act when turning OFF
+    try {
+      const fc = safeStorage.getJSON("frameConfig");
+      if (!fc?.designer?.elements) return;
+      let seqIdx = 0;
+      let changed = false;
+      const fixedElements = fc.designer.elements.map((el) => {
+        if (el?.type === "photo") {
+          const expected = seqIdx++;
+          if (el?.data?.photoIndex !== expected) changed = true;
+          return { ...el, data: { ...(el.data || {}), photoIndex: expected } };
+        }
+        return el;
+      });
+      if (changed) {
+        safeStorage.setJSON("frameConfig", {
+          ...fc,
+          designer: { ...fc.designer, elements: fixedElements },
+        });
+        console.log("✅ [TAKEMOMENT] Rewrote frameConfig photoIndex to sequential (duplicate OFF)");
+      }
+    } catch (_e) {
+      // ignore – EditPhoto SEQ REWRITE is the final fallback
+    }
+  }, [isDuplicateMode]);
+
+  // Auto-set duplicate mode based on frame config + slot count:
+  // - If frame has explicit duplicatePhotos boolean, honor it.
+  // - Otherwise fallback to legacy default (even slots => duplicate ON).
   useEffect(() => {
     if (maxCaptures > 0) {
-      const isOdd = maxCaptures % 2 !== 0;
-      setIsDuplicateMode(!isOdd);
+      const isEvenSlots = maxCaptures % 2 === 0;
+      const frameConfig =
+        frameProvider.getCurrentConfig() || safeStorage.getJSON("frameConfig", null);
+      const hasExplicitDuplicateSetting =
+        typeof frameConfig?.duplicatePhotos === "boolean";
+      const nextDuplicateMode = hasExplicitDuplicateSetting
+        ? Boolean(frameConfig.duplicatePhotos) && isEvenSlots
+        : isEvenSlots;
+
+      setIsDuplicateMode(nextDuplicateMode);
       try {
-        safeStorage.setItem("friendsDuplicateMode", isOdd ? "0" : "1");
+        safeStorage.setItem("friendsDuplicateMode", nextDuplicateMode ? "1" : "0");
       } catch {
         // ignore
       }
@@ -1301,6 +1358,59 @@ export default function TakeMoment() {
     }
   }, []);
 
+  const persistSharedFrameSelectionLightweight = useCallback(
+    (frameConfig, sourceTag = "TakeMoment_shared") => {
+      try {
+        if (!frameConfig || typeof frameConfig !== "object") return;
+
+        const timestamp = Date.now();
+        const imageUrl = [
+          frameConfig.imagePath,
+          frameConfig.frameImage,
+          frameConfig.thumbnailUrl,
+          frameConfig.image_url,
+          frameConfig.preview,
+        ].find(
+          (url) => typeof url === "string" && url && !url.startsWith("data:")
+        );
+
+        const lightweightConfig = {
+          id: frameConfig.id,
+          title: frameConfig.title,
+          name: frameConfig.name,
+          aspectRatio: frameConfig.aspectRatio,
+          maxCaptures: frameConfig.maxCaptures,
+          slots: frameConfig.slots,
+          canvasBackground: frameConfig.canvasBackground,
+          canvasWidth: frameConfig.canvasWidth,
+          canvasHeight: frameConfig.canvasHeight,
+          isCustom: true,
+          isSharedFrame: true,
+          shareId: frameConfig.shareId,
+          __timestamp: timestamp,
+          __savedFrom: sourceTag,
+          ...(imageUrl && {
+            imagePath: imageUrl,
+            frameImage: imageUrl,
+            thumbnailUrl: imageUrl,
+            image_url: imageUrl,
+            preview: imageUrl,
+          }),
+        };
+
+        safeStorage.setJSON("frameConfig", lightweightConfig);
+        safeStorage.setItem("selectedFrame", frameConfig.id);
+        safeStorage.setItem("frameConfigTimestamp", String(timestamp));
+      } catch (error) {
+        console.warn(
+          "⚠️ Failed to persist lightweight shared frame selection:",
+          error
+        );
+      }
+    },
+    []
+  );
+
   const stopCamera = useCallback(() => {
     if (activeRecordingRef.current) {
       try {
@@ -1339,10 +1449,40 @@ export default function TakeMoment() {
         if (_p0Raw) {
           const _p0 = JSON.parse(_p0Raw);
           const _p0cfg = _p0?.frameConfig;
+<<<<<<< HEAD
           if (_p0cfg && (_p0cfg.isSharedFrame || _p0cfg.maxCaptures > 1 || (_p0cfg.slots?.length ?? 0) > 0)) {
             console.log("⏭️ Skipping VPS fetch — valid PRIORITY 0 sessionStorage config found (", _p0cfg.maxCaptures, "captures,", _p0cfg.slots?.length || 0, "slots)");
             return;
           }
+=======
+          const requestedShareId = String(shareId);
+          const configShareId = String(
+            _p0cfg?.shareId ||
+              (_p0cfg?.id?.startsWith("share-") ? _p0cfg.id.slice(6) : "") ||
+              (_p0cfg?.id?.startsWith("shared-") ? _p0cfg.id.slice(7) : "")
+          );
+          const isShareMatch = requestedShareId === configShareId;
+
+          if (
+            _p0cfg &&
+            isShareMatch &&
+            (_p0cfg.isSharedFrame || _p0cfg.maxCaptures > 1 || (_p0cfg.slots?.length ?? 0) > 0)
+          ) {
+            console.log("⏭️ Skipping VPS fetch — valid PRIORITY 0 sessionStorage config found (", _p0cfg.maxCaptures, "captures,", _p0cfg.slots?.length || 0, "slots)");
+            return;
+          }
+
+          if (_p0cfg && !isShareMatch) {
+            console.log("🧹 Clearing stale PRIORITY 0 shared frame (share mismatch):", {
+              requestedShareId,
+              configShareId,
+              configId: _p0cfg.id,
+            });
+            try {
+              sessionStorage.removeItem("__fremio_shared_frame_temp__");
+            } catch (_) {}
+          }
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         }
       } catch (_) {}
       console.log("🔗 Loading shared frame from VPS:", shareId);
@@ -1513,16 +1653,14 @@ export default function TakeMoment() {
           };
 
           // Set frame via frameProvider
-          await frameProvider.setCustomFrame(frameConfig);
-
-          // Store in safeStorage
-          safeStorage.setJSON("frameConfig", {
-            ...frameConfig,
-            __timestamp: Date.now(),
-            __savedFrom: "TakeMoment_vpsShare",
+          await frameProvider.setCustomFrame(frameConfig, {
+            persistSelection: false,
           });
-          safeStorage.setItem("selectedFrame", frameConfig.id);
-          safeStorage.setItem("frameConfigTimestamp", String(Date.now()));
+
+          persistSharedFrameSelectionLightweight(
+            frameConfig,
+            "TakeMoment_vpsShare"
+          );
 
           // CRITICAL FIX: Write to sessionStorage in the format EditPhoto expects.
           // EditPhoto checks sessionStorage.__fremio_shared_frame_temp__ as PRIORITY 1.
@@ -1714,16 +1852,14 @@ export default function TakeMoment() {
           };
 
           // Set frame via frameProvider (same as legacy method)
-          await frameProvider.setCustomFrame(frameConfig);
-
-          // Store in safeStorage
-          safeStorage.setJSON("frameConfig", {
-            ...frameConfig,
-            __timestamp: Date.now(),
-            __savedFrom: "TakeMoment_embeddedShare",
+          await frameProvider.setCustomFrame(frameConfig, {
+            persistSelection: false,
           });
-          safeStorage.setItem("selectedFrame", frameConfig.id);
-          safeStorage.setItem("frameConfigTimestamp", String(Date.now()));
+
+          persistSharedFrameSelectionLightweight(
+            frameConfig,
+            "TakeMoment_embeddedShare"
+          );
 
           // Update state
           setMaxCaptures(frameConfig.maxCaptures);
@@ -1864,17 +2000,15 @@ export default function TakeMoment() {
         };
 
         // Set frame via frameProvider
-        await frameProvider.setCustomFrame(frameConfig);
-
-        // Store in safeStorage
-        safeStorage.setJSON("frameConfig", {
-          ...frameConfig,
-          __timestamp: Date.now(),
-          __savedFrom: "TakeMoment_sharedFrame",
+        await frameProvider.setCustomFrame(frameConfig, {
+          persistSelection: false,
         });
-        safeStorage.setItem("selectedFrame", frameConfig.id);
-        safeStorage.setItem("activeDraftId", draft.id);
-        safeStorage.setItem("frameConfigTimestamp", String(Date.now()));
+
+        persistSharedFrameSelectionLightweight(
+          frameConfig,
+          "TakeMoment_sharedFrame"
+        );
+        setActiveDraftId(draft.id);
 
         // Update state
         setMaxCaptures(frameConfig.maxCaptures);
@@ -1890,7 +2024,13 @@ export default function TakeMoment() {
         showToast("error", "Gagal memuat frame");
       }
     })();
-  }, [searchParams, showToast]);
+  }, [
+    searchParams,
+    showToast,
+    persistSharedFrameSelectionLightweight,
+    getActiveDraftId,
+    setActiveDraftId,
+  ]);
 
   useEffect(() => {
     clearCapturedMedia();
@@ -1908,7 +2048,26 @@ export default function TakeMoment() {
         console.log("🔗 [SHARED FRAME] Found in sessionStorage");
 
         const sharedConfig = sharedFrameData.frameConfig;
-        if (sharedConfig) {
+        const requestedShareId = searchParams.get("share");
+        const sharedConfigShareId = String(
+          sharedConfig?.shareId ||
+            (sharedConfig?.id?.startsWith("share-") ? sharedConfig.id.slice(6) : "") ||
+            (sharedConfig?.id?.startsWith("shared-") ? sharedConfig.id.slice(7) : "")
+        );
+        const isRequestedShareMatch = !requestedShareId || String(requestedShareId) === sharedConfigShareId;
+
+        if (sharedConfig && !isRequestedShareMatch) {
+          console.log("🧹 [SHARED FRAME] Ignoring stale session config (share mismatch):", {
+            requestedShareId,
+            sharedConfigShareId,
+            configId: sharedConfig.id,
+          });
+          try {
+            sessionStorage.removeItem(SHARED_FRAME_KEY);
+          } catch (_) {}
+        }
+
+        if (sharedConfig && isRequestedShareMatch) {
           console.log(
             "✅ Using shared frame from sessionStorage:",
             sharedConfig.id
@@ -2136,7 +2295,7 @@ export default function TakeMoment() {
 
     // CRITICAL: Always check localStorage first for custom frames (from Create page)
     const storedConfig = safeStorage.getJSON("frameConfig");
-    const activeDraftId = safeStorage.getItem("activeDraftId");
+    const activeDraftId = getActiveDraftId();
 
     console.log("🔍 TakeMoment useEffect - checking frame sources:", {
       hasStoredConfig: !!storedConfig,
@@ -2327,7 +2486,14 @@ export default function TakeMoment() {
           persistLayerPlan(frameConfig);
         });
     }
-  }, [clearCapturedMedia, persistLayerPlan, updateSlotAspectRatio]);
+  }, [
+    navigate,
+    showToast,
+    persistLayerPlan,
+    updateSlotAspectRatio,
+    getActiveDraftId,
+    setActiveDraftId,
+  ]);
 
   // Force camera container re-render when slot aspect ratio changes
   useEffect(() => {
@@ -5298,7 +5464,7 @@ export default function TakeMoment() {
         verifyPhotos?.length || 0
       );
 
-      const activeDraftId = safeStorage.getItem("activeDraftId");
+      const activeDraftId = getActiveDraftId();
 
       if (activeDraftId) {
         await persistCapturedMediaToDraft(
@@ -5450,9 +5616,9 @@ export default function TakeMoment() {
           );
 
           // Make sure activeDraftId is still there as fallback
-          const activeDraftId = safeStorage.getItem("activeDraftId");
+          const activeDraftId = getActiveDraftId();
           if (!activeDraftId && configToSave.metadata?.draftId) {
-            safeStorage.setItem("activeDraftId", configToSave.metadata.draftId);
+            setActiveDraftId(configToSave.metadata.draftId);
             console.log(
               "✅ Restored activeDraftId:",
               configToSave.metadata.draftId
@@ -5508,7 +5674,7 @@ export default function TakeMoment() {
     );
     console.log(
       "  - localStorage activeDraftId:",
-      safeStorage.getItem("activeDraftId")
+      getActiveDraftId()
     );
     const storedConfig = safeStorage.getJSON("frameConfig");
     if (storedConfig) {
@@ -5601,18 +5767,31 @@ export default function TakeMoment() {
       }
     }
 
+    // Save duplicate-mode decision to sessionStorage before navigating.
+    // sessionStorage is NOT affected by localStorage QuotaExceededError and
+    // survives SPA navigation within the same browser tab.
+    // EditPhoto reads __fremio_edit_mode__ to decide sequential vs mirror mapping.
+    try {
+      sessionStorage.setItem(
+        "__fremio_edit_mode__",
+        JSON.stringify({ sequential: !isDuplicateMode, photoCount: capturedPhotos.length })
+      );
+    } catch (e) {
+      // ignore – EditPhoto has totalPhotos >= totalSlots as independent fallback
+    }
+
     navigate("/edit-photo");
   }, [
     capturedPhotos,
     capturedPhotosRef,
     capturedVideosRef,
+    isDuplicateMode,
     cleanUpStorage,
     clearLargeCacheItems,
     flushStorageWrite,
     getFrameCompressionProfile,
     maxCaptures,
     photosNeeded,
-    isDuplicateMode,
     navigate,
     scheduleStorageWrite,
     stopCamera,
@@ -5981,7 +6160,11 @@ export default function TakeMoment() {
           maxCaptures % 2 === 0 &&
           capturedPhotos.length === 0 ? (
             <button
-              onClick={() => setIsDuplicateMode(!isDuplicateMode)}
+              onClick={() => {
+                const next = !isDuplicateMode;
+                setIsDuplicateMode(next);
+                try { safeStorage.setItem("friendsDuplicateMode", next ? "1" : "0"); } catch(_e) {}
+              }}
               disabled={capturing}
               style={{
                 padding: "0.45rem 0.7rem",

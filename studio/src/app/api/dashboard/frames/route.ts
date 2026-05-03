@@ -53,8 +53,10 @@ export async function GET(req: Request): Promise<Response> {
     }
   }
 
+  // Hanya tampilkan frame yang diimport dari fremio.id (prefix fremio_sb_)
+  // Seed frames (frame-*) dan custom user frames disembunyikan dari library
   const rawFrames = await prisma.frame.findMany({
-    where:   { isActive: true },
+    where:   { isActive: true, id: { startsWith: "fremio_sb_" } },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     select: {
       id:           true,
@@ -78,7 +80,10 @@ export async function GET(req: Request): Promise<Response> {
     const effectiveCategory = override && override.trim().length > 0 ? override : f.category;
     const maxCaptures = Number(f.maxCaptures ?? 1);
     const normalizedSlots = f.id.startsWith("fremio_")
-      ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1)
+      ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1, {
+          canvasWidth: f.canvasWidth,
+          canvasHeight: f.canvasHeight,
+        })
       : f.slots;
     return {
       ...f,
@@ -121,6 +126,8 @@ const CreateFrameSchema = z.object({
     height:       z.number(),
     photoIndex:   z.number().int().min(0),
     borderRadius: z.number().default(0),
+    rotation:     z.number().optional(),
+    zIndex:       z.number().optional(),
   })).nullable().default(null),
 });
 

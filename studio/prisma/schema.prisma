@@ -62,11 +62,20 @@ enum FrameCategory {
 model Operator {
   id                 String           @id @default(cuid())
   email              String           @unique
+<<<<<<< HEAD
   password           String           // bcrypt hash — JANGAN store plaintext
+=======
+  password           String?          // bcrypt hash — nullable untuk OAuth user (Google)
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   businessName       String
   /// Di-denorm di sini untuk query cepat; sumber kebenaran tetap di relasi subscription
   subscriptionTier   SubscriptionTier @default(STARTER)
   subscriptionExpiry DateTime?        // null = belum pernah berlangganan / trial
+<<<<<<< HEAD
+=======
+  /// Poin kredit untuk mengaktifkan booth tanpa watermark. 1 kredit = 1 booth.
+  credits            Int              @default(0)
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   isActive           Boolean          @default(true)
   /// Midtrans Server Key milik operator — null = pakai key Fremio global (fallback)
   midtransServerKey  String?
@@ -84,8 +93,14 @@ model Operator {
   updatedAt          DateTime         @updatedAt
 
   // Relations
+<<<<<<< HEAD
   boothConfigs BoothConfig[]
   transactions Transaction[]
+=======
+  boothConfigs     BoothConfig[]
+  transactions     Transaction[]
+  creditPurchases  CreditPurchase[]
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   @@index([email])
   @@map("operators")
@@ -123,7 +138,15 @@ model BoothConfig {
   timerCameraSeconds          Int      @default(420)
   timerPreviewSeconds         Int      @default(120)
   timerDeliverySeconds        Int      @default(150)
+<<<<<<< HEAD
   isActive               Boolean  @default(true)
+=======
+  /// Booth ini menggunakan 1 kredit operator (menghilangkan watermark trial)
+  usesCredit             Boolean  @default(false)
+  isActive               Boolean  @default(true)
+  /// Tanggal terakhir slug booth diubah (batasi 1 kali per hari)
+  slugUpdatedAt          DateTime?
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
@@ -281,3 +304,35 @@ model Voucher {
   @@index([boothConfigId])
   @@map("vouchers")
 }
+<<<<<<< HEAD
+=======
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CREDIT PURCHASE — pembelian kredit (poin) operator via Midtrans
+// 1 kredit = 1 booth tanpa watermark trial
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CreditPurchase {
+  id              String            @id @default(cuid())
+  operatorId      String
+  /// Jumlah kredit yang dibeli
+  quantity        Int
+  /// Total harga dalam IDR
+  amount          Int
+  /// Order ID untuk Midtrans (FREMIO-CREDIT-{operatorId}-{timestamp})
+  midtransOrderId String            @unique
+  midtransId      String?
+  snapToken       String?
+  status          TransactionStatus @default(PENDING)
+  paidAt          DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  operator Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@index([operatorId])
+  @@index([status])
+  @@index([midtransOrderId])
+  @@map("credit_purchases")
+}
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d

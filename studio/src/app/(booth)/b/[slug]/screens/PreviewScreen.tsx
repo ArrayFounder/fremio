@@ -293,6 +293,7 @@ export function PreviewScreen({
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
 
+<<<<<<< HEAD
     const safeUrl = (url: string) =>
       url.startsWith("https://fremio.id/") || url.startsWith("https://api.fremio.id/")
         ? `/api/proxy-image?url=${encodeURIComponent(url)}`
@@ -319,6 +320,10 @@ export function PreviewScreen({
       }
       imagesReady = true;
     })();
+=======
+    let imagesReady = false;
+    Promise.resolve().then(() => { imagesReady = true; });
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
     videoEl.src = videoPreviewUrl;
     videoEl.loop = true;
@@ -350,6 +355,11 @@ export function PreviewScreen({
       if (imagesReady && videoEl.readyState >= 2) {
         ctx.drawImage(videoEl, 0, 0, W, H);
         // Filter pixel-by-pixel hanya pada bounding-box slot — area frame tidak tersentuh
+<<<<<<< HEAD
+=======
+        // Frame sudah baked-in di dalam video (dirender oleh CameraScreen RAF loop),
+        // jadi TIDAK perlu di-draw ulang — akan menyebabkan double overlay.
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         for (const slot of slots) {
           const sx = Math.floor(slot.left   * W);
           const sy = Math.floor(slot.top    * H);
@@ -361,9 +371,12 @@ export function PreviewScreen({
             ctx.putImageData(imgData, sx, sy);
           }
         }
+<<<<<<< HEAD
         // Re-draw frame overlay di atas untuk restore warna frame yang asli
         if (frameImg)   ctx.drawImage(frameImg,   0, 0, W, H);
         if (overlayImg) ctx.drawImage(overlayImg, 0, 0, W, H);
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       }
       raf = requestAnimationFrame(draw);
     };
@@ -691,12 +704,15 @@ export function PreviewScreen({
                       <canvas ref={videoCanvasRef} width={frameOpts.canvasWidth} height={frameOpts.canvasHeight}
                               style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
                     )}
+<<<<<<< HEAD
                     {frame.overlayUrl && videoIsOriginal && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={frame.overlayUrl} alt=""
                            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                            style={{ zIndex: 2 }} />
                     )}
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                     <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold"
                          style={{ zIndex: 3, background: accentColor + "cc", color: primaryColor }}>
                       🎬 LIVE
@@ -837,12 +853,15 @@ export function PreviewScreen({
                       <canvas ref={videoCanvasRef} width={frameOpts.canvasWidth} height={frameOpts.canvasHeight}
                               style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
                     )}
+<<<<<<< HEAD
                     {frame.overlayUrl && videoIsOriginal && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={frame.overlayUrl} alt=""
                            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                            style={{ zIndex: 2 }} />
                     )}
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                     <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold"
                          style={{ zIndex: 3, background: accentColor + "cc", color: primaryColor }}>
                       🎬 LIVE

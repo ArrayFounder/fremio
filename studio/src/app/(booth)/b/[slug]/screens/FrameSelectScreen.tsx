@@ -368,7 +368,11 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
               <p className="text-xs" style={{ color: textSecondary }}>di kategori ini</p>
             </div>
           ) : (
+<<<<<<< HEAD
             <div className={`grid gap-2 ${isPortrait ? "grid-cols-3" : "grid-cols-5"}`}>
+=======
+            <div className={`grid gap-1.5 ${isPortrait ? "grid-cols-3" : "grid-cols-6"}`}>
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               {filteredFrames.map((frame) => {
                 const isSelected = selectedId === frame.id;
                 const cw = frame.canvasWidth  || 1080;

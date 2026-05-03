@@ -96,7 +96,11 @@ router.post('/login', [
 
     const user = result.rows[0];
 
-    // Check password
+    // Check password — OAuth user tanpa password tidak bisa login via credentials
+    if (!user.password_hash) {
+      return res.status(401).json({ error: 'Akun ini tidak mendukung login password. Gunakan Google Sign-in.' });
+    }
+
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
       return res.status(401).json({ error: 'Email atau password salah' });
@@ -230,6 +234,83 @@ router.put('/password', authenticateToken, [
   } catch (error) {
     console.error('Change password error:', error);
     res.status(500).json({ error: 'Gagal mengubah password' });
+  }
+});
+
+/**
+ * POST /api/auth/google
+ * Google OAuth login
+ */
+router.post('/google', async (req, res) => {
+  try {
+    const { credential } = req.body;
+
+    if (!credential) {
+      return res.status(400).json({ error: 'Google credential diperlukan' });
+    }
+
+    // Verifikasi token dengan Google
+    const tokenResponse = await fetch(
+      `https://www.googleapis.com/oauth2/v3/tokeninfo?id_token=${credential}`
+    );
+    const payload = await tokenResponse.json();
+
+    if (!tokenResponse.ok || !payload.email) {
+      return res.status(401).json({ error: 'Token Google tidak valid' });
+    }
+
+    const email = payload.email.toLowerCase();
+    const displayName = payload.name || email.split('@')[0];
+    const photoUrl = payload.picture || null;
+
+    // Cari user
+    let result = await db.query(
+      'SELECT * FROM users WHERE email = $1',
+      [email]
+    );
+
+    let user;
+    if (result.rows.length === 0) {
+      // Buat user baru (OAuth tanpa password)
+      result = await db.query(
+        `INSERT INTO users (email, password_hash, display_name, photo_url, role, is_active)
+         VALUES ($1, NULL, $2, $3, 'user', true)
+         RETURNING id, email, display_name, role, photo_url, created_at`,
+        [email, displayName, photoUrl]
+      );
+      console.log(`✅ New Google user registered: ${email}`);
+    } else {
+      user = result.rows[0];
+      if (!user.is_active) {
+        return res.status(403).json({ error: 'Akun dinonaktifkan' });
+      }
+      // Update photo_url kalau berubah
+      if (photoUrl && user.photo_url !== photoUrl) {
+        await db.query(
+          'UPDATE users SET photo_url = $1, updated_at = NOW() WHERE id = $2',
+          [photoUrl, user.id]
+        );
+        user.photo_url = photoUrl;
+      }
+    }
+
+    user = result.rows[0];
+    const token = generateToken(user);
+
+    res.json({
+      message: 'Login Google berhasil',
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.display_name,
+        role: user.role,
+        photoUrl: user.photo_url
+      },
+      token
+    });
+  } catch (error) {
+    console.error('Google login error:', error);
+    res.status(500).json({ error: 'Login Google gagal. Coba lagi.' });
   }
 });
 

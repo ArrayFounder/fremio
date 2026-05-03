@@ -25,6 +25,11 @@ let hardwareAgentProcess = null;
 let hardwareAgentExit = null;
 let hardwareAgentStdout = "";
 let hardwareAgentStderr = "";
+<<<<<<< HEAD
+=======
+let bridgeWatchdogTimer = null;
+let bridgeHealthFailCount = 0;
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
 function trimLog(input) {
   return input.length > MAX_LOG_CHARS ? input.slice(-MAX_LOG_CHARS) : input;
@@ -51,16 +56,42 @@ function getAgentRootPath() {
 }
 
 function getAgentEntryPath() {
+<<<<<<< HEAD
   return path.join(getAgentRootPath(), "src", "index.js");
+=======
+  return path.join(getAgentRootPath(), "dist", "server.js");
+}
+
+function getBundledToolsPath(subPath) {
+  if (!process.resourcesPath) return null;
+  return path.join(process.resourcesPath, "tools", subPath);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 }
 
 function findWindowsGphoto2Path() {
   if (process.platform !== "win32") return null;
 
+<<<<<<< HEAD
   const candidates = [
     process.env.GPHOTO2_PATH,
     "C:\\msys64\\mingw64\\bin\\gphoto2.exe",
     "C:\\msys64\\ucrt64\\bin\\gphoto2.exe",
+=======
+  const pathCandidates = String(process.env.PATH || "")
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => path.join(entry, "gphoto2.exe"));
+
+  const candidates = [
+    process.env.GPHOTO2_PATH,
+    getBundledToolsPath(path.join("gphoto2", "gphoto2.exe")),
+    "C:\\msys64\\mingw64\\bin\\gphoto2.exe",
+    "C:\\msys64\\ucrt64\\bin\\gphoto2.exe",
+    "C:\\Program Files\\gPhoto2\\bin\\gphoto2.exe",
+    "C:\\Program Files (x86)\\gPhoto2\\bin\\gphoto2.exe",
+    ...pathCandidates,
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   ].filter(Boolean);
 
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
@@ -84,6 +115,10 @@ function startHardwareAgent() {
 
   const gphoto2Path = findWindowsGphoto2Path();
   if (gphoto2Path) env.GPHOTO2_PATH = gphoto2Path;
+<<<<<<< HEAD
+=======
+  appendAgentLog("stdout", `\n[launcher] start hardware bridge; gphoto2=${env.GPHOTO2_PATH || "PATH"}`);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   hardwareAgentExit = null;
   hardwareAgentProcess = spawn(process.execPath, [agentEntryPath], {
@@ -97,12 +132,20 @@ function startHardwareAgent() {
   hardwareAgentProcess.stderr?.on("data", (chunk) => appendAgentLog("stderr", chunk));
 
   hardwareAgentProcess.on("error", (error) => {
+<<<<<<< HEAD
+=======
+    appendAgentLog("stderr", `\n[launcher] bridge process error: ${error.message}`);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     hardwareAgentStderr = trimLog(`${hardwareAgentStderr}\n${error.message}`);
     hardwareAgentExit = { code: null, signal: null, at: new Date().toISOString() };
     hardwareAgentProcess = null;
   });
 
   hardwareAgentProcess.on("exit", (code, signal) => {
+<<<<<<< HEAD
+=======
+    appendAgentLog("stderr", `\n[launcher] bridge process exit: code=${code} signal=${signal}`);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     hardwareAgentExit = { code, signal, at: new Date().toISOString() };
     hardwareAgentProcess = null;
   });
@@ -113,6 +156,40 @@ function stopHardwareAgent() {
   hardwareAgentProcess.kill();
 }
 
+<<<<<<< HEAD
+=======
+function startBridgeWatchdog() {
+  if (bridgeWatchdogTimer) return;
+
+  bridgeWatchdogTimer = setInterval(async () => {
+    if (!hardwareAgentProcess || hardwareAgentProcess.killed) {
+      startHardwareAgent();
+      return;
+    }
+
+    try {
+      await requestJson(BRIDGE_STATUS_URL, 1200);
+      bridgeHealthFailCount = 0;
+    } catch {
+      bridgeHealthFailCount += 1;
+      if (bridgeHealthFailCount >= 3) {
+        appendAgentLog("stderr", "\n[launcher] bridge health-check failed 3x, restarting...");
+        stopHardwareAgent();
+        startHardwareAgent();
+        bridgeHealthFailCount = 0;
+      }
+    }
+  }, 5000);
+}
+
+function stopBridgeWatchdog() {
+  if (!bridgeWatchdogTimer) return;
+  clearInterval(bridgeWatchdogTimer);
+  bridgeWatchdogTimer = null;
+  bridgeHealthFailCount = 0;
+}
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 function requestJson(url, timeoutMs = 1500) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, { timeout: timeoutMs }, (res) => {
@@ -163,6 +240,7 @@ function simplifyBridgeError(errorText) {
 async function getBridgeStatus() {
   try {
     const payload = await requestJson(BRIDGE_STATUS_URL);
+<<<<<<< HEAD
     const cameraAvailable = Boolean(payload?.camera?.available);
     const printerCount = Number(payload?.printer?.count || 0);
     const cameraCount = Number(payload?.camera?.count || 0);
@@ -179,6 +257,16 @@ async function getBridgeStatus() {
     if (printerCount > 0) {
       notes.push(`${printerCount} printer terdeteksi`);
     }
+=======
+    const camera = payload?.camera || {};
+    const printers = Array.isArray(payload?.printers) ? payload.printers : [];
+    const cameraAvailable = Boolean(camera.available);
+    const cameraCount = Number(camera.count || 0);
+    const cameraType = camera.type || "none";
+    const cameraDevices = Array.isArray(camera.devices) ? camera.devices : [];
+    const cameraError = camera.error || "";
+    const printerCount = printers.length;
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
     return {
       ok: true,
@@ -190,8 +278,16 @@ async function getBridgeStatus() {
         : "Kalau kamera belum muncul, nyalakan kamera lalu cabut-colok kabel USB sekali.",
       cameraAvailable,
       cameraCount,
+<<<<<<< HEAD
       printerCount,
       notes,
+=======
+      cameraType,
+      cameraDevices,
+      cameraError,
+      printerCount,
+      printers,
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       raw: payload,
       agentPid: hardwareAgentProcess?.pid || null,
     };
@@ -218,8 +314,17 @@ async function getBridgeStatus() {
       action: "Biarkan app tetap terbuka 5-10 detik, lalu klik cek lagi.",
       cameraAvailable: false,
       cameraCount: 0,
+<<<<<<< HEAD
       printerCount: 0,
       notes,
+=======
+      cameraType: "none",
+      cameraDevices: [],
+      cameraError: "",
+      printerCount: 0,
+      printers: [],
+      raw: {},
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       agentPid: hardwareAgentProcess?.pid || null,
     };
   }
@@ -418,6 +523,10 @@ function registerShortcuts() {
 app.whenReady().then(async () => {
   currentConfig = loadConfig();
   startHardwareAgent();
+<<<<<<< HEAD
+=======
+  startBridgeWatchdog();
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   applyPermissionRules();
   registerIpcHandlers();
   registerShortcuts();
@@ -428,6 +537,10 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+<<<<<<< HEAD
+=======
+  stopBridgeWatchdog();
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   stopHardwareAgent();
   if (process.platform !== "darwin") app.quit();
 });
@@ -437,6 +550,10 @@ app.on("activate", () => {
 });
 
 app.on("will-quit", () => {
+<<<<<<< HEAD
+=======
+  stopBridgeWatchdog();
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   stopHardwareAgent();
   globalShortcut.unregisterAll();
 });

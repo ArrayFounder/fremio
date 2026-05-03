@@ -90,3 +90,10 @@ backup.*
 # Studio downloads (large binaries)
 studio/public/downloads/*.exe
 studio/public/downloads/*.zip
+<<<<<<< HEAD
+=======
+# Next.js build cache
+studio/.next/cache/
+my-app/.next/cache/
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d

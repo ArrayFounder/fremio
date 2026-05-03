@@ -9,8 +9,15 @@ import {
   Save,
   RefreshCw,
   CheckCircle2,
+<<<<<<< HEAD
 } from "lucide-react";
 import api from "../../services/api";
+=======
+  Trash2,
+} from "lucide-react";
+import api from "../../services/api";
+import unifiedFrameService from "../../services/unifiedFrameService";
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
 const STUDIO_BASE_URL = "https://studio.fremio.id";
 
@@ -43,6 +50,10 @@ export default function AdminStudioBoothControl() {
   const [loadingFrames, setLoadingFrames] = useState(true);
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [saving, setSaving] = useState(false);
+<<<<<<< HEAD
+=======
+  const [deleting, setDeleting] = useState(null);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -66,9 +77,18 @@ export default function AdminStudioBoothControl() {
   const loadFrames = useCallback(async () => {
     setLoadingFrames(true);
     try {
+<<<<<<< HEAD
       const response = await api.get("/frames?includeHidden=true&limit=1000&source=studio_booth");
       const allFrames = parseFrameList(response);
       const only4R = allFrames.filter((f) => isFrame4R(f));
+=======
+      const response = await api.get("/frames?limit=1000&source=studio_booth");
+      const allFrames = parseFrameList(response);
+      const visibleFramesOnly = allFrames.filter(
+        (f) => !Boolean(f?.isHidden || f?.is_hidden)
+      );
+      const only4R = visibleFramesOnly.filter((f) => isFrame4R(f));
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       setFrames(only4R);
     } catch (e) {
       setError(e.message || "Gagal memuat frame katalog");
@@ -172,6 +192,33 @@ export default function AdminStudioBoothControl() {
     }
   };
 
+<<<<<<< HEAD
+=======
+  const handleDeleteFrame = async (frameId, frameName) => {
+    if (!confirm(`Hapus frame "${frameName}"?\n\nTindakan ini tidak dapat dibatalkan.`)) {
+      return;
+    }
+    setDeleting(frameId);
+    setError("");
+    setSuccess("");
+    try {
+      await unifiedFrameService.deleteFrame(frameId);
+      // Remove from frames list and selectedIds
+      setFrames((prev) => prev.filter((f) => String(f.id) !== String(frameId)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(String(frameId));
+        return next;
+      });
+      setSuccess(`Frame "${frameName}" berhasil dihapus.`);
+    } catch (e) {
+      setError(e.message || `Gagal menghapus frame "${frameName}"`);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   return (
     <div style={{ maxWidth: "1180px", margin: "0 auto", padding: "24px 16px 40px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", marginBottom: "16px" }}>
@@ -350,21 +397,37 @@ export default function AdminStudioBoothControl() {
             <div style={{ maxHeight: "420px", overflow: "auto", border: "1px solid #f3f4f6", borderRadius: "10px" }}>
               {visibleFrames.map((frame) => {
                 const checked = selectedIds.has(String(frame.id));
+<<<<<<< HEAD
                 return (
                   <label
                     key={frame.id}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "28px 42px 1fr auto",
+=======
+                const isDeleting = deleting === frame.id;
+                return (
+                  <div
+                    key={frame.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "28px 42px 1fr auto auto",
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                       gap: "10px",
                       alignItems: "center",
                       padding: "9px 10px",
                       borderBottom: "1px solid #f9fafb",
                       background: checked ? "#f5f3ff" : "#fff",
+<<<<<<< HEAD
                       cursor: "pointer",
                     }}
                   >
                     <input type="checkbox" checked={checked} onChange={() => toggleFrame(String(frame.id))} />
+=======
+                    }}
+                  >
+                    <input type="checkbox" checked={checked} onChange={() => toggleFrame(String(frame.id))} style={{ cursor: "pointer" }} />
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                     <img
                       src={frame.thumbnailUrl || frame.imageUrl || frame.imagePath || ""}
                       alt={frame.name}
@@ -375,7 +438,36 @@ export default function AdminStudioBoothControl() {
                       <div style={{ fontSize: "11px", color: "#6b7280" }}>{frame.category} • {frame.id}</div>
                     </div>
                     <span style={{ fontSize: "11px", color: "#4f46e5", fontWeight: 700, border: "1px solid #ddd6fe", background: "#f5f3ff", borderRadius: "999px", padding: "3px 7px" }}>4R</span>
+<<<<<<< HEAD
                   </label>
+=======
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDeleteFrame(frame.id, frame.name);
+                      }}
+                      disabled={isDeleting}
+                      title="Hapus frame"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: "28px",
+                        height: "28px",
+                        border: "1px solid #fecaca",
+                        borderRadius: "6px",
+                        background: isDeleting ? "#fee2e2" : "#fef2f2",
+                        color: "#dc2626",
+                        cursor: isDeleting ? "not-allowed" : "pointer",
+                        opacity: isDeleting ? 0.7 : 1,
+                        padding: "0",
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                 );
               })}
             </div>

@@ -144,6 +144,7 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
     clearSelection,
     fitBackgroundPhotoToCanvas,
     setElements,
+    batchUpdateElements,
   } = useCreatorStore(
     useShallow((state) => ({
       elements: state.elements,
@@ -166,6 +167,7 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
       clearSelection: state.clearSelection,
       fitBackgroundPhotoToCanvas: state.fitBackgroundPhotoToCanvas,
       setElements: state.setElements,
+      batchUpdateElements: state.batchUpdateElements,
     }))
   );
 
@@ -246,6 +248,43 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
                 width: s.width || 0, height: s.height || 0,
               }));
               const { slotNumberMap } = buildSlotMaps(slotsNorm);
+<<<<<<< HEAD
+=======
+
+              // Rehydrate mirror metadata for booth layouts so drag/gap/border sync works.
+              const slotMeta = frame.slots.map((slot, idx) => {
+                const left = Number(slot?.left) || 0;
+                const width = Number(slot?.width) || 0;
+                const top = Number(slot?.top) || 0;
+                const centerX = left + width / 2;
+                return {
+                  idx,
+                  top,
+                  side: centerX < 0.5 ? "left" : "right",
+                };
+              });
+              const leftSlots = slotMeta
+                .filter((s) => s.side === "left")
+                .sort((a, b) => a.top - b.top);
+              const rightSlots = slotMeta
+                .filter((s) => s.side === "right")
+                .sort((a, b) => a.top - b.top);
+              const isMirrorLayout =
+                frame.slots.length >= 2 &&
+                frame.slots.length % 2 === 0 &&
+                leftSlots.length === rightSlots.length &&
+                leftSlots.length > 0;
+              const rowIndexBySlot = {};
+              if (isMirrorLayout) {
+                leftSlots.forEach((slot, rowIndex) => {
+                  rowIndexBySlot[slot.idx] = rowIndex;
+                });
+                rightSlots.forEach((slot, rowIndex) => {
+                  rowIndexBySlot[slot.idx] = rowIndex;
+                });
+              }
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               frame.slots.forEach((slot, index) => {
                 newElements.push({
                   id: slot.id || `photo_${index + 1}`,
@@ -260,6 +299,16 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
                     photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : index,
                     slotNumber: slotNumberMap[index] ?? index + 1,
                     borderRadius: slot.borderRadius || 0,
+                    ...(isMirrorLayout
+                      ? {
+                          linkedGroup: "mirror",
+                          side: slotMeta[index]?.side,
+                          rowIndex: rowIndexBySlot[index] ?? index,
+                          mirrorCenterX: Math.floor(frameCanvasW / 2),
+                          gapY: 30,
+                          verticalMode: "parallel",
+                        }
+                      : {}),
                   }
                 });
               });
@@ -462,6 +511,105 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
     return slots;
   }, []);
 
+<<<<<<< HEAD
+=======
+  const photoVerticalMode = useMemo(() => {
+    const first = elements.find(
+      (element) => element.type === "photo" && element.data?.linkedGroup === "mirror"
+    );
+    return first?.data?.verticalMode ?? "parallel";
+  }, [elements]);
+
+  const handlePhotoVerticalModeChange = useCallback(
+    (newMode) => {
+      const { height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+      const linked = elementsRef.current.filter(
+        (element) => element.type === "photo" && element.data?.linkedGroup === "mirror"
+      );
+
+      const byRow = {};
+      linked.forEach((photo) => {
+        const rowIndex = photo.data?.rowIndex ?? 0;
+        if (!byRow[rowIndex]) byRow[rowIndex] = {};
+        byRow[rowIndex][photo.data?.side] = photo;
+      });
+
+      const updatesMap = {};
+      linked.forEach((photo) => {
+        const rowIndex = photo.data?.rowIndex ?? 0;
+        const rowPhotos = byRow[rowIndex] || {};
+        const newData = { verticalMode: newMode };
+        if (photo.data?.side === "right" && rowPhotos.left) {
+          const leftY = rowPhotos.left.y;
+          const newY =
+            newMode === "inverted"
+              ? Math.max(0, Math.min(canvasH - photo.height, canvasH - leftY - photo.height))
+              : leftY;
+          updatesMap[photo.id] = { y: newY, data: newData };
+        } else {
+          updatesMap[photo.id] = { data: newData };
+        }
+      });
+
+      if (Object.keys(updatesMap).length > 0) {
+        batchUpdateElements(updatesMap);
+      }
+    },
+    [batchUpdateElements, getCanvasDimensions, canvasAspectRatio]
+  );
+
+  const photoGapY = useMemo(() => {
+    const first = elements.find(
+      (element) => element.type === "photo" && element.data?.linkedGroup === "mirror"
+    );
+    return first?.data?.gapY ?? 30;
+  }, [elements]);
+
+  const handlePhotoGapChange = useCallback(
+    (newGap) => {
+      const { height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+      const linked = elementsRef.current.filter(
+        (element) => element.type === "photo" && element.data?.linkedGroup === "mirror"
+      );
+      if (linked.length === 0) return;
+
+      const numRows = linked.length / 2;
+      const verticalMode = linked[0]?.data?.verticalMode ?? "parallel";
+      const leftPhotos = linked
+        .filter((photo) => photo.data?.side === "left")
+        .sort((a, b) => (a.data?.rowIndex ?? 0) - (b.data?.rowIndex ?? 0));
+      const photoH = leftPhotos[0]?.height ?? 400;
+      const maxGap =
+        numRows > 1
+          ? Math.floor((canvasH - numRows * photoH) / (numRows - 1))
+          : 0;
+      const clampedGap = Math.max(0, Math.min(maxGap, newGap));
+      const topY = leftPhotos[0]?.y ?? 0;
+      const bottomY = (leftPhotos[numRows - 1]?.y ?? 0) + photoH;
+      const blockCenterY = (topY + bottomY) / 2;
+      const newBlockH = numRows * photoH + (numRows - 1) * clampedGap;
+      let newTopY = blockCenterY - newBlockH / 2;
+      newTopY = Math.max(0, Math.min(canvasH - newBlockH, newTopY));
+
+      const updatesMap = {};
+      linked.forEach((photo) => {
+        const rowIndex = photo.data?.rowIndex ?? 0;
+        const leftY = newTopY + rowIndex * (photoH + clampedGap);
+        const newY =
+          verticalMode === "inverted" && photo.data?.side === "right"
+            ? canvasH - leftY - photoH
+            : leftY;
+        updatesMap[photo.id] = { y: newY, data: { gapY: clampedGap } };
+      });
+
+      if (Object.keys(updatesMap).length > 0) {
+        batchUpdateElements(updatesMap);
+      }
+    },
+    [batchUpdateElements, getCanvasDimensions, canvasAspectRatio]
+  );
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   // Mirror-aware element update (matches studio editor)
   const handleElementUpdate = useCallback((id, changes) => {
     const currentElements = elementsRef.current;
@@ -476,9 +624,15 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
     const linkedPhotos = currentElements.filter(
       (e) => e.type === "photo" && e.data?.linkedGroup === "mirror"
     );
+<<<<<<< HEAD
     const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
     const centerX = el.data?.mirrorCenterX ?? Math.floor(canvasW / 2);
     if (isResize) {
+=======
+    if (isResize) {
+      const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+      const centerX = el.data?.mirrorCenterX ?? Math.floor(canvasW / 2);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       const side = el.data?.side;
       const newW = "width" in changes ? changes.width : el.width;
       const newH = "height" in changes ? changes.height : el.height;
@@ -502,6 +656,7 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
         newY = Math.max(0, Math.min(canvasH - newH, newY));
         updatesMap[photo.id] = { x: newX, y: newY, width: newW, height: newH };
       });
+<<<<<<< HEAD
       linkedPhotos.forEach((photo) => {
         if (updatesMap[photo.id]) updateElement(photo.id, updatesMap[photo.id]);
       });
@@ -536,6 +691,108 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
       });
     }
   }, [updateElement, getCanvasDimensions, canvasAspectRatio]);
+=======
+      if (Object.keys(updatesMap).length > 0) {
+        batchUpdateElements(updatesMap);
+      }
+      updateElement(id, changes);
+      return;
+    }
+
+    if (!hasX && !hasY) {
+      const updatesMap = {};
+      linkedPhotos.forEach((photo) => {
+        updatesMap[photo.id] = { ...changes };
+      });
+      if (Object.keys(updatesMap).length > 0) {
+        batchUpdateElements(updatesMap);
+      }
+      return;
+    }
+
+    const { width: canvasW, height: canvasH } = getCanvasDimensions(canvasAspectRatio);
+    const centerX = el.data?.mirrorCenterX ?? Math.floor(canvasW / 2);
+    const side = el.data?.side;
+    const dx = hasX ? changes.x - el.x : 0;
+    const dy = hasY ? changes.y - el.y : 0;
+    const verticalMode = el.data?.verticalMode ?? "parallel";
+
+    let safeDy = dy;
+    if (hasY && safeDy !== 0) {
+      if (verticalMode === "parallel") {
+        linkedPhotos.forEach((photo) => {
+          if (safeDy > 0) {
+            const maxDown = canvasH - photo.height - photo.y;
+            if (safeDy > maxDown) safeDy = maxDown;
+          } else {
+            const maxUp = -photo.y;
+            if (safeDy < maxUp) safeDy = maxUp;
+          }
+        });
+      } else {
+        const draggedSidePhotos = linkedPhotos.filter((photo) => photo.data?.side === side);
+        const oppositeSidePhotos = linkedPhotos.filter((photo) => photo.data?.side !== side);
+        if (safeDy > 0) {
+          draggedSidePhotos.forEach((photo) => {
+            const max = canvasH - photo.height - photo.y;
+            if (safeDy > max) safeDy = max;
+          });
+          oppositeSidePhotos.forEach((photo) => {
+            if (safeDy > photo.y) safeDy = photo.y;
+          });
+        } else {
+          draggedSidePhotos.forEach((photo) => {
+            const maxUp = -photo.y;
+            if (safeDy < maxUp) safeDy = maxUp;
+          });
+          oppositeSidePhotos.forEach((photo) => {
+            const maxDown = -(canvasH - photo.height - photo.y);
+            if (safeDy < maxDown) safeDy = maxDown;
+          });
+        }
+      }
+    }
+
+    const updatesMap = {};
+    linkedPhotos.forEach((photo) => {
+      const pSide = photo.data?.side;
+      let newX = photo.x;
+      let newY = photo.y;
+
+      if (hasY) {
+        if (verticalMode === "parallel") {
+          newY = photo.y + safeDy;
+        } else {
+          newY = photo.y + (pSide !== side ? -safeDy : safeDy);
+        }
+      }
+
+      if (hasX) {
+        newX = pSide === side ? photo.x + dx : photo.x - dx;
+        if (pSide === "left") {
+          newX = Math.max(0, Math.min(centerX - photo.width, newX));
+        } else {
+          newX = Math.max(centerX, Math.min(canvasW - photo.width, newX));
+        }
+      }
+
+      updatesMap[photo.id] = { x: newX, y: newY };
+    });
+
+    const rest = { ...changes };
+    delete rest.x;
+    delete rest.y;
+    if (Object.keys(rest).length > 0) {
+      linkedPhotos.forEach((photo) => {
+        updatesMap[photo.id] = { ...(updatesMap[photo.id] ?? {}), ...rest };
+      });
+    }
+
+    if (Object.keys(updatesMap).length > 0) {
+      batchUpdateElements(updatesMap);
+    }
+  }, [updateElement, batchUpdateElements, getCanvasDimensions, canvasAspectRatio]);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   // Import Frame handler — detects transparent slots, same as studio editor
   const handleImportFrameFile = useCallback(async (e) => {
@@ -729,7 +986,17 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
       return;
     }
 
-    const photoElements = elements.filter((el) => el.type === "photo");
+    const photoElements = elements
+      .filter((el) => el.type === "photo")
+      .slice()
+      .sort((a, b) => {
+        const zA = Number.isFinite(a?.zIndex) ? Number(a.zIndex) : 0;
+        const zB = Number.isFinite(b?.zIndex) ? Number(b.zIndex) : 0;
+        if (zA !== zB) return zA - zB;
+        const pA = Number.isFinite(a?.data?.photoIndex) ? Number(a.data.photoIndex) : 0;
+        const pB = Number.isFinite(b?.data?.photoIndex) ? Number(b.data.photoIndex) : 0;
+        return pA - pB;
+      });
     if (photoElements.length === 0) {
       showToast("error", "Tambahkan minimal 1 Area Foto!");
       return;
@@ -746,6 +1013,7 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
       let frameImageDataUrl = null;
       let frameImageBlob = null;
       let isExistingUrl = false;
+      let thumbnailDataUrl = null;
 
       if (backgroundPhoto) {
         // Get the original frame image from background-photo element
@@ -870,18 +1138,21 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
       }
 
       // Convert photo slots to normalized values
-      // Photo slots ALWAYS use low zIndex (1) so overlay elements appear above them
+      // Keep stored photoIndex/slotNumber to preserve editor numbering after save.
       const slots = photoElements.map((el, index) => ({
         id: el.id,
         left: el.x / canvasWidth,
         top: el.y / canvasHeight,
         width: el.width / canvasWidth,
         height: el.height / canvasHeight,
-        zIndex: 1, // Always low z-index for photo slots
-        photoIndex: index,
+        zIndex: Number.isFinite(el.zIndex) ? el.zIndex : 1,
+        photoIndex: Number.isFinite(el.data?.photoIndex) ? el.data.photoIndex : index,
+        slotNumber: Number.isFinite(el.data?.slotNumber) ? el.data.slotNumber : index + 1,
         borderRadius: el.data?.borderRadius || 0,
         rotation: Number.isFinite(el.rotation) ? el.rotation : 0,
       }));
+
+      const hasMirroredSlots = photoElements.some((el) => el.data?.linkedGroup === "mirror");
 
       // Collect non-photo elements (upload, text, shape) for storage in layout
       // Exclude background-photo and photo elements as they are stored separately
@@ -1035,7 +1306,8 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
         category: frameCategories.join(", "), // Multiple categories as comma-separated string
         categories: frameCategories, // Also store as array
         maxCaptures: photoElements.length,
-        duplicatePhotos: false,
+        duplicatePhotos: hasMirroredSlots,
+        captureMode: hasMirroredSlots ? "duplicate" : "single",
         slots,
         createdBy: user?.email || "admin",
         canvasBackground,
@@ -1047,6 +1319,12 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
           orientation: "portrait",
           backgroundColor: canvasBackground,
           elements: otherElements, // Store upload/text/shape elements here
+<<<<<<< HEAD
+=======
+          slots,
+          photoSlots: slots,
+          photoAreas: slots,
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
           // Include canvas dimensions in layout JSON so studio import-preview
           // can derive correct canvasWidth/Height even when the backend DB
           // does not have dedicated canvas_width/canvas_height columns.
@@ -1068,6 +1346,167 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
         }
       }
 
+<<<<<<< HEAD
+=======
+      // Build thumbnail with photo placeholders from the same saved slot data,
+      // rendered with the same layer order as editor elements.
+      try {
+        const thumbCanvas = document.createElement("canvas");
+        thumbCanvas.width = canvasWidth;
+        thumbCanvas.height = canvasHeight;
+        const ctx = thumbCanvas.getContext("2d");
+        if (ctx) {
+          ctx.fillStyle = canvasBackground || "#ffffff";
+          ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+          const drawRoundedRect = (x, y, w, h, radius) => {
+            const maxR = Math.max(0, Math.min(radius, w / 2, h / 2));
+            ctx.beginPath();
+            ctx.moveTo(x + maxR, y);
+            ctx.lineTo(x + w - maxR, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + maxR);
+            ctx.lineTo(x + w, y + h - maxR);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - maxR, y + h);
+            ctx.lineTo(x + maxR, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - maxR);
+            ctx.lineTo(x, y + maxR);
+            ctx.quadraticCurveTo(x, y, x + maxR, y);
+            ctx.closePath();
+          };
+
+          const drawSlotPlaceholder = (slot, fallbackLabel) => {
+            const x = slot.left * canvasWidth;
+            const y = slot.top * canvasHeight;
+            const w = slot.width * canvasWidth;
+            const h = slot.height * canvasHeight;
+            if (w <= 0 || h <= 0) return;
+
+            const rotationDeg = Number.isFinite(slot.rotation) ? Number(slot.rotation) : 0;
+            const borderRadius = Number.isFinite(slot.borderRadius)
+              ? Number(slot.borderRadius)
+              : Math.max(4, Math.min(18, Math.min(w, h) * 0.08));
+
+            ctx.save();
+            ctx.translate(x + w / 2, y + h / 2);
+            ctx.rotate((rotationDeg * Math.PI) / 180);
+
+            drawRoundedRect(-w / 2, -h / 2, w, h, borderRadius);
+            ctx.fillStyle = "rgba(199, 210, 254, 0.55)";
+            ctx.fill();
+            ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.02);
+            ctx.strokeStyle = "rgba(99, 102, 241, 0.65)";
+            ctx.stroke();
+
+            const label = Number.isFinite(slot.slotNumber) ? slot.slotNumber : fallbackLabel;
+            ctx.fillStyle = "rgba(79, 70, 229, 0.55)";
+            ctx.font = `900 ${Math.round(Math.min(w, h) * 0.5)}px system-ui, -apple-system, sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(String(label), 0, 0);
+            ctx.restore();
+          };
+
+          if (typeof frameImageDataUrl === "string" && frameImageDataUrl) {
+            try {
+              const baseImg = await new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = frameImageDataUrl;
+              });
+              ctx.drawImage(baseImg, 0, 0, canvasWidth, canvasHeight);
+            } catch (imgErr) {
+              console.warn("⚠️ Failed to draw base frame into thumbnail canvas:", imgErr);
+            }
+          }
+
+          const slotsById = new Map(slots.map((slot) => [String(slot.id || ""), slot]));
+          const layeredElements = elements
+            .filter((el) => el.type !== "background-photo")
+            .slice()
+            .sort((a, b) => {
+              const zA = Number.isFinite(a?.zIndex) ? Number(a.zIndex) : 0;
+              const zB = Number.isFinite(b?.zIndex) ? Number(b.zIndex) : 0;
+              if (zA !== zB) return zA - zB;
+              return String(a.id || "").localeCompare(String(b.id || ""));
+            });
+
+          const photoIndexToSlot = new Map(
+            slots.map((slot) => [Number.isFinite(slot.photoIndex) ? Number(slot.photoIndex) : -1, slot])
+          );
+
+          for (const el of layeredElements) {
+            if (el.type === "photo") {
+              const byId = slotsById.get(String(el.id || ""));
+              const byPhotoIndex = photoIndexToSlot.get(
+                Number.isFinite(el?.data?.photoIndex) ? Number(el.data.photoIndex) : -1
+              );
+              const slot = byId || byPhotoIndex;
+              if (slot) {
+                const fallbackLabel = Number.isFinite(el?.data?.slotNumber)
+                  ? Number(el.data.slotNumber)
+                  : 1;
+                drawSlotPlaceholder(slot, fallbackLabel);
+              }
+              continue;
+            }
+
+            if (el.type === "upload" && typeof el?.data?.image === "string" && el.data.image) {
+              try {
+                const uploadImg = await new Promise((resolve, reject) => {
+                  const img = new Image();
+                  img.crossOrigin = "anonymous";
+                  img.onload = () => resolve(img);
+                  img.onerror = reject;
+                  img.src = el.data.image;
+                });
+                const x = Number(el.x) || 0;
+                const y = Number(el.y) || 0;
+                const w = Number(el.width) || 0;
+                const h = Number(el.height) || 0;
+                if (w > 0 && h > 0) {
+                  const rotationDeg = Number.isFinite(el.rotation) ? Number(el.rotation) : 0;
+                  ctx.save();
+                  ctx.translate(x + w / 2, y + h / 2);
+                  ctx.rotate((rotationDeg * Math.PI) / 180);
+                  ctx.drawImage(uploadImg, -w / 2, -h / 2, w, h);
+                  ctx.restore();
+                }
+              } catch (uploadErr) {
+                console.warn("⚠️ Failed to draw upload element into thumbnail:", uploadErr);
+              }
+            }
+          }
+
+          thumbnailDataUrl = thumbCanvas.toDataURL("image/jpeg", 0.9);
+        }
+      } catch (thumbErr) {
+        console.warn("⚠️ Failed to build thumbnail canvas:", thumbErr);
+      }
+
+      let thumbnailPath = null;
+      if (thumbnailDataUrl && thumbnailDataUrl.startsWith("data:")) {
+        try {
+          const thumbBlob = await (await fetch(thumbnailDataUrl)).blob();
+          const thumbUpload = await unifiedFrameService.uploadFrameImage(
+            thumbBlob,
+            `thumb_${Date.now()}.jpg`
+          );
+          if (thumbUpload?.imagePath) {
+            thumbnailPath = thumbUpload.imagePath;
+          }
+        } catch (thumbUploadErr) {
+          console.warn("⚠️ Failed to upload thumbnail:", thumbUploadErr);
+        }
+      }
+
+      if (thumbnailPath) {
+        frameData.thumbnailPath = thumbnailPath;
+        frameData.thumbnail_path = thumbnailPath;
+      }
+
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       console.log("💾 Frame data to save:", {
         ...frameData,
         layout: {
@@ -1338,6 +1777,7 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
                 canvasBackground={canvasBackground}
                 aspectRatio={canvasAspectRatio}
                 previewConstraints={previewConstraints}
+                passthroughFrameOverlayPointerEvents={studioBoothMode}
                 onSelect={(id) => {
                   if (id === null) {
                     clearSelection();
@@ -1416,6 +1856,13 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
               canvasBackground={canvasBackground}
               onBackgroundChange={setCanvasBackground}
               onUpdateElement={handleElementUpdate}
+<<<<<<< HEAD
+=======
+              onPhotoVerticalModeChange={handlePhotoVerticalModeChange}
+              photoVerticalMode={photoVerticalMode}
+              photoGapY={photoGapY}
+              onPhotoGapChange={handlePhotoGapChange}
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               onDeleteElement={removeElement}
               clearSelection={clearSelection}
               onSelectBackgroundPhoto={() => {
@@ -1472,6 +1919,11 @@ export default function AdminFrameCreator({ studioBoothMode = false }) {
                       side: slot.side,
                       rowIndex: slot.rowIndex,
                       mirrorCenterX: centerX,
+<<<<<<< HEAD
+=======
+                      gapY: 30,
+                      verticalMode: "parallel",
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
                     },
                   });
                   if (newId) lastAddedId = newId;

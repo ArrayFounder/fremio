@@ -1,4 +1,4 @@
-// File: /Users/salwa/Documents/fremio copy/studio/src/app/(dashboard)/booths/page.tsx
+// File: C:\Users\A.r.r.a.y.19\fremio\studio\src\app\(dashboard)\booths\page.tsx
 import * as entry from '../../../../../src/app/(dashboard)/booths/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

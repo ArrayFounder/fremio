@@ -1,44 +1,29 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
-import { isVPSMode } from "../../config/backend";
-import unifiedFrameService from "../../services/unifiedFrameService";
-import { getUnreadMessagesCount } from "../../services/contactMessageService";
-import { getAllUsers } from "../../services/userService";
-import { getAffiliateStats } from "../../services/affiliateService";
 import "../../styles/admin.css";
 import {
   Users,
   FileImage,
   TrendingUp,
-  Shield,
-  Package,
-  Settings,
-  AlertCircle,
-  Upload,
-  Eye,
-  Download,
-  Heart,
-  Mail,
-  Handshake,
-  RefreshCw,
+  Globe,
+  ChevronDown,
+  ChevronUp,
+  Wrench,
+  Crown,
+  Palette,
+  Wallet,
+  Link2,
+  CalendarCheck2,
+  GalleryVerticalEnd,
 } from "lucide-react";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
 
-  const [stats, setStats] = useState({
-    totalFrames: 0,
-    totalUsers: 0,
-    totalViews: 0,
-    totalDownloads: 0,
-    totalLikes: 0,
-    unreadMessages: 0,
-    pendingAffiliates: 0,
-    totalAffiliates: 0,
-  });
   const [loading, setLoading] = useState(true);
+<<<<<<< HEAD
   const [studioOwners, setStudioOwners] = useState([]);
   const [studioLoading, setStudioLoading] = useState(true);
   const [studioError, setStudioError] = useState(null);
@@ -153,6 +138,16 @@ export default function AdminDashboard() {
     loadStats();
     loadStudioOwners();
   }, [loadStudioOwners]);
+=======
+  const [fremioExpanded, setFremioExpanded] = useState(true);
+  const [studioExpanded, setStudioExpanded] = useState(true);
+
+  // Minimal init: just wait briefly so UI doesn't flash empty
+  useEffect(() => {
+    const t = setTimeout(() => setLoading(false), 400);
+    return () => clearTimeout(t);
+  }, []);
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   if (loading) {
     return (
@@ -165,6 +160,8 @@ export default function AdminDashboard() {
     );
   }
 
+  // Dashboard only shows domain action panels. Stats & tables live in their own pages via sidebar.
+
   return (
     <div
       style={{
@@ -175,10 +172,11 @@ export default function AdminDashboard() {
       }}
     >
       <div style={{ maxWidth: "1120px", margin: "0 auto", padding: "0 16px" }}>
-        {/* VPS Mode Info Banner */}
-        {isVPSMode() && (
+        {/* Domain Navigation — Two main panels */}
+        <section style={{ marginBottom: "24px" }}>
           <div
             style={{
+<<<<<<< HEAD
               marginBottom: "24px",
               background: "#dcfce7",
               border: "1px solid #86efac",
@@ -689,55 +687,208 @@ export default function AdminDashboard() {
           <div
             style={{
               padding: "22px 24px",
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
               gap: "16px",
             }}
           >
-            <ActionButton
-              icon={<Upload size={20} />}
-              label="Upload Frame"
-              description="Upload custom PNG frame"
-              onClick={() => navigate("/admin/upload-frame")}
-              highlight={true}
-            />
-            <ActionButton
-              icon={<Users size={20} />}
-              label="Manage Users"
-              description="View and manage user accounts"
-              onClick={() => navigate("/admin/users")}
-            />
-            <ActionButton
-              icon={<FileImage size={20} />}
-              label="Manage Frames"
-              description="View and manage frames"
-              onClick={() => navigate("/admin/frames")}
-            />
-            <ActionButton
-              icon={<Package size={20} />}
-              label="Categories"
-              description="Manage frame categories"
-              onClick={() => navigate("/admin/categories")}
-            />
-            <ActionButton
-              icon={<TrendingUp size={20} />}
-              label="Analytics"
-              description="View platform statistics"
-              onClick={() => navigate("/admin/analytics")}
-            />
-            <ActionButton
-              icon={<Mail size={20} />}
-              label="Messages"
-              description="View contact messages"
-              onClick={() => navigate("/admin/messages")}
-              badge={stats.unreadMessages}
-            />
-            <ActionButton
-              icon={<Settings size={20} />}
-              label="Settings"
-              description="Platform configuration"
-              onClick={() => navigate("/admin/settings")}
-            />
+            {/* fremio.id Panel */}
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #ecdeda",
+                borderRadius: "14px",
+                overflow: "hidden",
+              }}
+            >
+              <button
+                onClick={() => setFremioExpanded(v => !v)}
+                style={{
+                  width: "100%",
+                  padding: "20px 24px",
+                  border: "none",
+                  borderBottom: fremioExpanded ? "1px solid #f3ebe8" : "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  textAlign: "left",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                  <div
+                    style={{
+                      width: "44px",
+                      height: "44px",
+                      borderRadius: "12px",
+                      background: "linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "white",
+                    }}
+                  >
+                    <Globe size={22} />
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: "18px", fontWeight: "800", color: "#333" }}>
+                      fremio.id
+                    </h2>
+                    <p style={{ margin: "2px 0 0", fontSize: "13px", color: "#6b6b6b" }}>
+                      Frame platform, users, analytics
+                    </p>
+                  </div>
+                </div>
+                {fremioExpanded ? <ChevronUp size={20} color="#999" /> : <ChevronDown size={20} color="#999" />}
+              </button>
+
+              {fremioExpanded && (
+                <div
+                  style={{
+                    padding: "20px 24px",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: "12px",
+                  }}
+                >
+                  <ActionButton
+                    icon={<FileImage size={20} />}
+                    label="Manage Frames"
+                    description="View and manage frames"
+                    onClick={() => navigate("/admin/frames")}
+                    highlight={true}
+                  />
+                  <ActionButton
+                    icon={<Users size={20} />}
+                    label="Users"
+                    description="Manage user accounts"
+                    onClick={() => navigate("/admin/users")}
+                  />
+                  <ActionButton
+                    icon={<TrendingUp size={20} />}
+                    label="Analytics"
+                    description="Platform statistics"
+                    onClick={() => navigate("/admin/analytics")}
+                  />
+                  <ActionButton
+                    icon={<Wrench size={20} />}
+                    label="Maintenance"
+                    description="System maintenance"
+                    onClick={() => navigate("/admin/maintenance")}
+                  />
+                  <ActionButton
+                    icon={<Crown size={20} />}
+                    label="Subscribers"
+                    description="Paid subscribers"
+                    onClick={() => navigate("/admin/subscribers")}
+                  />
+                  <ActionButton
+                    icon={<Palette size={20} />}
+                    label="Designer Submissions"
+                    description="Designer applications"
+                    onClick={() => navigate("/admin/designer-submissions")}
+                  />
+                  <ActionButton
+                    icon={<Wallet size={20} />}
+                    label="Designer Wallets"
+                    description="Payouts & balances"
+                    onClick={() => navigate("/admin/designer-wallets")}
+                  />
+                  <ActionButton
+                    icon={<Link2 size={20} />}
+                    label="Share Links"
+                    description="Manage share URLs"
+                    onClick={() => navigate("/admin/share-links")}
+                  />
+                  <ActionButton
+                    icon={<CalendarCheck2 size={20} />}
+                    label="Event Submissions"
+                    description="Event applications"
+                    onClick={() => navigate("/admin/event-submissions")}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* studio.fremio.id Panel */}
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #ecdeda",
+                borderRadius: "14px",
+                overflow: "hidden",
+              }}
+            >
+              <button
+                onClick={() => setStudioExpanded(v => !v)}
+                style={{
+                  width: "100%",
+                  padding: "20px 24px",
+                  border: "none",
+                  borderBottom: studioExpanded ? "1px solid #f3ebe8" : "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  textAlign: "left",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                  <div
+                    style={{
+                      width: "44px",
+                      height: "44px",
+                      borderRadius: "12px",
+                      background: "linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "white",
+                    }}
+                  >
+                    <GalleryVerticalEnd size={22} />
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: "18px", fontWeight: "800", color: "#333" }}>
+                      studio.fremio.id
+                    </h2>
+                    <p style={{ margin: "2px 0 0", fontSize: "13px", color: "#6b6b6b" }}>
+                      Photo booth & studio control
+                    </p>
+                  </div>
+                </div>
+                {studioExpanded ? <ChevronUp size={20} color="#999" /> : <ChevronDown size={20} color="#999" />}
+              </button>
+
+              {studioExpanded && (
+                <div
+                  style={{
+                    padding: "20px 24px",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: "12px",
+                  }}
+                >
+                  <ActionButton
+                    icon={<GalleryVerticalEnd size={20} />}
+                    label="Studio Booth Control"
+                    description="Manage studio booths"
+                    onClick={() => navigate("/admin/studio-booths")}
+                  />
+                  <ActionButton
+                    icon={<Users size={20} />}
+                    label="Studio Owners"
+                    description="Booth operators & tiers"
+                    onClick={() => navigate("/admin/studio-owners")}
+                    highlight={true}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </section>
       </div>

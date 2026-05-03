@@ -1,4 +1,4 @@
-// File: /Users/salwa/Documents/fremio copy/studio/src/app/download/[qrCode]/page.tsx
+// File: C:\Users\A.r.r.a.y.19\fremio\studio\src\app\download\[qrCode]\page.tsx
 import * as entry from '../../../../../src/app/download/[qrCode]/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

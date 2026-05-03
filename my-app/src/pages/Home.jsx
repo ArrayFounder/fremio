@@ -58,9 +58,12 @@ export default function Home() {
             </p>
 
             <div className="cta-group">
+<<<<<<< HEAD
               <NavLink to="/shares" className="cta-share">
                 {t("home.cta_share")}
               </NavLink>
+=======
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               <NavLink to="/frames" className="cta-primary">
                 {t("home.cta_frames")}
               </NavLink>
@@ -70,6 +73,15 @@ export default function Home() {
               >
                 {t("home.cta_create")}
               </NavLink>
+<<<<<<< HEAD
+=======
+              <NavLink to="/event" className="cta-event">
+                {t("home.cta_event")}
+              </NavLink>
+              <NavLink to="/shares" className="cta-share">
+                {t("home.cta_share")}
+              </NavLink>
+>>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               <NavLink to="/designer" className="cta-tertiary">
                 {t("home.cta_designer")}
               </NavLink>

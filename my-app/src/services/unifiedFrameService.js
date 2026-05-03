@@ -370,13 +370,13 @@ class VPSFrameClient {
   }
 
   // Upload frame image (admin only)
-  async uploadFrameImage(file) {
+  async uploadFrameImage(file, fileName = null) {
     const formData = new FormData();
     // Ensure file has proper name and type for multer validation
-    const fileName = file.name || `frame_${Date.now()}.webp`;
+    const resolvedName = fileName || file.name || `frame_${Date.now()}.webp`;
     const fileType = file.type || 'image/webp';
     const blob = new Blob([file], { type: fileType });
-    formData.append('image', blob, fileName);
+    formData.append('image', blob, resolvedName);
     return await this.request('/upload/frame', {
       method: 'POST',
       body: formData
@@ -479,6 +479,10 @@ const unifiedFrameService = {
     // Overlay uploads are only supported in VPS mode today.
     // (Firebase mode can be added later if needed.)
     return await vpsClient.uploadOverlayImage(file, fileName);
+  },
+
+  async uploadFrameImage(file, fileName = null) {
+    return await vpsClient.uploadFrameImage(file, fileName);
   },
 
   // Alias for getAllFrames (compatibility)
