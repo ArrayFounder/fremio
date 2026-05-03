@@ -11,6 +11,58 @@ const printer = require('./printer');
 
 const PORT    = parseInt(process.env.PORT || '7432', 10);
 const VERSION = require('../package.json').version;
+const STATUS_CACHE_MS = Math.max(500, parseInt(process.env.STATUS_CACHE_MS || '3000', 10) || 3000);
+
+let statusCache = null;
+let statusInFlight = null;
+
+function buildStatusPayload(cameraData, printerData) {
+  return {
+    ok: true,
+    agent: {
+      version:  VERSION,
+      platform: os.platform(),
+      uptime:   process.uptime(),
+    },
+    camera: {
+      available:    cameraData.available,
+      count:        cameraData.cameras?.length ?? 0,
+      cameras:      cameraData.cameras ?? [],
+      capabilities: cameraData.capabilities ?? {
+        supportsCapture: false,
+        supportsLiveView: false,
+        mode: 'unknown',
+      },
+      ...(cameraData.error ? { error: cameraData.error } : {}),
+    },
+    printer: {
+      available:      printerData.available,
+      count:          printerData.printers?.length ?? 0,
+      printers:       printerData.printers ?? [],
+      defaultPrinter: printerData.defaultPrinter ?? null,
+      ...(printerData.error ? { error: printerData.error } : {}),
+    },
+  };
+}
+
+async function collectHardwareStatus() {
+  const [cameraResult, printerResult] = await Promise.allSettled([
+    camera.getCameraStatus(),
+    printer.detectPrinters(),
+  ]);
+
+  const cameraData =
+    cameraResult.status === 'fulfilled'
+      ? cameraResult.value
+      : { available: false, cameras: [], error: cameraResult.reason?.message };
+
+  const printerData =
+    printerResult.status === 'fulfilled'
+      ? printerResult.value
+      : { available: false, printers: [], error: printerResult.reason?.message };
+
+  return { cameraData, printerData };
+}
 
 // ─── App startup ──────────────────────────────────────────────────────────────
 
@@ -88,47 +140,29 @@ app.get('/preview', async (_req, res) => {
 app.get('/status', async (_req, res) => {
   logger.info('GET /status — checking hardware');
 
-  const [cameraResult, printerResult] = await Promise.allSettled([
-    camera.getCameraStatus(),
-    printer.detectPrinters(),
-  ]);
+  const now = Date.now();
+  if (statusCache && now - statusCache.ts < STATUS_CACHE_MS) {
+    const payload = buildStatusPayload(statusCache.cameraData, statusCache.printerData);
+    logger.info('/status result (cached)', {
+      cameraAvailable:  payload.camera.available,
+      printerAvailable: payload.printer.available,
+    });
+    return res.json(payload);
+  }
 
-  const cameraData =
-    cameraResult.status === 'fulfilled'
-      ? cameraResult.value
-      : { available: false, cameras: [], error: cameraResult.reason?.message };
+  if (!statusInFlight) {
+    statusInFlight = collectHardwareStatus()
+      .then(({ cameraData, printerData }) => {
+        statusCache = { ts: Date.now(), cameraData, printerData };
+        return statusCache;
+      })
+      .finally(() => {
+        statusInFlight = null;
+      });
+  }
 
-  const printerData =
-    printerResult.status === 'fulfilled'
-      ? printerResult.value
-      : { available: false, printers: [], error: printerResult.reason?.message };
-
-  const payload = {
-    ok: true,
-    agent: {
-      version:  VERSION,
-      platform: os.platform(),
-      uptime:   process.uptime(),
-    },
-    camera: {
-      available:    cameraData.available,
-      count:        cameraData.cameras?.length ?? 0,
-      cameras:      cameraData.cameras ?? [],
-      capabilities: cameraData.capabilities ?? {
-        supportsCapture: false,
-        supportsLiveView: false,
-        mode: 'unknown',
-      },
-      ...(cameraData.error ? { error: cameraData.error } : {}),
-    },
-    printer: {
-      available:      printerData.available,
-      count:          printerData.printers?.length ?? 0,
-      printers:       printerData.printers ?? [],
-      defaultPrinter: printerData.defaultPrinter ?? null,
-      ...(printerData.error ? { error: printerData.error } : {}),
-    },
-  };
+  const snapshot = await statusInFlight;
+  const payload = buildStatusPayload(snapshot.cameraData, snapshot.printerData);
 
   logger.info('/status result', {
     cameraAvailable:  payload.camera.available,
