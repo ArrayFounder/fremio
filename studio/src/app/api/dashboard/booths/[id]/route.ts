@@ -8,6 +8,7 @@ import type { ApiResponse } from "@/types";
 
 const updateSchema = z.object({
   boothName:              z.string().min(2).trim().optional(),
+  slug:                   z.string().min(3).max(50).regex(/^[a-z0-9-]+$/, "Slug hanya boleh huruf kecil, angka, dan tanda hubung").optional(),
   pricePerSession:        z.number().int().min(1000).optional(),
   printPricePerSheet:     z.number().int().min(0).optional(),
   sessionDurationSeconds: z.number().int().min(60).max(1800).optional(),
@@ -30,8 +31,8 @@ const updateSchema = z.object({
 async function getOwnedBooth(boothId: string, operatorId: string) {
   const b = await prisma.boothConfig.findUnique({
     where: { id: boothId },
-    select: { operatorId: true, primaryColor: true, welcomeScreenPrefs: true },
-  });
+    select: { operatorId: true, primaryColor: true, welcomeScreenPrefs: true, slugUpdatedAt: true } as any,
+  }) as any;
   if (!b || b.operatorId !== operatorId) return null;
   return b;
 }
@@ -58,8 +59,30 @@ export async function PATCH(
     );
   }
 
+  // Cek batasan 1 hari untuk perubahan slug
+  if (parsed.data.slug) {
+    const lastChange = (current as any).slugUpdatedAt;
+    if (lastChange) {
+      const now = new Date();
+      const lastChangeDate = new Date(lastChange);
+      const diffHours = (now.getTime() - lastChangeDate.getTime()) / (1000 * 60 * 60);
+      if (diffHours < 24) {
+        const remaining = Math.ceil(24 - diffHours);
+        return NextResponse.json<ApiResponse>({
+          success: false,
+          error: `Link booth hanya bisa diubah 1 kali per hari. Tunggu ${remaining} jam lagi.`,
+        }, { status: 429 });
+      }
+    }
+  }
+
   const { welcomeScreenPrefs, ...rest } = parsed.data;
   const updateData: Prisma.BoothConfigUpdateInput = { ...rest };
+
+  // Jika slug diubah, catat waktu perubahan
+  if (parsed.data.slug) {
+    (updateData as Prisma.BoothConfigUpdateInput & { slugUpdatedAt?: Date }).slugUpdatedAt = new Date();
+  }
 
   if (welcomeScreenPrefs !== undefined) {
     // Caller explicitly set welcomeScreenPrefs

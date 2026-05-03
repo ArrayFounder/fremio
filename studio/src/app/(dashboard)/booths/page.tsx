@@ -13,6 +13,7 @@ interface Booth {
   sessionDurationSeconds: number; printEnabled: boolean; isActive: boolean;
   primaryColor: string; accentColor: string;
   welcomeScreenPrefs?: Record<string, unknown> | null;
+  slugUpdatedAt?: string | null;
   timerTutorialSeconds:    number;
   timerFrameSelectSeconds: number;
   timerPrintCountSeconds:  number;
@@ -45,6 +46,22 @@ function isLightColor(hex: string): boolean {
     const b = parseInt(hex.slice(5, 7), 16);
     return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
   } catch { return true; }
+}
+
+function ClientDate({ date }: { date: string }) {
+  const [formatted, setFormatted] = useState<string | null>(null);
+  useEffect(() => {
+    setFormatted(
+      new Date(date).toLocaleDateString("id-ID", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    );
+  }, [date]);
+  if (!formatted) return <span className="invisible">00</span>;
+  return <span>Terakhir diubah: {formatted}</span>;
 }
 
 // ─── Screen Preview ───────────────────────────────────────────────────────────
@@ -2074,6 +2091,7 @@ export default function BoothsPage() {
 
   // Inline edit states
   const [editName,       setEditName]       = useState<string | null>(null);
+  const [editSlug,       setEditSlug]       = useState<string | null>(null);
   const [editPrice,      setEditPrice]      = useState<string | null>(null);
   const [editPrintPrice, setEditPrintPrice] = useState<string | null>(null);
   const [editDuration,   setEditDuration]   = useState<string | null>(null);
@@ -2383,17 +2401,6 @@ export default function BoothsPage() {
               <button onClick={() => setEditName(null)} className="shrink-0 text-xs px-2 py-1.5 rounded-lg border text-gray-500">✕</button>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-gray-900 truncate">{booth.boothName}</h1>
-              <button onClick={() => setEditName(booth.boothName)} className="text-gray-400 hover:text-gray-600 text-base" title="Ubah nama booth">✏️</button>
-            </div>
-          )}
-          <p className="text-gray-400 text-sm mt-1">studio.fremio.id/b/{booth.slug}</p>
-        </div>
-        <span className={`shrink-0 mt-1 px-3 py-1 rounded-full text-xs font-bold ${booth.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-          {booth.isActive ? "Aktif" : "Nonaktif"}
-        </span>
-      </div>
 
       {/* ── Quick Scroll to Tool Categories ───────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4">

@@ -129,6 +129,8 @@ model BoothConfig {
   /// Booth ini menggunakan 1 kredit operator (menghilangkan watermark trial)
   usesCredit             Boolean  @default(false)
   isActive               Boolean  @default(true)
+  /// Tanggal terakhir slug booth diubah (batasi 1 kali per hari)
+  slugUpdatedAt          DateTime?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 

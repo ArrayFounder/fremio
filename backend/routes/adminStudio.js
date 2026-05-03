@@ -115,4 +115,38 @@ router.put("/managed-frames", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
+router.put("/operators/:id", verifyToken, requireAdmin, async (req, res) => {
+  if (!ensureStudioSecret(res)) return;
+
+  try {
+    const response = await fetch(`${STUDIO_BASE_URL}/api/admin/studio-operators`, {
+      method: "PUT",
+      headers: getStudioHeaders(),
+      body: JSON.stringify({
+        id: req.params.id,
+        tier: req.body?.tier,
+        months: req.body?.months,
+      }),
+    });
+
+    const payload = await response.json();
+    if (!response.ok || !payload?.success) {
+      return res.status(response.status || 502).json({
+        success: false,
+        message: payload?.error || payload?.message || "Gagal mengupdate subscription",
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: payload.data,
+    });
+  } catch (error) {
+    return res.status(502).json({
+      success: false,
+      message: `Gagal menghubungi Studio API: ${error.message}`,
+    });
+  }
+});
+
 export default router;

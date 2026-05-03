@@ -137,7 +137,28 @@ export async function POST(req: Request): Promise<Response> {
     .filter(Boolean) as string[];
 
   if (imported > 0) {
-    // 1. Jika ada boothId spesifik, tambahkan ke booth tersebut
+    // 1. Hapus frame lama yang TIDAK ada di daftar frame baru
+    const oldIds = (await prisma.frame.findMany({ where: { id: { startsWith: "fremio_sb_" } }, select: { id: true } }))
+      .map((f) => f.id);
+    const newIds = successIds;
+    const idsToDelete = oldIds.filter((id) => !newIds.includes(id));
+    if (idsToDelete.length > 0) {
+      await prisma.frame.updateMany({ where: { id: { in: idsToDelete } }, data: { isActive: false } });
+    }
+
+    // 2. Nonaktifkan seed frame lama (frame-*) dan custom user frames agar
+    //    hanya frame import fremio.id yang tersisa di library
+    await prisma.frame.updateMany({
+      where: {
+        AND: [
+          { NOT: { id: { startsWith: "fremio_sb_" } } },
+          { isActive: true },
+        ],
+      },
+      data: { isActive: false },
+    });
+
+    // 3. Jika ada boothId spesifik, tambahkan ke booth tersebut
     if (boothId) {
       const booth = await prisma.boothConfig.findFirst({
         where: { id: boothId, operatorId: session.user.id },
@@ -154,7 +175,7 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    // 2. Tambahkan juga ke semua booth yang punya allowedFrameIds kosong (belum pernah diisi)
+    // 4. Tambahkan juga ke semua booth yang punya allowedFrameIds kosong (belum pernah diisi)
     //    agar booth yang masih default juga langsung dapat frame baru
     const allBoothsWithEmptyList = await prisma.boothConfig.findMany({
       where: { allowedFrameIds: { isEmpty: true } },

@@ -17,7 +17,7 @@ export async function GET(
     where:   { slug: params.slug, isActive: true },
     include: {
       operator: {
-        select: { isActive: true },
+        select: { isActive: true, subscriptionTier: true, subscriptionExpiry: true },
       },
     },
   });
@@ -37,17 +37,25 @@ export async function GET(
     );
   }
 
-  // Watermark trial hanya muncul jika booth TIDAK menggunakan kredit
-  const showTrialWatermark = !booth.usesCredit;
+  // Watermark trial: sembunyikan jika booth pakai kredit OR operator punya
+  // subscription PRO/ENTERPRISE yang belum expired
+  const op = booth.operator;
+  const hasValidSubscription = op.subscriptionTier === "PRO" || op.subscriptionTier === "ENTERPRISE"
+    ? (op.subscriptionExpiry && new Date(op.subscriptionExpiry) > new Date())
+    : false;
+  const showTrialWatermark = !(booth as any).usesCredit && !hasValidSubscription;
 
   // Ambil frames yang tersedia
-  // Jika allowedFrameIds kosong → ambil semua frame publik aktif
+  // Hanya tampilkan frame yang diimport dari fremio.id (prefix fremio_sb_)
   const rawFrames = await prisma.frame.findMany({
     where: {
       isActive: true,
-      ...(booth.allowedFrameIds.length > 0
-        ? { id: { in: booth.allowedFrameIds } }
-        : {}),
+      id: {
+        startsWith: "fremio_sb_",
+        ...(booth.allowedFrameIds.length > 0
+          ? { in: booth.allowedFrameIds }
+          : {}),
+      },
     },
     select: {
       id:           true,

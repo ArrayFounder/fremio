@@ -53,8 +53,10 @@ export async function GET(req: Request): Promise<Response> {
     }
   }
 
+  // Hanya tampilkan frame yang diimport dari fremio.id (prefix fremio_sb_)
+  // Seed frames (frame-*) dan custom user frames disembunyikan dari library
   const rawFrames = await prisma.frame.findMany({
-    where:   { isActive: true },
+    where:   { isActive: true, id: { startsWith: "fremio_sb_" } },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     select: {
       id:           true,

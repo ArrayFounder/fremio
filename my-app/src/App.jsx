@@ -65,6 +65,7 @@ import AdminDesignerWallet from "./pages/admin/AdminDesignerWallet.jsx";
 import AdminShareLinks from "./pages/admin/AdminShareLinks.jsx";
 import AdminEventSubmissions from "./pages/admin/AdminEventSubmissions.jsx";
 import AdminStudioBoothControl from "./pages/admin/AdminStudioBoothControl.jsx";
+import AdminStudioOwners from "./pages/admin/AdminStudioOwners.jsx";
 
 // Designer Pages
 import DesignerLanding from "./pages/designer/DesignerLanding.jsx";
@@ -281,6 +282,7 @@ export default function App() {
             <Route path="designer-wallets" element={<AdminDesignerWallet />} />
             <Route path="share-links" element={<AdminShareLinks />} />
             <Route path="event-submissions" element={<AdminEventSubmissions />} />
+            <Route path="studio-owners" element={<AdminStudioOwners />} />
             <Route path="studio-booths" element={<AdminStudioBoothControl />} />
             <Route path="studio-booths/editor" element={<AdminFrameCreator studioBoothMode />} />
             <Route path="settings" element={<AdminSettings />} />
