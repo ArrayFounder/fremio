@@ -60,7 +60,13 @@ if [ -f .env.production.local ]; then
   mv .env.prisma_tmp .env
 fi
 npx prisma generate
-npx prisma migrate deploy
+# If migrations are unavailable in repo, fallback to db push
+if [ -d prisma/migrations ] && find prisma/migrations -name migration.sql -print -quit | grep -q .; then
+  npx prisma migrate deploy
+else
+  echo "⚠️ prisma/migrations tidak ditemukan, fallback ke prisma db push"
+  npx prisma db push
+fi
 # Ensure slugUpdatedAt column exists (safe if already present)
 cat << 'SQL' | npx prisma db execute --stdin --schema prisma/schema.prisma
 ALTER TABLE "booth_configs" ADD COLUMN IF NOT EXISTS "slugUpdatedAt" TIMESTAMP(3);
