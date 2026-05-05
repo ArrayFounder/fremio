@@ -194,6 +194,21 @@ export default function AgentPage() {
                 </a>
               </div>
 
+              <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-amber-50 border border-amber-100">
+                <div>
+                  <p className="font-semibold text-amber-900 text-sm">Agent Windows Bundle (Canon EDSDK)</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Jika launcher installer belum mendeteksi Canon, gunakan bundle ini (sudah termasuk bridge + EDSDK DLL).</p>
+                </div>
+                <a
+                  href="/downloads/fremio-agent-win-bundle.zip"
+                  download="fremio-agent-win-bundle.zip"
+                  className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
+                  style={{ background: "linear-gradient(135deg, #d97706, #b45309)" }}
+                >
+                  Download Bundle
+                </a>
+              </div>
+
               {/* Step-by-step */}
               <div className="space-y-3">
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Langkah instalasi</p>

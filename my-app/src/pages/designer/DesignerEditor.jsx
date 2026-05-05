@@ -59,7 +59,7 @@ const EDITOR_TUTORIAL_STEPS = [
     position: "right",
     icon: "📐",
     title: "Ukuran Canvas",
-    body: "Mulai dengan memilih ukuran frame: Story Instagram (9:16), 4R, atau 2R. Klik tombol ini sekarang untuk melihat pilihannya!",
+    body: "Ukuran frame di Designer Editor adalah 4R (2:3). Klik tombol ini sekarang untuk melihat detailnya!",
     cta: "👆 Klik tombol Ukuran Canvas",
   },
   {
@@ -275,7 +275,7 @@ export default function DesignerEditor() {
   const [showExitPrompt, setShowExitPrompt] = useState(false);
   const pendingNavRef = useRef(null);  // target URL when exit was triggered
   const [toast, setToast] = useState(null);
-  const [canvasAspectRatio, setCanvasAspectRatio] = useState("9:16");
+  const [canvasAspectRatio, setCanvasAspectRatio] = useState("2:3");
   const [showCanvasSizeInProperties, setShowCanvasSizeInProperties] = useState(true);
   const [gradientColor1, setGradientColor1] = useState("#667eea");
   const [gradientColor2, setGradientColor2] = useState("#764ba2");
@@ -453,7 +453,8 @@ export default function DesignerEditor() {
             typeof frame_data === "string" ? JSON.parse(frame_data) : frame_data;
           setFrameName(frame_name || "");
           setFrameDescription(frame_description || "");
-          if (fd.aspectRatio) setCanvasAspectRatio(fd.aspectRatio);
+          // Designer editor enforces 4R (2:3) only; do not restore saved aspectRatio
+          // if (fd.aspectRatio) setCanvasAspectRatio(fd.aspectRatio);
           const cw = fd.canvasWidth || CANVAS_WIDTH;
           const ch = fd.canvasHeight || CANVAS_HEIGHT;
           if (fd.canvasBackground) setCanvasBackground(fd.canvasBackground);
@@ -467,9 +468,10 @@ export default function DesignerEditor() {
             zIndex: slot.zIndex || i + 1,
             rotation: slot.rotation || 0,
             locked: false,
-            photoIndex: slot.photoIndex != null ? slot.photoIndex : i,
             data: {
               label: "Foto",
+              photoIndex: slot.photoIndex != null ? slot.photoIndex : i,
+              slotNumber: slot.slotNumber != null ? slot.slotNumber : i + 1,
               borderRadius: slot.borderRadius || 0,
               objectFit: "cover",
             },
@@ -503,7 +505,8 @@ export default function DesignerEditor() {
           if (draft) {
             setFrameName(draft.frameName || "");
             setFrameDescription(draft.frameDescription || "");
-            if (draft.canvasAspectRatio) setCanvasAspectRatio(draft.canvasAspectRatio);
+            // Designer editor enforces 4R (2:3) only; do not restore saved aspectRatio
+            // if (draft.canvasAspectRatio) setCanvasAspectRatio(draft.canvasAspectRatio);
             if (draft.canvasBackground) setCanvasBackground(draft.canvasBackground);
             setElements(draft.elements || []);
           }
@@ -538,7 +541,8 @@ export default function DesignerEditor() {
           typeof frame_data === "string" ? JSON.parse(frame_data) : frame_data;
         setFrameName(frame_name || "");
         setFrameDescription(frame_description || "");
-        if (fd.aspectRatio) setCanvasAspectRatio(fd.aspectRatio);
+        // Designer editor enforces 4R (2:3) only; do not restore saved aspectRatio
+        // if (fd.aspectRatio) setCanvasAspectRatio(fd.aspectRatio);
         const cw = fd.canvasWidth || CANVAS_WIDTH;
         const ch = fd.canvasHeight || CANVAS_HEIGHT;
         if (fd.canvasBackground) setCanvasBackground(fd.canvasBackground);
@@ -553,9 +557,10 @@ export default function DesignerEditor() {
           zIndex: slot.zIndex || i + 1,
           rotation: slot.rotation || 0,
           locked: false,
-          photoIndex: slot.photoIndex != null ? slot.photoIndex : i,
           data: {
             label: "Foto",
+            photoIndex: slot.photoIndex != null ? slot.photoIndex : i,
+            slotNumber: slot.slotNumber != null ? slot.slotNumber : i + 1,
             borderRadius: slot.borderRadius || 0,
             objectFit: "cover",
           },
@@ -1280,7 +1285,8 @@ export default function DesignerEditor() {
         width: el.width / canvasWidth,
         height: el.height / canvasHeight,
         zIndex: 1,
-        photoIndex: index,
+        photoIndex: el.data?.photoIndex ?? index,
+        slotNumber: el.data?.slotNumber ?? index + 1,
         borderRadius: el.data?.borderRadius || 0,
         rotation: Number.isFinite(el.rotation) ? el.rotation : 0,
       }));
@@ -1922,6 +1928,7 @@ export default function DesignerEditor() {
               canvasAspectRatio={canvasAspectRatio}
               onCanvasAspectRatioChange={setCanvasAspectRatio}
               showCanvasSizeMode={showCanvasSizeInProperties}
+              allowedCanvasRatios={["2:3"]}
               gradientColor1={gradientColor1}
               gradientColor2={gradientColor2}
               setGradientColor1={setGradientColor1}
@@ -2043,6 +2050,7 @@ export default function DesignerEditor() {
                     canvasAspectRatio={canvasAspectRatio}
                     onCanvasAspectRatioChange={setCanvasAspectRatio}
                     showCanvasSizeMode={showCanvasSizeInProperties}
+                    allowedCanvasRatios={["2:3"]}
                     gradientColor1={gradientColor1}
                     gradientColor2={gradientColor2}
                     setGradientColor1={setGradientColor1}

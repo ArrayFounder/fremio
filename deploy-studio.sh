@@ -71,6 +71,14 @@ fi
 cat << 'SQL' | npx prisma db execute --stdin --schema prisma/schema.prisma
 ALTER TABLE "booth_configs" ADD COLUMN IF NOT EXISTS "slugUpdatedAt" TIMESTAMP(3);
 SQL
+
+# Sync direct agent download files (served by nginx alias)
+mkdir -p /var/www/fremio/downloads
+cp -f /root/fremio-studio/public/downloads/fremio-agent-win.exe /var/www/fremio/downloads/fremio-agent-win.exe
+cp -f /root/fremio-studio/public/downloads/fremio-agent-win-bundle.zip /var/www/fremio/downloads/fremio-agent-win-bundle.zip
+cp -f /root/fremio-studio/public/downloads/fremio-agent-mac-arm64 /var/www/fremio/downloads/fremio-agent-mac-arm64
+cp -f /root/fremio-studio/public/downloads/fremio-agent-mac-x64 /var/www/fremio/downloads/fremio-agent-mac-x64
+
 pm2 restart fremio-studio || pm2 start npm --name fremio-studio -- start
 pm2 save
 echo "✅ Server restarted"

@@ -49,6 +49,9 @@ pids
 *.seed
 *.pid.lock
 
+# Canon EDSDK local package (proprietary, keep local)
+EDSDK132010CD(13.20.10)/
+
 # Prisma
 prisma/*.db
 prisma/migrations/*/

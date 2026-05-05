@@ -28,12 +28,13 @@
     ],
     "extraResources": [
       {
-        "from": "../../agent",
+        "from": "../agent",
         "to": "embedded-agent/agent",
         "filter": [
           "package.json",
           "package-lock.json",
           ".env.example",
+          "bin/**/*",
           "src/**/*",
 <<<<<<< HEAD
           "node_modules/**/*"

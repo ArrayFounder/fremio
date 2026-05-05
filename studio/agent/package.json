@@ -8,6 +8,11 @@
     "dev":      "ts-node src/server.ts",
     "build":    "tsc",
     "start":    "node dist/server.js",
+    "bridge:status": "./bin/edsdk-bridge status",
+    "bridge:preview": "./bin/edsdk-bridge preview > /tmp/fremio-bridge-preview.jpg",
+    "bridge:capture": "./bin/edsdk-bridge capture --output /tmp/fremio-bridge-capture.jpg",
+    "bridge:build:win-native": "dotnet publish native/edsdk-bridge/CanonEdsdkBridge.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true -o native/edsdk-bridge/publish/win-x64 && node scripts/copy-native-bridge.mjs",
+    "bridge:stage:win-native": "node scripts/copy-native-bridge.mjs",
     "pkg:win":  "pkg dist/server.js --target node18-win-x64 --output fremio-agent-win.exe",
     "pkg:mac":  "pkg dist/server.js --target node18-macos-arm64 --output fremio-agent-mac"
   },

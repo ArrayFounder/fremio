@@ -44,7 +44,7 @@ function buildPreviewElements(rawFrameData) {
         x: (slot.left || 0) * cw, y: (slot.top || 0) * ch,
         width: (slot.width || 0) * cw, height: (slot.height || 0) * ch,
         rotation: slot.rotation || 0, zIndex: 0,
-        data: { photoIndex: slot.photoIndex ?? idx, borderRadius: slot.borderRadius || 0, label: "Foto" },
+        data: { photoIndex: slot.photoIndex ?? idx, slotNumber: slot.slotNumber ?? idx + 1, borderRadius: slot.borderRadius || 0, label: "Foto" },
       });
     });
   }

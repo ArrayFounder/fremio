@@ -159,6 +159,7 @@ export default function PropertiesPanel({
   photoVerticalMode = "parallel",
   photoGapY = 30,
   onPhotoGapChange = () => {},
+  allowedCanvasRatios = null,
 }) {
   // Local state for dimension inputs
   const [localWidth, setLocalWidth] = useState("");
@@ -740,8 +741,8 @@ export default function PropertiesPanel({
                 { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱", matchRatios: ["9:16"] },
                 { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "🎥", matchRatios: ["2:3"] },
                 { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️", matchRatios: ["1:3"] },
-                { label: "A3/A4/A5", ratio: "A4", desc: "1240 × 1754 px", icon: "�", matchRatios: ["A3","A4","A5"] },
-              ].map((preset) => {
+                { label: "A3/A4/A5", ratio: "A4", desc: "1240 × 1754 px", icon: "", matchRatios: ["A3","A4","A5"] },
+              ].filter((preset) => !allowedCanvasRatios || preset.matchRatios.some((r) => allowedCanvasRatios.includes(r))).map((preset) => {
                 const isSelected = preset.matchRatios.includes(canvasAspectRatio);
                 return (
                   <button
@@ -824,7 +825,7 @@ export default function PropertiesPanel({
               })}
 
               {/* Custom size */}
-              {(() => {
+              {!allowedCanvasRatios && (() => {
                 const stdRatios = ['9:16','2:3','1:3','A3','A4','A5'];
                 const isCustomActive = !stdRatios.includes(canvasAspectRatio);
                 return (
@@ -1163,12 +1164,12 @@ export default function PropertiesPanel({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {[
                 { label: "Story Instagram", ratio: "9:16", desc: "1080 × 1920", icon: "📱" },
-                { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "�" },
+                { label: "4R", ratio: "2:3", desc: "1200 × 1800", icon: "🎥" },
                 { label: "2R", ratio: "1:3", desc: "600 × 1800", icon: "🖼️" },
                 { label: "A3", ratio: "A3", desc: "297 × 420 mm", icon: "📄" },
                 { label: "A4", ratio: "A4", desc: "210 × 297 mm", icon: "📃" },
                 { label: "A5", ratio: "A5", desc: "148 × 210 mm", icon: "📋" },
-              ].map((preset) => {
+              ].filter((preset) => !allowedCanvasRatios || allowedCanvasRatios.includes(preset.ratio)).map((preset) => {
                 const isSelected = canvasAspectRatio === preset.ratio;
                 return (
                   <button
@@ -1251,7 +1252,7 @@ export default function PropertiesPanel({
               })}
 
               {/* Custom size */}
-              {(() => {
+              {!allowedCanvasRatios && (() => {
                 const stdRatios2 = ['9:16','2:3','1:3','A3','A4','A5'];
                 const isCustomActive2 = !stdRatios2.includes(canvasAspectRatio);
                 return (

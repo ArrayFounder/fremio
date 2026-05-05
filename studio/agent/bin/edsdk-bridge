@@ -1,0 +1,51 @@
+#!/usr/bin/env node
+
+'use strict';
+
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+function resolveNativeBridgePath() {
+  const envPath = process.env.EDSDK_NATIVE_BRIDGE_PATH?.trim();
+  if (envPath && fs.existsSync(envPath)) return envPath;
+
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  const localCandidates = [
+    path.join(__dirname, `edsdk-bridge-native${ext}`),
+    path.join(__dirname, 'native', `edsdk-bridge${ext}`),
+  ];
+
+  return localCandidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function main() {
+  const nativeBridge = resolveNativeBridgePath();
+  if (!nativeBridge) {
+    process.stderr.write(
+      'EDSDK native bridge tidak ditemukan. Set EDSDK_NATIVE_BRIDGE_PATH atau letakkan binary di studio/agent/bin.\n'
+    );
+    process.exit(1);
+    return;
+  }
+
+  const child = spawn(nativeBridge, process.argv.slice(2), {
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+
+  child.on('error', (err) => {
+    process.stderr.write(`${err.message || String(err)}\n`);
+    process.exit(1);
+  });
+
+  child.on('exit', (code, signal) => {
+    if (signal) {
+      process.exit(1);
+      return;
+    }
+    process.exit(code ?? 1);
+  });
+}
+
+main();
