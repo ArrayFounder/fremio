@@ -1230,22 +1230,19 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             <div className="absolute inset-0 bg-white animate-ping-once pointer-events-none" />
           )}
 
-          {/* Captured photos overlay — portrait: bottom strip, landscape: left side */}
+          {/* Captured photos overlay — fullscreen: bottom strip, horizontal center */}
           {cdState !== "COUNTING" && (
             <div
-              className={isPortrait
-                ? "absolute left-3 right-3 bottom-4 h-24 flex items-center gap-2 p-2 overflow-x-auto rounded-2xl backdrop-blur-sm"
-                : "absolute top-1/2 left-4 -translate-y-1/2 w-32 max-h-1/2 flex flex-col gap-2 p-2 overflow-y-auto rounded-xl backdrop-blur-sm"
-              }
+              className="absolute left-1/2 -translate-x-1/2 bottom-4 h-24 w-[min(92vw,720px)] flex items-center justify-center gap-2 p-2 overflow-x-auto rounded-2xl backdrop-blur-sm"
               style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
             >
-              <div className={isPortrait ? "text-[10px] font-bold text-white shrink-0 px-1" : "text-[10px] font-bold text-center text-white mb-1"}>
+              <div className="text-[10px] font-bold text-white shrink-0 px-1">
                 Foto ({capturedPhotos.length}/{totalPhotos})
               </div>
 
-              {(isPortrait ? Array.from({ length: totalPhotos }).map((_, i) => capturedPhotos[i] || null) : capturedPhotos).map((photo, i) => (
+              {Array.from({ length: totalPhotos }).map((_, i) => capturedPhotos[i] || null).map((photo, i) => (
                 photo ? (
-                  <div key={i} className={isPortrait ? "relative w-16 h-16 shrink-0 rounded-lg overflow-hidden shadow-lg" : "relative aspect-square rounded-lg overflow-hidden shadow-lg"}>
+                  <div key={i} className="relative w-16 h-16 shrink-0 rounded-lg overflow-hidden shadow-lg">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={photo} alt={`Foto ${i + 1}`}
                         className="w-full h-full object-cover" />
@@ -1261,19 +1258,12 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                       ✕
                     </button>
                   </div>
-                ) : isPortrait ? (
+                ) : (
                   <div key={`empty-${i}`} className="w-16 h-16 shrink-0 rounded-lg border-2 border-dashed flex items-center justify-center"
                       style={{ borderColor: "rgba(255,255,255,0.3)", opacity: 0.7 }}>
                     <span className="text-[8px] text-white">{i + 1}</span>
                   </div>
-                ) : null
-              ))}
-
-              {!isPortrait && Array.from({ length: totalPhotos - capturedPhotos.length }).map((_, i) => (
-                <div key={`empty-${i}`} className="aspect-square rounded-lg border-2 border-dashed flex items-center justify-center"
-                    style={{ borderColor: "rgba(255,255,255,0.3)", opacity: 0.7 }}>
-                  <span className="text-[8px] text-white">{capturedPhotos.length + i + 1}</span>
-                </div>
+                )
               ))}
             </div>
           )}
@@ -1281,7 +1271,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           {/* Capture button overlay */}
           <div
             className="absolute left-1/2 -translate-x-1/2"
-            style={{ bottom: isPortrait ? (cdState !== "COUNTING" ? "8rem" : "2rem") : "2rem" }}
+            style={{ bottom: cdState !== "COUNTING" ? "8rem" : "2rem" }}
           >
             {allPhotosDone && retakeSlotIndex === null ? (
               <button
