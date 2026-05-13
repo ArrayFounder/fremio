@@ -39,11 +39,12 @@ export async function GET(
 
   // Watermark trial: sembunyikan jika booth pakai kredit OR operator punya
   // subscription PRO/ENTERPRISE yang belum expired
+  // Special exception: disable watermark for booth "tes"
   const op = booth.operator;
   const hasValidSubscription = op.subscriptionTier === "PRO" || op.subscriptionTier === "ENTERPRISE"
     ? (op.subscriptionExpiry && new Date(op.subscriptionExpiry) > new Date())
     : false;
-  const showTrialWatermark = !(booth as any).usesCredit && !hasValidSubscription;
+  const showTrialWatermark = booth.slug !== "tes" && !(booth as any).usesCredit && !hasValidSubscription;
 
   // Ambil frames yang tersedia
   // Hanya tampilkan frame yang diimport dari fremio.id (prefix fremio_sb_)
@@ -90,7 +91,10 @@ export async function GET(
     const override = frameCategoryOverrides[frameId];
     const maxCaptures = Number(f.maxCaptures ?? 1);
     const normalizedSlots = frameId.startsWith("fremio_")
-      ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1)
+      ? normalizeImportedSlots(f.slots ?? null, Number.isFinite(maxCaptures) ? maxCaptures : 1, {
+          canvasWidth: Number(f.canvasWidth ?? 1080),
+          canvasHeight: Number(f.canvasHeight ?? 1920),
+        })
       : f.slots;
     return {
       ...f,
@@ -123,6 +127,7 @@ export async function GET(
         timerCameraSeconds:      booth.timerCameraSeconds,
         timerPreviewSeconds:     booth.timerPreviewSeconds,
         timerDeliverySeconds:    booth.timerDeliverySeconds,
+        photoSessionMode:       (booth as any).photoSessionMode ?? "live_view",
       },
       frames,
     },

@@ -189,6 +189,8 @@ class VPSFrameClient {
       // Cache-bust list requests to avoid stale results (e.g., CDN/browser caching)
       const ts = String(Date.now());
       const includeHidden = !!options?.includeHidden;
+      const source = typeof options?.source === 'string' ? options.source.trim().toLowerCase() : '';
+      const category = typeof options?.category === 'string' ? options.category.trim() : '';
 
       // If backend supports pagination, fetch all pages so admin isn't capped at default page sizes.
       // Keep a conservative hard limit to avoid infinite loops if the backend reports bad pagination.
@@ -207,6 +209,8 @@ class VPSFrameClient {
         params.set('page', String(page));
         params.set('limit', String(pageSize));
         if (includeHidden) params.set('includeHidden', 'true');
+        if (source) params.set('source', source);
+        if (category) params.set('category', category);
 
         const data = await this.request(`/frames?${params.toString()}`);
 

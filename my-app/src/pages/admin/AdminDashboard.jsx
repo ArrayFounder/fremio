@@ -7,6 +7,14 @@ import {
   FileImage,
   TrendingUp,
   Globe,
+  Shield,
+  RefreshCw,
+  Upload,
+  Eye,
+  Download,
+  Heart,
+  Mail,
+  Handshake,
   ChevronDown,
   ChevronUp,
   Wrench,
@@ -17,18 +25,36 @@ import {
   CalendarCheck2,
   GalleryVerticalEnd,
 } from "lucide-react";
+import unifiedFrameService from "../../services/unifiedFrameService";
+import { getAllUsers } from "../../services/unifiedUserService";
+import { getUnreadMessagesCount } from "../../services/contactMessageService";
+import { getAffiliateStats } from "../../services/affiliateService";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
 
   const [loading, setLoading] = useState(true);
-<<<<<<< HEAD
+  const [stats, setStats] = useState({
+    totalFrames: 0,
+    totalUsers: 0,
+    totalViews: 0,
+    totalDownloads: 0,
+    totalLikes: 0,
+    unreadMessages: 0,
+    pendingAffiliates: 0,
+    totalAffiliates: 0,
+  });
+  const [fremioExpanded, setFremioExpanded] = useState(true);
+  const [studioExpanded, setStudioExpanded] = useState(true);
   const [studioOwners, setStudioOwners] = useState([]);
   const [studioLoading, setStudioLoading] = useState(true);
   const [studioError, setStudioError] = useState(null);
   const [ownerSearch, setOwnerSearch] = useState("");
   const [expandedOwner, setExpandedOwner] = useState(null);
+  const [upgradeTier, setUpgradeTier] = useState("PRO");
+  const [upgradeMonths, setUpgradeMonths] = useState(7);
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
 
   // Load stats from VPS API and other sources
   const loadStats = async (forceRefresh = false) => {
@@ -133,21 +159,37 @@ export default function AdminDashboard() {
     }
   }, []);
 
+  // Upgrade studio operator subscription
+  const upgradeAccount = async (operatorId) => {
+    setUpgradeLoading(true);
+    try {
+      const res = await fetch(`/admin/studio/operators/${operatorId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("fremio_token") || localStorage.getItem("auth_token") || ""}`,
+        },
+        body: JSON.stringify({
+          tier: upgradeTier,
+          months: upgradeMonths,
+        }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message ?? "Gagal mengupgrade subscription");
+      await loadStudioOwners();
+      alert("✅ Subscription berhasil diupdate!");
+    } catch (e) {
+      alert("❌ " + e.message);
+    } finally {
+      setUpgradeLoading(false);
+    }
+  };
+
   // Fetch dashboard stats
   useEffect(() => {
     loadStats();
     loadStudioOwners();
   }, [loadStudioOwners]);
-=======
-  const [fremioExpanded, setFremioExpanded] = useState(true);
-  const [studioExpanded, setStudioExpanded] = useState(true);
-
-  // Minimal init: just wait briefly so UI doesn't flash empty
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 400);
-    return () => clearTimeout(t);
-  }, []);
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   if (loading) {
     return (
@@ -176,7 +218,6 @@ export default function AdminDashboard() {
         <section style={{ marginBottom: "24px" }}>
           <div
             style={{
-<<<<<<< HEAD
               marginBottom: "24px",
               background: "#dcfce7",
               border: "1px solid #86efac",
@@ -214,7 +255,7 @@ export default function AdminDashboard() {
               </div>
             </div>
           </div>
-        )}
+        </section>
 
         {/* Stats Header with Refresh Button */}
         <div
@@ -642,6 +683,61 @@ export default function AdminDashboard() {
                                 ) : (
                                   <p style={{ margin: "8px 0 0", color: "#aaa", fontSize: "12px" }}>Belum ada booth.</p>
                                 )}
+
+                                {/* Subscription management form */}
+                                <div style={{ marginTop: 12, padding: 12, background: "white", border: "1px solid #e0b7a9", borderRadius: 8 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 700, color: "#333", marginBottom: 8 }}>
+                                    {(owner.subscriptionTier === "STARTER" || owner.subscriptionTier === "FREE") ? "Upgrade ke Paid" : "Perpanjang Masa Aktif"}
+                                  </div>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                    <select
+                                      value={upgradeTier}
+                                      onChange={(e) => setUpgradeTier(e.target.value)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      style={{ padding: "6px 10px", border: "1px solid #e0b7a9", borderRadius: 6, fontSize: 12 }}
+                                    >
+                                      <option value="PRO">PRO</option>
+                                      <option value="ENTERPRISE">ENTERPRISE</option>
+                                    </select>
+                                    <select
+                                      value={upgradeMonths}
+                                      onChange={(e) => setUpgradeMonths(Number(e.target.value))}
+                                      onClick={(e) => e.stopPropagation()}
+                                      style={{ padding: "6px 10px", border: "1px solid #e0b7a9", borderRadius: 6, fontSize: 12 }}
+                                    >
+                                      <option value={1}>1 hari</option>
+                                      <option value={3}>3 hari</option>
+                                      <option value={7}>7 hari</option>
+                                      <option value={14}>14 hari</option>
+                                      <option value={30}>30 hari</option>
+                                      <option value={60}>60 hari</option>
+                                      <option value={90}>90 hari</option>
+                                    </select>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        upgradeAccount(owner.id);
+                                      }}
+                                      disabled={upgradeLoading}
+                                      style={{
+                                        padding: "6px 14px",
+                                        background: upgradeLoading ? "#f0f0f0" : "#111827",
+                                        color: upgradeLoading ? "#999" : "#fff",
+                                        border: "none",
+                                        borderRadius: 6,
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        cursor: upgradeLoading ? "not-allowed" : "pointer",
+                                      }}
+                                    >
+                                      {upgradeLoading
+                                        ? "Menyimpan..."
+                                        : owner.subscriptionTier === "STARTER" || owner.subscriptionTier === "FREE"
+                                        ? "Konfirmasi Upgrade"
+                                        : "Konfirmasi Perpanjangan"}
+                                    </button>
+                                  </div>
+                                </div>
                               </td>
                             </tr>
                           )}
@@ -687,8 +783,6 @@ export default function AdminDashboard() {
           <div
             style={{
               padding: "22px 24px",
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               display: "grid",
               gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
               gap: "16px",

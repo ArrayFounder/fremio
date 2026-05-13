@@ -299,12 +299,9 @@ router.get("/", optionalAuth, async (req, res) => {
         queryParams.push(source);
       }
       paramIndex++;
-<<<<<<< HEAD
-=======
-    } else {
+    } else if (!allowHidden) {
       // Public endpoint: exclude admin-only frames (studio_booth and designer) unless explicitly requested
       queryText += ` AND (source IS NULL OR (source != 'studio_booth' AND source != 'designer'))`;
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     }
 
     // Deterministic ordering avoids "random" disappearance when paging/limits apply
@@ -342,12 +339,9 @@ router.get("/", optionalAuth, async (req, res) => {
           countQuery += ` AND source = $${countParams.length + 1}`;
           countParams.push(source);
         }
-<<<<<<< HEAD
-=======
-      } else {
+      } else if (!allowHidden) {
         // Public endpoint: exclude admin-only frames from count
         countQuery += ` AND (source IS NULL OR (source != 'studio_booth' AND source != 'designer'))`;
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       }
       const countResult = await pool.query(countQuery, countParams);
       total = parseInt(countResult.rows[0].count);
@@ -1028,13 +1022,8 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
     // Use PostgreSQL for VPS mode
     try {
       const result = await pool.query(
-<<<<<<< HEAD
-        `INSERT INTO frames (id, name, description, category, image_path, slots, max_captures, layout, canvas_background, canvas_width, canvas_height, created_by, is_active, is_hidden, is_premium, source, is_template)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, $14, $15, $16)
-=======
         `INSERT INTO frames (id, name, description, category, image_path, thumbnail_path, slots, max_captures, layout, canvas_background, canvas_width, canvas_height, created_by, is_active, is_hidden, is_premium, source, is_template)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14, $15, $16, $17)
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
            ON CONFLICT (id) DO UPDATE SET
              name = EXCLUDED.name,
              description = EXCLUDED.description,

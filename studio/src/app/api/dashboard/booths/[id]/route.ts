@@ -25,6 +25,7 @@ const updateSchema = z.object({
   timerCameraSeconds:      z.number().int().min(0).max(3600).optional(),
   timerPreviewSeconds:     z.number().int().min(0).max(3600).optional(),
   timerDeliverySeconds:    z.number().int().min(0).max(3600).optional(),
+  photoSessionMode:        z.enum(["live_view", "fullscreen"]).optional(),
 });
 
 // Pastikan booth milik operator yang login, sekaligus kembalikan data booth

@@ -52,6 +52,8 @@ const WIN_STEPS = [
   { icon: "🌐", title: "Mulai booth", desc: "Kalau status sudah siap, simpan slug booth lalu mulai sesi foto langsung dari app." },
 ];
 
+const WINDOWS_SETUP_FILE = "fremio-booth-windows-setup-v1.0.29.exe";
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AgentPage() {
@@ -84,7 +86,7 @@ export default function AgentPage() {
           style={{ background: "linear-gradient(135deg, #1a0f0a 0%, #2d1810 60%, #3d2215 100%)" }}>
           <div className="px-7 pt-7 pb-6 flex items-start gap-5">
             <div className="shrink-0 w-14 h-14 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center">
-              <Image src="/logo-salem.png" alt="Fremio" width={36} height={36} className="w-8 h-auto brightness-0 invert opacity-90" />
+              <Image src="/fremio_studio.png" alt="Fremio Studio" width={90} height={32} className="w-20 h-auto brightness-0 invert opacity-90" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -182,8 +184,8 @@ export default function AgentPage() {
                   <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Installer one-click</p>
                 </div>
                 <a
-                  href="/downloads/fremio-booth-windows-setup.exe"
-                  download="fremio-booth-windows-setup.exe"
+                  href={`/downloads/${WINDOWS_SETUP_FILE}`}
+                  download={WINDOWS_SETUP_FILE}
                   className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
                   style={{ background: "linear-gradient(135deg, #c28a7a, #a8705e)" }}
                 >

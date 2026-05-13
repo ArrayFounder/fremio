@@ -9,10 +9,11 @@ export interface WelcomeScreenPrefs {
   ctaX:                number        // center X tombol, 0-100, default 50
   ctaY:                number        // center Y tombol, 0-100, default 75
   ctaWidth:            number        // lebar tombol dlm % container width, default 75
-  /** Posisi & ukuran logo Fremio — nilai 0-100 sbg % dari container */
+  /** Posisi & ukuran logo — nilai 0-100 sbg % dari container */
   logoX:               number        // center X, default 50
   logoY:               number        // center Y, default 50
   logoWidth:           number        // lebar logo dlm % container width, default 40
+  logoImageUrl?:       string | null  // custom logo URL, fallback ke booth.logoUrl
   /** Tutorial screen — posisi & ukuran steps block dan CTA */
   tutorialStepsX:      number        // center X blok steps, default 50
   tutorialStepsY:      number        // center Y blok steps, default 42
@@ -58,6 +59,8 @@ export interface WelcomeScreenPrefs {
   deliveryWaMessage?:    string    // custom WA message, gunakan [url] sebagai placeholder
   /** Auto-download semua hasil (foto, GIF, video, foto original) ke device booth setelah preview selesai */
   autoDownloadEnabled?:  boolean
+  /** Aktifkan hasil live photo/video (jika false, hanya foto+frame, GIF, dan foto original) */
+  livePhotoVideoEnabled?: boolean
   /** Proteksi akses URL booth dengan PIN 6 digit */
   boothAccessPinEnabled?: boolean
   boothAccessPin?: string | null
@@ -94,6 +97,8 @@ export interface BoothConfigData {
   timerCameraSeconds:      number
   timerPreviewSeconds:     number
   timerDeliverySeconds:    number
+  /** Mode sesi foto: live_view (default) atau fullscreen */
+  photoSessionMode:        string
 }
 
 export interface PhotoSlot {
@@ -192,6 +197,8 @@ export interface BoothSessionState {
   qrImageUrl:          string | null
   qrString:            string | null
   snapToken:           string | null
+  snapClientKey:       string | null
+  snapRedirectUrl:     string | null
   paymentExpiresAt:    Date | null
   selectedFrame:       FrameData | null
   paymentMethod:       PaymentMethod | null
@@ -204,6 +211,7 @@ export interface BoothSessionState {
    */
   capturedVideos:      (Blob | null)[]
   compositeDataUrl:    string | null           // JPEG data URL setelah overlay frame
+  printImageDataUrl:   string | null           // JPEG data URL final lokal untuk silent print
   photoUrl:            string | null           // URL setelah upload foto
   downloadUrl:         string | null           // URL halaman download customer
   videoUrl:            string | null           // URL video Live Mode setelah upload
@@ -218,6 +226,8 @@ export const EMPTY_SESSION: BoothSessionState = {
   qrImageUrl:       null,
   qrString:         null,
   snapToken:        null,
+  snapClientKey:    null,
+  snapRedirectUrl:  null,
   paymentExpiresAt: null,
   selectedFrame:    null,
   paymentMethod:    null,
@@ -226,6 +236,7 @@ export const EMPTY_SESSION: BoothSessionState = {
   capturedPhotos:   [],
   capturedVideos:   [],
   compositeDataUrl: null,
+  printImageDataUrl: null,
   photoUrl:         null,
   downloadUrl:      null,
   videoUrl:         null,

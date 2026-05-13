@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { uploadPhoto, buildVideoKey } from "@/lib/r2";
 import type { ApiResponse } from "@/types";
 
-// POST /api/videos — upload video Live Mode dari booth (WebM dari MediaRecorder)
+// POST /api/videos — upload video Live Mode dari booth
+// Browser merekam dalam WebM container (VP8/VP9/H.264), disimpan sebagai .webm.
 // Menyimpan URL video ke BoothSession.videoUrl
 export async function POST(req: Request) {
   const formData  = await req.formData();
@@ -29,9 +30,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const key       = buildVideoKey(sessionId, file.type || "video/webm");
+  const key       = buildVideoKey(sessionId);
   const buffer    = Buffer.from(await file.arrayBuffer());
-  const publicUrl = await uploadPhoto(key, buffer, file.type || "video/webm");
+  const publicUrl = await uploadPhoto(key, buffer, "video/webm");
 
   const updated = await prisma.boothSession.update({
     where: { id: sessionId },

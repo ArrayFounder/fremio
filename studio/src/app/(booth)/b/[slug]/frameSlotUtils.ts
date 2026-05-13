@@ -120,6 +120,44 @@ export function getEffectiveSlots(frame: FrameData): PhotoSlot[] {
   return [];
 }
 
+export function createCaptureIndexResolver(slots: PhotoSlot[], isDuplicate: boolean): (slot: PhotoSlot) => number {
+  if (!isDuplicate) {
+    return (slot) => Math.max(0, Math.floor(Number(slot.photoIndex) || 0));
+  }
+
+  const finiteIndexes = slots
+    .map((slot) => Number(slot.photoIndex))
+    .filter((value) => Number.isFinite(value))
+    .map((value) => Math.floor(value));
+
+  const uniqueSorted = Array.from(new Set(finiteIndexes)).sort((a, b) => a - b);
+  const looksGroupedDuplicate = uniqueSorted.length > 0 && uniqueSorted.length <= Math.ceil(slots.length / 2);
+
+  if (looksGroupedDuplicate) {
+    const indexMap = new Map<number, number>(uniqueSorted.map((value, idx) => [value, idx]));
+    return (slot) => {
+      const raw = Math.floor(Number(slot.photoIndex) || 0);
+      return indexMap.get(raw) ?? 0;
+    };
+  }
+
+  const nRows = Math.max(1, Math.floor(slots.length / 2));
+  return (slot) => {
+    const pi = Math.max(0, Math.floor(Number(slot.photoIndex) || 0));
+    return pi % 2 === 0
+      ? Math.floor(pi / 2)
+      : nRows - 1 - Math.floor(pi / 2);
+  };
+}
+
+export function mapSlotsToCaptureIndexes(slots: PhotoSlot[], isDuplicate: boolean): PhotoSlot[] {
+  const resolveCaptureIndex = createCaptureIndexResolver(slots, isDuplicate);
+  return slots.map((slot) => ({
+    ...slot,
+    photoIndex: resolveCaptureIndex(slot),
+  }));
+}
+
 export function getEffectiveCaptureCount(frame: FrameData): number {
   const slots = getEffectiveSlots(frame);
 

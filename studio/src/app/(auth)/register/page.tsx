@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -46,8 +47,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white tracking-tight">fremio</h1>
-          <p className="text-primary-200 text-sm mt-1">Studio — Operator Dashboard</p>
+          <Image src="/fremio_studio.png" alt="Fremio Studio" width={220} height={70} className="mx-auto h-16 w-auto brightness-0 invert" priority />
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl p-8">

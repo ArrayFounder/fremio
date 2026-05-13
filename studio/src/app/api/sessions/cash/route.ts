@@ -29,6 +29,9 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const { boothConfigId, frameId, printCount } = parsed.data;
+  const requestedFrameId = typeof frameId === "string" && frameId.trim().length > 0
+    ? frameId.trim()
+    : null;
 
   const booth = await prisma.boothConfig.findUnique({
     where:   { id: boothConfigId, isActive: true },
@@ -59,16 +62,32 @@ export async function POST(req: Request): Promise<Response> {
   const qrCode    = `DL-${sessionId.toUpperCase().slice(0, 16)}`;
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 jam
 
-  await prisma.boothSession.create({
-    data: {
-      id:            sessionId,
-      boothConfigId,
-      frameId:       frameId ?? null,
-      status:        "ACTIVE",       // langsung aktif — bayar tunai ke operator
-      qrCode,
-      expiresAt,
-    },
-  });
+  let persistedFrameId: string | null = null;
+  if (requestedFrameId) {
+    const frame = await prisma.frame.findUnique({
+      where: { id: requestedFrameId },
+      select: { id: true, isActive: true },
+    });
+    if (frame?.isActive) {
+      persistedFrameId = frame.id;
+    }
+  }
+
+  try {
+    await prisma.boothSession.create({
+      data: {
+        id:            sessionId,
+        boothConfigId,
+        frameId:       persistedFrameId,
+        status:        "ACTIVE",       // langsung aktif — bayar tunai ke operator
+        qrCode,
+        expiresAt,
+      },
+    });
+  } catch (error) {
+    console.error("[sessions/cash] Failed to create session:", error);
+    return NextResponse.json<ApiResponse>({ success: false, error: "Gagal membuat sesi cash" }, { status: 500 });
+  }
 
   return NextResponse.json<ApiResponse>({
     success: true,

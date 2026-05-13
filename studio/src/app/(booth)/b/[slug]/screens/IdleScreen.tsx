@@ -25,6 +25,7 @@ export function getEffectivePrefs(booth: BoothConfigData, override?: WelcomeScre
     logoX:              stored?.logoX              ?? 50,
     logoY:              stored?.logoY              ?? 50,
     logoWidth:          stored?.logoWidth          ?? 40,
+    logoImageUrl:       stored?.logoImageUrl       ?? null,
     tutorialStepsX:     stored?.tutorialStepsX     ?? 50,
     tutorialStepsY:     stored?.tutorialStepsY     ?? 42,
     tutorialStepsWidth: stored?.tutorialStepsWidth ?? 92,
@@ -69,11 +70,11 @@ export function IdleScreen({ booth, onStart, isLoading, prefsOverride }: IdleScr
       className="relative flex flex-col h-full items-center justify-between py-16 px-8 select-none overflow-hidden"
       style={bgStyle}
     >
-      {/* Logo Fremio — posisi absolut sesuai prefs */}
+      {/* Logo — posisi absolut sesuai prefs */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/logo-fremio.png"
-        alt="Fremio"
+        src={prefs.logoImageUrl ?? booth.logoUrl ?? "/fremio_studio.png"}
+        alt="Logo"
         draggable={false}
         style={{
           position:  "absolute",

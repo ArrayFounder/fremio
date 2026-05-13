@@ -4,6 +4,7 @@ import { useState, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 
 function GoogleIcon() {
   return (
@@ -127,8 +128,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gradient-to-br from-primary-900 to-primary-800 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white tracking-tight">fremio</h1>
-          <p className="text-primary-200 text-sm mt-1">Studio — Operator Dashboard</p>
+          <Image src="/fremio_studio.png" alt="Fremio Studio" width={220} height={70} className="mx-auto h-16 w-auto brightness-0 invert" priority />
         </div>
         <Suspense fallback={<div className="bg-white rounded-2xl p-8 text-center text-gray-400 text-sm">Memuat…</div>}>
           <LoginForm />

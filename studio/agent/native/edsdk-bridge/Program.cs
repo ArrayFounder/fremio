@@ -177,12 +177,15 @@ internal static class Program
 internal sealed class EdsdkSession : IDisposable
 {
     private const uint PropID_Evf_OutputDevice = 0x00000500;
+    private const uint PropID_Evf_Mode = 0x00000501;
+    private const uint EvfOutputDevice_None = 0x00000000;
     private const uint EvfOutputDevice_PC = 0x00000002;
     private const uint PropID_ProductName = 0x00000002;
     private const uint PropID_SaveTo = 0x0000000B;
     private const uint SaveTo_Host = 2;
     private const uint EdsErr_DeviceBusy = 0x00000081;
     private const uint EdsErr_TakePictureNg = 0x00008D07;
+    private const uint EdsErr_ObjectNotReady = 0x0000A102;
     private const uint CameraCommand_TakePicture = 0;
 
     private IntPtr _cameraRef = IntPtr.Zero;
@@ -306,8 +309,22 @@ internal sealed class EdsdkSession : IDisposable
                 if (dlErr != 0)
                 {
                     consecutiveFails++;
-                    if (consecutiveFails > 40)
-                        throw new InvalidOperationException($"EVF gagal berturut-turut (0x{dlErr:X8})");
+                    if (consecutiveFails == 1 || consecutiveFails % 20 == 0)
+                    {
+                        Console.Error.WriteLine($"[bridge] EVF download retry (count={consecutiveFails}, err=0x{dlErr:X8})");
+                    }
+
+                    if (consecutiveFails % 12 == 0)
+                    {
+                        TryEnableEvf();
+                        PumpSdkEvents(4, 120);
+                    }
+
+                    if (consecutiveFails >= 160)
+                    {
+                        throw new InvalidOperationException($"EVF gagal berkepanjangan (0x{dlErr:X8})");
+                    }
+
                     Thread.Sleep(200);
                     continue;
                 }
@@ -383,6 +400,8 @@ internal sealed class EdsdkSession : IDisposable
         var downloadDone = new ManualResetEventSlim(false);
         var capturedData = Array.Empty<byte>();
         var capturedError = (Exception?)null;
+        var sawNonJpegTransfer = false;
+        var lastNonJpegFileName = string.Empty;
 
         _captureObjectHandler = (evt, objRef, context) =>
         {
@@ -395,19 +414,24 @@ internal sealed class EdsdkSession : IDisposable
                 // EOS 1100D sends DirItemCreated instead of DirItemRequestTransfer
                 if (evtId != Edsdk.ObjectEvent_DirItemRequestTransfer && evtId != Edsdk.ObjectEvent_DirItemCreated)
                 {
-                    if (objRef != IntPtr.Zero) Edsdk.EdsRelease(objRef);
+                    Console.Error.WriteLine($"[bridge] Ignoring event 0x{evtId:X8} (not DirItemRequestTransfer/DirItemCreated)");
+                    if (objRef != IntPtr.Zero)
+                    {
+                        Edsdk.EdsRelease(objRef);
+                        objRef = IntPtr.Zero;
+                    }
                     return 0;
                 }
 
                 if (objRef == IntPtr.Zero)
                 {
-                    capturedError = new InvalidOperationException("Handle foto Canon kosong");
-                    shouldSignal = true;
+                    Console.Error.WriteLine("[bridge] Capture object handle kosong, menunggu transfer berikutnya...");
                     return 0;
                 }
 
                 Check(Edsdk.EdsGetDirectoryItemInfo(objRef, out var itemInfo), "Gagal baca info file Canon");
-                Console.Error.WriteLine($"[bridge] DirItem: {itemInfo.FileName} size={itemInfo.Size}");
+                var fileName = (itemInfo.FileName ?? string.Empty).Trim();
+                Console.Error.WriteLine($"[bridge] DirItem: '{fileName}' size={itemInfo.Size}");
 
                 Check(Edsdk.EdsCreateMemoryStream(0, out var streamRef), "Gagal buat stream download");
                 try
@@ -415,39 +439,47 @@ internal sealed class EdsdkSession : IDisposable
                     Check(Edsdk.EdsDownload(objRef, itemInfo.Size, streamRef), "Gagal download hasil capture Canon");
                     Console.Error.WriteLine("[bridge] EdsDownload succeeded");
 
-                    // Only call DownloadComplete for PC-requested transfers (internal memory clear)
-                    if (evtId == Edsdk.ObjectEvent_DirItemRequestTransfer)
-                    {
-                        Check(Edsdk.EdsDownloadComplete(objRef), "Gagal finalize download capture Canon");
-                        Console.Error.WriteLine("[bridge] EdsDownloadComplete succeeded");
-                    }
-
                     Check(Edsdk.EdsGetPointer(streamRef, out var ptr), "Gagal baca pointer stream capture");
                     Check(Edsdk.EdsGetLength(streamRef, out var len), "Gagal baca ukuran stream capture");
 
                     if (ptr == IntPtr.Zero || len <= 0 || len > int.MaxValue)
                     {
-                        capturedError = new InvalidOperationException("Data capture Canon kosong");
-                        shouldSignal = true;
+                        Console.Error.WriteLine("[bridge] Capture transfer kosong, menunggu transfer berikutnya...");
+                        capturedData = Array.Empty<byte>();
+                        capturedError = null;
                         return 0;
                     }
 
                     capturedData = new byte[len];
                     Marshal.Copy(ptr, capturedData, 0, (int)len);
-                    Console.Error.WriteLine($"[bridge] Captured {capturedData.Length} bytes");
-                    if (!IsLikelyJpeg(capturedData))
+                    var headerHex = capturedData.Length >= 4 ? string.Join(" ", capturedData.Take(4).Select(b => b.ToString("X2"))) : "N/A";
+                    Console.Error.WriteLine($"[bridge] Captured {capturedData.Length} bytes, header={headerHex}");
+                    if (!IsLikelyJpeg(capturedData) && !IsLikelyJpegFileName(fileName))
                     {
-                        Console.Error.WriteLine("[bridge] Captured transfer is non-JPEG, waiting for next transfer...");
+                        sawNonJpegTransfer = true;
+                        lastNonJpegFileName = fileName;
+                        Console.Error.WriteLine($"[bridge] Non-JPEG detected: fileName='{fileName}', header={headerHex}, size={capturedData.Length}");
+                        Console.Error.WriteLine("[bridge] Skipping non-JPEG transfer, waiting for JPEG...");
                         capturedData = Array.Empty<byte>();
+                        capturedError = null;
+                        // Jangan panggil EdsDownloadComplete untuk non-JPEG agar kamera tetap kirim JPEG
                         return 0;
                     }
 
                     var capturedAtUtc = TryParseCameraDateTime(itemInfo.DateTime);
-                    if (capturedAtUtc.HasValue && capturedAtUtc.Value < staleCutoffUtc)
+                    if (capturedAtUtc.HasValue && capturedAtUtc.Value.Year >= 2000 && capturedAtUtc.Value < staleCutoffUtc)
                     {
                         Console.Error.WriteLine($"[bridge] Ignoring stale JPEG transfer (cameraTime={capturedAtUtc.Value:O}, cutoff={staleCutoffUtc:O})");
                         capturedData = Array.Empty<byte>();
                         return 0;
+                    }
+
+                    Console.Error.WriteLine($"[bridge] JPEG accepted: fileName='{fileName}', size={capturedData.Length}");
+                    // Hanya finalize download setelah melewati semua check (JPEG & stale)
+                    if (evtId == Edsdk.ObjectEvent_DirItemRequestTransfer)
+                    {
+                        Check(Edsdk.EdsDownloadComplete(objRef), "Gagal finalize download capture Canon");
+                        Console.Error.WriteLine("[bridge] EdsDownloadComplete succeeded");
                     }
 
                     shouldSignal = true;
@@ -455,7 +487,11 @@ internal sealed class EdsdkSession : IDisposable
                 finally
                 {
                     if (streamRef != IntPtr.Zero) Edsdk.EdsRelease(streamRef);
-                    Edsdk.EdsRelease(objRef);
+                    if (objRef != IntPtr.Zero)
+                    {
+                        Edsdk.EdsRelease(objRef);
+                        objRef = IntPtr.Zero;
+                    }
                 }
             }
             catch (Exception ex)
@@ -499,9 +535,11 @@ internal sealed class EdsdkSession : IDisposable
 
         try
         {
+            TryDisableEvf();
+            PumpSdkEvents(6, 150);
             SendTakePictureWithRetry();
             Console.Error.WriteLine("[bridge] TakePicture command sent, waiting for download event...");
-            var deadline = DateTime.UtcNow.AddSeconds(30);
+            var deadline = DateTime.UtcNow.AddSeconds(45);
             while (!downloadDone.IsSet && DateTime.UtcNow < deadline)
             {
                 Edsdk.EdsGetEvent();
@@ -511,8 +549,21 @@ internal sealed class EdsdkSession : IDisposable
             if (!downloadDone.IsSet)
                 throw new TimeoutException("Timeout menunggu hasil capture Canon");
 
+            Console.Error.WriteLine($"[bridge] Capture sequence completed. sawNonJpegTransfer={sawNonJpegTransfer}, lastNonJpegFileName='{lastNonJpegFileName}', capturedData.Length={capturedData.Length}");
             if (capturedError is not null) throw capturedError;
-            if (capturedData.Length == 0) throw new InvalidOperationException("Data capture Canon kosong");
+            if (capturedData.Length == 0)
+            {
+                if (sawNonJpegTransfer)
+                {
+                    var transferLabel = string.IsNullOrWhiteSpace(lastNonJpegFileName)
+                        ? "file non-JPEG"
+                        : $"file '{lastNonJpegFileName}'";
+                    Console.Error.WriteLine($"[bridge] Final error: sawNonJpegTransfer=true, lastNonJpegFileName='{lastNonJpegFileName}'");
+                    throw new InvalidOperationException($"Capture Canon menghasilkan {transferLabel}. Ubah Image Quality kamera ke JPEG (L/Fine) agar foto bisa diproses.");
+                }
+                Console.Error.WriteLine("[bridge] Final error: No data received and no non-JPEG transfer seen");
+                throw new InvalidOperationException("Data capture Canon kosong");
+            }
 
             File.WriteAllBytes(outputPath, capturedData);
             Console.Error.WriteLine($"[bridge] Written {capturedData.Length} bytes to {outputPath}");
@@ -606,8 +657,32 @@ internal sealed class EdsdkSession : IDisposable
     {
         if (_cameraRef == IntPtr.Zero) return;
 
-        var evfDevice = EvfOutputDevice_PC;
-        Edsdk.EdsSetPropertyData(_cameraRef, PropID_Evf_OutputDevice, 0, Marshal.SizeOf<uint>(), ref evfDevice);
+        SetUIntPropertyWithRetry(PropID_Evf_Mode, 1U);
+        SetUIntPropertyWithRetry(PropID_Evf_OutputDevice, EvfOutputDevice_PC);
+    }
+
+    private void SetUIntPropertyWithRetry(uint propertyId, uint value, int maxAttempt = 6)
+    {
+        if (_cameraRef == IntPtr.Zero) return;
+
+        uint lastErr = 0;
+        for (var attempt = 1; attempt <= maxAttempt; attempt++)
+        {
+            var data = value;
+            var err = Edsdk.EdsSetPropertyData(_cameraRef, propertyId, 0, Marshal.SizeOf<uint>(), ref data);
+            if (err == 0) return;
+
+            lastErr = err;
+            if (err != EdsErr_DeviceBusy && err != EdsErr_ObjectNotReady)
+            {
+                break;
+            }
+
+            PumpSdkEvents(2, 100);
+            Thread.Sleep(120);
+        }
+
+        Console.Error.WriteLine($"[bridge] SetProperty warning: prop=0x{propertyId:X8} err=0x{lastErr:X8}");
     }
 
     private static bool IsRetryableShutterError(uint err)
@@ -621,6 +696,14 @@ internal sealed class EdsdkSession : IDisposable
             && bytes[0] == 0xFF
             && bytes[1] == 0xD8
             && bytes[2] == 0xFF;
+    }
+
+    private static bool IsLikelyJpegFileName(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return false;
+        var ext = Path.GetExtension(fileName);
+        return ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
     }
 
     private static DateTime? TryParseCameraDateTime(uint value)
@@ -639,7 +722,7 @@ internal sealed class EdsdkSession : IDisposable
     private void SendTakePictureWithRetry()
     {
         uint lastErr = 0;
-        for (var attempt = 1; attempt <= 8; attempt++)
+        for (var attempt = 1; attempt <= 12; attempt++)
         {
             var err = Edsdk.EdsSendCommand(_cameraRef, CameraCommand_TakePicture, 0);
             if (err == 0) return;
@@ -650,13 +733,22 @@ internal sealed class EdsdkSession : IDisposable
                 Check(err, "Gagal trigger shutter Canon");
             }
 
-            Console.Error.WriteLine($"[bridge] TakePicture retry {attempt}/8 after error 0x{err:X8}");
-            PumpSdkEvents(4, 120);
+            Console.Error.WriteLine($"[bridge] TakePicture retry {attempt}/12 after error 0x{err:X8}");
+            TryDisableEvf();
+            PumpSdkEvents(6, 150);
             NativeMethods.PumpWindowsMessages();
-            Thread.Sleep(220);
+            Thread.Sleep(300);
         }
 
         Check(lastErr, "Gagal trigger shutter Canon");
+    }
+
+    private void TryDisableEvf()
+    {
+        if (_cameraRef == IntPtr.Zero) return;
+
+        SetUIntPropertyWithRetry(PropID_Evf_OutputDevice, EvfOutputDevice_None);
+        SetUIntPropertyWithRetry(PropID_Evf_Mode, 0U);
     }
 }
 

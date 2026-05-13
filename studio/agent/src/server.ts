@@ -20,7 +20,7 @@ import http   from "http";
 import fs     from "fs";
 import path   from "path";
 import os     from "os";
-import { execFile, exec } from "child_process";
+import { execFile, exec, spawn } from "child_process";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
@@ -31,6 +31,299 @@ const VERSION = "1.0.5";
 // ── App setup ────────────────────────────────────────────────────────────────
 
 const app = express();
+const activePreviewStreams = new Set<ReturnType<typeof spawn>>();
+type CameraStatusResult = {
+  available: boolean;
+  count: number;
+  devices: { model: string; port: string }[];
+  type: "dslr" | "none";
+  error?: string;
+  capabilities?: {
+    supportsCapture?: boolean;
+    supportsLiveView?: boolean;
+    mode?: "live-view" | "capture-only";
+  };
+};
+type PreviewFrameWaiter = {
+  resolve: (frame: Buffer) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+type PreviewFrameSubscriber = (frame: Buffer) => void;
+let sharedPreviewProcess: ReturnType<typeof spawn> | null = null;
+let sharedPreviewBuffer = Buffer.alloc(0);
+let latestPreviewFrame: Buffer | null = null;
+let latestPreviewFrameAt = 0;
+const previewFrameWaiters = new Set<PreviewFrameWaiter>();
+const previewFrameSubscribers = new Set<PreviewFrameSubscriber>();
+let previewIdleTimer: ReturnType<typeof setTimeout> | null = null;
+let lastPreviewConsumerAt = 0;
+let cameraStatusCache: CameraStatusResult | null = null;
+let cameraStatusCacheAt = 0;
+let cameraStatusInFlight: Promise<CameraStatusResult> | null = null;
+
+const CAMERA_STATUS_CACHE_MS = 4000;
+
+function isRunning(child: ReturnType<typeof spawn> | null): child is ReturnType<typeof spawn> {
+  return !!child && !child.killed && child.exitCode === null;
+}
+
+function failPreviewFrameWaiters(error: Error) {
+  for (const waiter of Array.from(previewFrameWaiters)) {
+    clearTimeout(waiter.timer);
+    previewFrameWaiters.delete(waiter);
+    waiter.reject(error);
+  }
+}
+
+function publishPreviewFrame(frame: Buffer) {
+  latestPreviewFrame = Buffer.from(frame);
+  latestPreviewFrameAt = Date.now();
+
+  for (const subscriber of Array.from(previewFrameSubscribers)) {
+    try {
+      subscriber(latestPreviewFrame);
+    } catch {
+      previewFrameSubscribers.delete(subscriber);
+    }
+  }
+
+  for (const waiter of Array.from(previewFrameWaiters)) {
+    clearTimeout(waiter.timer);
+    previewFrameWaiters.delete(waiter);
+    waiter.resolve(latestPreviewFrame);
+  }
+}
+
+function stopSharedPreviewProcess() {
+  const child = sharedPreviewProcess;
+  if (!isRunning(child)) {
+    sharedPreviewProcess = null;
+    sharedPreviewBuffer = Buffer.alloc(0);
+    return;
+  }
+
+  child.stdin?.end();
+  setTimeout(() => {
+    if (!child.killed && child.exitCode === null) {
+      child.kill();
+    }
+  }, 350);
+}
+
+function scheduleSharedPreviewStop(delayMs = 5000) {
+  if (previewIdleTimer) clearTimeout(previewIdleTimer);
+  previewIdleTimer = setTimeout(() => {
+    previewIdleTimer = null;
+    if (previewFrameSubscribers.size > 0) return;
+    if (Date.now() - lastPreviewConsumerAt < delayMs) {
+      scheduleSharedPreviewStop(delayMs);
+      return;
+    }
+    stopSharedPreviewProcess();
+  }, delayMs);
+}
+
+function markPreviewConsumer() {
+  lastPreviewConsumerAt = Date.now();
+  if (previewIdleTimer) {
+    clearTimeout(previewIdleTimer);
+    previewIdleTimer = null;
+  }
+}
+
+function updateCameraStatusCache(status: CameraStatusResult) {
+  cameraStatusCache = status;
+  cameraStatusCacheAt = Date.now();
+}
+
+function isPreviewSessionActive() {
+  return (
+    isRunning(sharedPreviewProcess) ||
+    previewFrameSubscribers.size > 0 ||
+    previewFrameWaiters.size > 0 ||
+    Date.now() - lastPreviewConsumerAt < 1500
+  );
+}
+
+function buildPreviewActiveCameraStatus(): CameraStatusResult {
+  const cachedDevices = cameraStatusCache?.devices ?? [];
+  const devices = cachedDevices.length > 0
+    ? cachedDevices
+    : [{ model: "Canon DSLR", port: "edsdk:0" }];
+
+  return {
+    available: true,
+    count: devices.length,
+    devices,
+    type: "dslr",
+    capabilities: {
+      supportsCapture: true,
+      supportsLiveView: true,
+      mode: "live-view",
+    },
+  };
+}
+
+async function getCameraStatusForRoute(): Promise<CameraStatusResult> {
+  if (isPreviewSessionActive()) {
+    const liveStatus = buildPreviewActiveCameraStatus();
+    updateCameraStatusCache(liveStatus);
+    return liveStatus;
+  }
+
+  if (cameraStatusCache && Date.now() - cameraStatusCacheAt < CAMERA_STATUS_CACHE_MS) {
+    return cameraStatusCache;
+  }
+
+  if (!cameraStatusInFlight) {
+    cameraStatusInFlight = detectCameras()
+      .then((status) => {
+        updateCameraStatusCache(status);
+        return status;
+      })
+      .finally(() => {
+        cameraStatusInFlight = null;
+      });
+  }
+
+  return cameraStatusInFlight;
+}
+
+function startSharedPreviewProcess() {
+  if (isRunning(sharedPreviewProcess)) return;
+
+  updateCameraStatusCache(buildPreviewActiveCameraStatus());
+
+  const bridgePath = resolveEdsdkBridgePath();
+  const streamArgs = parseBridgeArgs(process.env.EDSDK_BRIDGE_STREAM_ARGS, "preview-stream");
+  const dllPath = resolveEdsdkLibraryPath(bridgePath);
+  const { command, args } = withBridgeCommand(bridgePath, streamArgs);
+
+  sharedPreviewBuffer = Buffer.alloc(0);
+  const child = spawn(command, args, {
+    env: {
+      ...process.env,
+      ...(dllPath ? { EDSDK_DLL_PATH: dllPath } : {}),
+    },
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  sharedPreviewProcess = child;
+  activePreviewStreams.add(child);
+
+  child.stdout?.on("data", (chunk: Buffer) => {
+    sharedPreviewBuffer = Buffer.concat([sharedPreviewBuffer, chunk]);
+
+    while (sharedPreviewBuffer.length >= 4) {
+      const frameLength = sharedPreviewBuffer.readUInt32BE(0);
+      if (frameLength <= 0 || frameLength > 20 * 1024 * 1024) {
+        const error = new Error(`Frame live view Canon tidak valid (${frameLength})`);
+        console.error("[agent] Preview stream:", error.message);
+        failPreviewFrameWaiters(error);
+        child.kill();
+        return;
+      }
+      if (sharedPreviewBuffer.length < 4 + frameLength) return;
+
+      const frame = Buffer.from(sharedPreviewBuffer.subarray(4, 4 + frameLength));
+      sharedPreviewBuffer = sharedPreviewBuffer.subarray(4 + frameLength);
+      publishPreviewFrame(frame);
+    }
+  });
+
+  child.stderr?.on("data", (chunk) => {
+    console.error("[agent] Preview stream:", String(chunk));
+  });
+
+  child.on("error", (error) => {
+    activePreviewStreams.delete(child);
+    if (sharedPreviewProcess === child) {
+      sharedPreviewProcess = null;
+      sharedPreviewBuffer = Buffer.alloc(0);
+    }
+    failPreviewFrameWaiters(error instanceof Error ? error : new Error(String(error)));
+  });
+
+  child.on("exit", (code, signal) => {
+    activePreviewStreams.delete(child);
+    if (sharedPreviewProcess === child) {
+      sharedPreviewProcess = null;
+      sharedPreviewBuffer = Buffer.alloc(0);
+    }
+    failPreviewFrameWaiters(new Error(`Live view Canon berhenti (${signal || (code ?? "unknown")})`));
+  });
+}
+
+function getPreviewFrame(timeoutMs = 10000): Promise<Buffer> {
+  markPreviewConsumer();
+
+  if (latestPreviewFrame && Date.now() - latestPreviewFrameAt < 1000) {
+    return Promise.resolve(Buffer.from(latestPreviewFrame));
+  }
+
+  try {
+    startSharedPreviewProcess();
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+  }
+
+  return new Promise((resolve, reject) => {
+    const waiter: PreviewFrameWaiter = {
+      resolve: (frame) => resolve(Buffer.from(frame)),
+      reject,
+      timer: setTimeout(() => {
+        previewFrameWaiters.delete(waiter);
+        if (latestPreviewFrame) {
+          resolve(Buffer.from(latestPreviewFrame));
+          return;
+        }
+        reject(new Error("Timeout menunggu frame live view Canon"));
+      }, timeoutMs),
+    };
+    previewFrameWaiters.add(waiter);
+  });
+}
+
+function stopActivePreviewStreams(): Promise<boolean> {
+  if (previewIdleTimer) {
+    clearTimeout(previewIdleTimer);
+    previewIdleTimer = null;
+  }
+
+  const processes = Array.from(activePreviewStreams);
+  if (processes.length === 0) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    let remaining = processes.length;
+    const done = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolve(true);
+    };
+    const timer = setTimeout(() => resolve(true), 500);
+
+    for (const child of processes) {
+      if (child.killed || child.exitCode !== null) {
+        activePreviewStreams.delete(child);
+        done();
+        continue;
+      }
+      child.once("exit", () => {
+        activePreviewStreams.delete(child);
+        done();
+      });
+      child.stdin?.end();
+      setTimeout(() => {
+        if (!child.killed && child.exitCode === null) {
+          child.kill();
+        }
+      }, 350);
+    }
+
+    setTimeout(() => clearTimeout(timer), 600);
+  });
+}
 
 // Chrome Private Network Access — HARUS sebelum cors agar masuk ke preflight response
 app.use((_req, res, next) => {
@@ -55,211 +348,195 @@ app.use(express.json({ limit: "50mb" }));
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const isWin = process.platform === "win32";
-<<<<<<< HEAD
-=======
 const isMac = process.platform === "darwin";
 
-/** Bundled tools path — used when gphoto2 is packaged inside the Electron app */
-function getBundledGphoto2Dir(): string | null {
-  if (!isWin) return null;
-  // When running from Electron packaged app, resourcesPath points to app.asar.unpacked or resources
-  const bundled = (process as any).resourcesPath
-    ? path.join((process as any).resourcesPath, "tools", "gphoto2")
-    : null;
-  return bundled && fs.existsSync(bundled) ? bundled : null;
+function timeoutFallback<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      });
+  });
 }
 
-/** Cari path gphoto2.exe di Windows (termasuk yang dibundle dalam Electron) */
-function findWindowsGphoto2Path(): string | null {
-  if (!isWin) return null;
-  const pathCandidates = String(process.env.PATH || "")
-    .split(";")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => path.join(entry, "gphoto2.exe"));
-
-  const bundledDir = getBundledGphoto2Dir();
-
-  const candidates = [
-    process.env.GPHOTO2_PATH,
-    bundledDir ? path.join(bundledDir, "gphoto2.exe") : null,
-    "C:\\msys64\\mingw64\\bin\\gphoto2.exe",
-    "C:\\msys64\\ucrt64\\bin\\gphoto2.exe",
-    "C:\\Program Files\\gPhoto2\\bin\\gphoto2.exe",
-    "C:\\Program Files (x86)\\gPhoto2\\bin\\gphoto2.exe",
-    ...pathCandidates,
-  ].filter(Boolean) as string[];
-
-  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
-}
-
-/** Parse gphoto2 --auto-detect output into structured { model, port } */
-function parseDslrDevices(stdout: string): { model: string; port: string }[] {
-  const lines = stdout.split(/\r?\n/).filter((l) => l.trim().length > 0 && !/^(Model|Port|[-]+)$/i.test(l.trim()));
-  const devices: { model: string; port: string }[] = [];
-  for (const raw of lines) {
-    const l = raw.trim().replace(/\s+/g, " ");
-    if (l.length < 4 || l.toLowerCase().includes("no camera")) continue;
-    // gphoto2 --auto-detect format: "Model Name              usb:001,003"
-    // We split on whitespace runs; the port starts with usb:
-    const match = l.match(/^(.+?)\s+(usb:\d+,\d+)$/);
-    if (match) {
-      devices.push({ model: match[1].trim(), port: match[2].trim() });
-    } else {
-      // Fallback: just use the whole line as model
-      devices.push({ model: l, port: "" });
-    }
-  }
-  return devices;
-}
-
-/** Deteksi kamera DSLR via gphoto2 (cross-platform) */
-async function detectDslr(): Promise<{ available: boolean; devices: { model: string; port: string }[]; error?: string }> {
-  const gphoto2Path = isWin ? findWindowsGphoto2Path() : "gphoto2";
-  if (!gphoto2Path) return { available: false, devices: [], error: "gphoto2 tidak ditemukan" };
-
-  try {
-    const { stdout, stderr } = await execAsync(`"${gphoto2Path}" --auto-detect`, { timeout: 8000 });
-    if (stderr && !stdout) {
-      return { available: false, devices: [], error: stderr.trim() };
-    }
-    const devices = parseDslrDevices(stdout);
-    return {
-      available: devices.length > 0,
-      devices,
-      error: devices.length === 0 ? "gphoto2 aktif, tidak ada kamera DSLR terdeteksi" : undefined,
-    };
-  } catch (err: any) {
-    return { available: false, devices: [], error: err?.stderr || err?.message || String(err) };
-  }
-}
-
-/** Cek apakah DSLR mendukung live view via gphoto2 --capture-preview */
-async function detectDslrCapabilities(gphoto2Path: string): Promise<{
-  supportsCapture: boolean;
-  supportsLiveView: boolean;
-  mode: "live-view" | "capture-only";
-}> {
-  // All detected gphoto2 cameras support capture by default
-  let supportsCapture = true;
-  let supportsLiveView = false;
-
-  try {
-    // Quick test: try to capture a preview frame (timeout 5s)
-    const { stdout } = await execAsync(`"${gphoto2Path}" --capture-preview --stdout`, {
-      timeout: 5000,
-      encoding: "buffer", // we just need to know it produced output
-      maxBuffer: 2 * 1024 * 1024, // 2MB preview max
-    });
-    if (stdout && stdout.length > 100) {
-      supportsLiveView = true;
-    }
-  } catch {
-    // Live view not supported or camera doesn't support preview
-    supportsLiveView = false;
-  }
-
-  return {
-    supportsCapture,
-    supportsLiveView,
-    mode: supportsLiveView ? "live-view" : "capture-only",
+type BridgeStatusPayload = {
+  ok?: boolean;
+  backend?: string;
+  cameras?: { model?: string; port?: string }[];
+  capabilities?: {
+    supportsCapture?: boolean;
+    supportsLiveView?: boolean;
+    mode?: "live-view" | "capture-only";
   };
+  error?: string | null;
+};
+
+function getAgentRuntimeRoots(): string[] {
+  const roots = [
+    process.cwd(),
+    path.resolve(__dirname, ".."),
+    path.resolve(path.dirname(process.execPath), ".."),
+    path.dirname(process.execPath),
+    path.resolve(path.dirname(process.execPath), "resources", "embedded-agent", "agent"),
+  ];
+  return Array.from(new Set(roots));
 }
 
-/** Deteksi webcam di Windows via PowerShell PnP devices */
-async function detectWindowsWebcam(): Promise<{ available: boolean; devices: string[]; error?: string }> {
-  try {
-    // Metode 1: Get-PnpDevice (Windows 10+)
-    const { stdout } = await execAsync(
-      `powershell -NoProfile -Command "Get-PnpDevice -Class Camera -Status OK | Select-Object -ExpandProperty FriendlyName"`,
-      { timeout: 6000 }
-    );
-    const devices = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    if (devices.length > 0) return { available: true, devices };
-  } catch { /* lanjut fallback */ }
+function resolveEdsdkBridgePath(): string {
+  const explicit = process.env.EDSDK_BRIDGE_PATH?.trim();
+  if (explicit && fs.existsSync(explicit)) return explicit;
 
-  try {
-    // Metode 2: WMI Win32_PnPEntity
-    const { stdout } = await execAsync(
-      `powershell -NoProfile -Command "Get-WmiObject Win32_PnPEntity | Where-Object { \$_.PNPClass -eq 'Camera' -or \$_.Name -like '*Camera*' -or \$_.Name -like '*Webcam*' } | Select-Object -ExpandProperty Name"`,
-      { timeout: 6000 }
-    );
-    const devices = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    if (devices.length > 0) return { available: true, devices };
-  } catch { /* lanjut fallback */ }
-
-  try {
-    // Metode 3: USB Video Class devices via PNPClass
-    const { stdout } = await execAsync(
-      `powershell -NoProfile -Command "Get-PnpDevice -PresentOnly | Where-Object { \$_.InstanceId -like '*VID_*&*PID_*' -and (\$_.FriendlyName -like '*Camera*' -or \$_.FriendlyName -like '*Webcam*' -or \$_.FriendlyName -like '*Video*') } | Select-Object -ExpandProperty FriendlyName"`,
-      { timeout: 6000 }
-    );
-    const devices = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    if (devices.length > 0) return { available: true, devices };
-  } catch { /* no webcam detected */ }
-
-  return { available: false, devices: [], error: "Tidak ada webcam terdeteksi di Windows" };
-}
-
-/** Deteksi kamera generik (macOS/Linux) */
-async function detectGenericCamera(): Promise<{ available: boolean; devices: string[]; error?: string }> {
-  if (isMac) {
-    try {
-      const { stdout } = await execAsync("system_profiler SPCameraDataType -json", { timeout: 6000 });
-      const parsed = JSON.parse(stdout);
-      const cameras: string[] = [];
-      const entries = parsed?.["SPCameraDataType"] || [];
-      for (const entry of entries) {
-        const name = entry?._name || entry?.name || entry?.["Camera Name"];
-        if (name && typeof name === "string") cameras.push(name);
-      }
-      if (cameras.length > 0) return { available: true, devices: cameras };
-    } catch { /* ignore */ }
-  }
-
-  if (process.platform === "linux") {
-    try {
-      const { stdout } = await execAsync("ls /dev/video* 2>/dev/null", { timeout: 3000 });
-      const devices = stdout.split(/\s+/).map((s) => s.trim()).filter(Boolean);
-      if (devices.length > 0) return { available: true, devices };
-    } catch { /* ignore */ }
-  }
-
-  return { available: false, devices: [] };
-}
-
-/** Deteksi semua kamera: DSLR (gphoto2) lalu webcam */
-async function detectCameras(): Promise<{
-  available: boolean;
-  count: number;
-  devices: string[] | { model: string; port: string }[];
-  type: "dslr" | "webcam" | "none";
-  error?: string;
-}> {
-  // 1. Coba DSLR via gphoto2
-  const dslr = await detectDslr();
-  if (dslr.available) {
-    return { available: true, count: dslr.devices.length, devices: dslr.devices as { model: string; port: string }[], type: "dslr" };
-  }
-
-  // 2. Coba webcam
-  if (isWin) {
-    const webcam = await detectWindowsWebcam();
-    if (webcam.available) {
-      return { available: true, count: webcam.devices.length, devices: webcam.devices, type: "webcam" };
+  const isWindowsExe = process.platform === "win32" ? "edsdk-bridge-native.exe" : "edsdk-bridge-native";
+  for (const root of getAgentRuntimeRoots()) {
+    const candidates = [
+      path.join(root, "bin", isWindowsExe),
+      path.join(root, "bin", "edsdk-bridge"),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
     }
-    return { available: false, count: 0, devices: [], type: "none", error: webcam.error };
   }
 
-  // 3. Generic (macOS/Linux)
-  const generic = await detectGenericCamera();
-  if (generic.available) {
-    return { available: true, count: generic.devices.length, devices: generic.devices, type: "webcam" };
-  }
-
-  return { available: false, count: 0, devices: [], type: "none", error: dslr.error || "Tidak ada kamera terdeteksi" };
+  throw new Error("Bridge Canon EDSDK tidak ditemukan. Pastikan bin/edsdk-bridge-native.exe tersedia.");
 }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+
+function resolveEdsdkLibraryPath(bridgePath: string): string | null {
+  const explicit = process.env.EDSDK_DLL_PATH?.trim();
+  if (explicit && fs.existsSync(explicit)) return explicit;
+
+  const bridgeDir = path.dirname(bridgePath);
+  const candidates = [
+    path.join(bridgeDir, "EDSDK.dll"),
+    path.join(process.cwd(), "bin", "EDSDK.dll"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+function parseBridgeArgs(envValue: string | undefined, fallback: string): string[] {
+  const raw = (envValue && envValue.trim().length > 0 ? envValue : fallback).trim();
+  return raw.split(/\s+/).filter(Boolean);
+}
+
+function withBridgeCommand(bridgePath: string, bridgeArgs: string[]): { command: string; args: string[] } {
+  const isNativeExe = bridgePath.toLowerCase().endsWith(".exe") || bridgePath.toLowerCase().endsWith("edsdk-bridge-native");
+  if (isNativeExe) return { command: bridgePath, args: bridgeArgs };
+  return { command: process.execPath, args: [bridgePath, ...bridgeArgs] };
+}
+
+function execBridgeBuffer(bridgePath: string, bridgeArgs: string[], timeout = 8000): Promise<{ stdout: Buffer; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const dllPath = resolveEdsdkLibraryPath(bridgePath);
+    const env = {
+      ...process.env,
+      ...(dllPath ? { EDSDK_DLL_PATH: dllPath } : {}),
+    };
+
+    const { command, args } = withBridgeCommand(bridgePath, bridgeArgs);
+    execFile(
+      command,
+      args,
+      {
+        env,
+        windowsHide: true,
+        timeout,
+        encoding: "buffer",
+        maxBuffer: 20 * 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        const stderrText = Buffer.isBuffer(stderr) ? stderr.toString("utf8") : String(stderr || "");
+        const stdoutBuffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout || ""), "utf8");
+
+        if (error) {
+          reject(new Error(stderrText.trim() || error.message));
+          return;
+        }
+
+        resolve({ stdout: stdoutBuffer, stderr: stderrText });
+      }
+    );
+  });
+}
+
+function normalizeBridgeErrorMessage(rawMessage: string): string {
+  const trimmed = rawMessage.trim();
+  if (!trimmed) return "Operasi kamera Canon gagal";
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!line.startsWith("{")) continue;
+    try {
+      const payload = JSON.parse(line) as { error?: string };
+      if (typeof payload.error === "string" && payload.error.trim().length > 0) {
+        return payload.error.trim();
+      }
+    } catch {
+      // Ignore non-JSON lines.
+    }
+  }
+
+  const nonBridgeLines = lines.filter((line) => !line.startsWith("[bridge]"));
+  if (nonBridgeLines.length > 0) {
+    return nonBridgeLines[nonBridgeLines.length - 1];
+  }
+
+  return lines[lines.length - 1].replace(/^\[bridge\]\s*/i, "") || "Operasi kamera Canon gagal";
+}
+
+async function detectCameras(): Promise<CameraStatusResult> {
+  try {
+    const bridgePath = resolveEdsdkBridgePath();
+    const statusArgs = parseBridgeArgs(process.env.EDSDK_BRIDGE_STATUS_ARGS, "status --json");
+    const { stdout } = await execBridgeBuffer(bridgePath, statusArgs, 8000);
+    const payload = JSON.parse(stdout.toString("utf8")) as BridgeStatusPayload;
+
+    const cameras = Array.isArray(payload.cameras)
+      ? payload.cameras.map((c) => ({ model: String(c.model || "Canon"), port: String(c.port || "") }))
+      : [];
+
+    return {
+      available: cameras.length > 0,
+      count: cameras.length,
+      devices: cameras,
+      type: cameras.length > 0 ? "dslr" : "none",
+      error: payload.error || undefined,
+      capabilities: payload.capabilities,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      count: 0,
+      devices: [],
+      type: "none",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
 
 /** Tulis base64 image (raw/dataURL) atau ambil dari URL ke file temp, return path */
 async function resolveToTempFile(input: string): Promise<string> {
@@ -285,6 +562,25 @@ async function resolveToTempFile(input: string): Promise<string> {
     const file = fs.createWriteStream(tmpFile);
     const get  = input.startsWith("https") ? https : http;
     get.get(input, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        file.close();
+        fs.unlink(tmpFile, () => {});
+        resolveToTempFile(new URL(res.headers.location, input).toString()).then(resolve).catch(reject);
+        return;
+      }
+      if (res.statusCode && res.statusCode >= 400) {
+        file.close();
+        fs.unlink(tmpFile, () => {});
+        reject(new Error(`Gagal download gambar print: HTTP ${res.statusCode}`));
+        return;
+      }
+      const contentType = String(res.headers["content-type"] || "");
+      if (contentType && !contentType.toLowerCase().startsWith("image/")) {
+        file.close();
+        fs.unlink(tmpFile, () => {});
+        reject(new Error(`URL print bukan gambar (${contentType})`));
+        return;
+      }
       res.pipe(file);
       file.on("finish", () => { file.close(); resolve(tmpFile); });
     }).on("error", (err) => {
@@ -488,38 +784,32 @@ async function printFile(
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 app.get("/status", async (_req: Request, res: Response) => {
-<<<<<<< HEAD
-  const printers = await listPrinters();
-=======
-  const [printers, camera] = await Promise.all([listPrinters(), detectCameras()]);
-
-  // Enhance DSLR response with capabilities when available
-  let capabilities: { supportsCapture: boolean; supportsLiveView: boolean; mode: "live-view" | "capture-only" } | undefined;
-  if (camera.type === "dslr" && camera.available && isWin) {
-    const gphoto2Path = findWindowsGphoto2Path();
-    if (gphoto2Path) {
-      capabilities = await detectDslrCapabilities(gphoto2Path);
-    }
-  }
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+  const [printers, camera] = await Promise.all([
+    timeoutFallback(listPrinters(), 2500, []),
+    getCameraStatusForRoute(),
+  ]);
   res.json({
     ok:       true,
     version:  VERSION,
     platform: process.platform,
     printers,
-<<<<<<< HEAD
-=======
     camera: {
       available: camera.available,
       count:     camera.count,
-      cameras:   camera.type === "dslr" ? (camera.devices as any) : undefined,
+      cameras:   camera.devices,
       devices:   camera.devices,
       type:      camera.type,
       error:     camera.error,
-      capabilities,
+      capabilities: camera.capabilities,
     },
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+  });
+});
+
+app.get("/health", (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    version: VERSION,
+    platform: process.platform,
   });
 });
 
@@ -528,24 +818,44 @@ app.get("/printers", async (_req: Request, res: Response) => {
   res.json({ ok: true, printers });
 });
 
-<<<<<<< HEAD
-=======
-app.post("/capture", async (_req: Request, res: Response) => {
-  const gphoto2Path = isWin ? findWindowsGphoto2Path() : "gphoto2";
-  if (!gphoto2Path) {
-    res.status(503).json({ ok: false, error: "gphoto2 tidak tersedia" });
-    return;
-  }
-
+app.post("/capture", async (req: Request, res: Response) => {
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
+  const wantsBinary = req.query.format === "binary" || String(req.get("accept") || "").includes("image/jpeg");
+  const hadPreviewSession = isPreviewSessionActive();
 
   try {
-    // Capture and download to temp file
-    await execAsync(
-      `"${gphoto2Path}" --capture-image-and-download --filename "${tmpFile}" --force-overwrite`,
-      { timeout: 15000, cwd: tmpDir }
-    );
+    const stoppedExistingStream = await stopActivePreviewStreams();
+    // Always give camera a moment to release session, even if no active stream was tracked
+    // (client may have just closed the connection and the bridge process is still dying)
+    const recoveryMs = stoppedExistingStream ? 800 : 500;
+    await new Promise((resolve) => setTimeout(resolve, recoveryMs));
+
+    const bridgePath = resolveEdsdkBridgePath();
+    const captureArgs = parseBridgeArgs(process.env.EDSDK_BRIDGE_CAPTURE_ARGS, "capture --output {output}")
+      .map((arg) => (arg === "{output}" ? tmpFile : arg.replace("{output}", tmpFile)));
+
+    let captureError: unknown = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await execBridgeBuffer(bridgePath, captureArgs, 60000);
+        captureError = null;
+        break;
+      } catch (err) {
+        captureError = err;
+        if (fs.existsSync(tmpFile)) break;
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("Timeout menunggu hasil capture Canon")) break;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 900));
+        }
+      }
+    }
+
+    if (captureError && !fs.existsSync(tmpFile)) {
+      const message = captureError instanceof Error ? captureError.message : String(captureError);
+      throw new Error(normalizeBridgeErrorMessage(message || "Capture gagal dan file foto tidak ditemukan"));
+    }
 
     if (!fs.existsSync(tmpFile)) {
       res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
@@ -553,6 +863,13 @@ app.post("/capture", async (_req: Request, res: Response) => {
     }
 
     const buf = fs.readFileSync(tmpFile);
+    if (wantsBinary) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.send(buf);
+      return;
+    }
+
     const base64 = buf.toString("base64");
 
     res.json({
@@ -564,8 +881,26 @@ app.post("/capture", async (_req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error("[agent] Capture error:", err);
-    res.status(500).json({ ok: false, error: err?.stderr || err?.message || String(err) });
+    const rawError = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
   } finally {
+    if (hadPreviewSession) {
+      setTimeout(() => {
+        try {
+          startSharedPreviewProcess();
+          void getPreviewFrame(2200)
+            .then(() => {
+              scheduleSharedPreviewStop(3500);
+            })
+            .catch(() => {
+              scheduleSharedPreviewStop(2000);
+            });
+        } catch {
+          // Ignore warm-up failures; preview route will retry on next request.
+        }
+      }, 120);
+    }
+
     if (fs.existsSync(tmpFile)) {
       try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
     }
@@ -573,34 +908,69 @@ app.post("/capture", async (_req: Request, res: Response) => {
 });
 
 app.get("/preview", async (_req: Request, res: Response) => {
-  const gphoto2Path = isWin ? findWindowsGphoto2Path() : "gphoto2";
-  if (!gphoto2Path) {
-    res.status(503).send("gphoto2 tidak tersedia");
-    return;
-  }
-
   try {
-    const { stdout } = await execAsync(`"${gphoto2Path}" --capture-preview --stdout`, {
-      timeout: 8000,
-      encoding: "buffer",
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    const frame = await getPreviewFrame(12000);
+    scheduleSharedPreviewStop();
 
-    if (!stdout || stdout.length === 0) {
+    if (!frame || frame.length === 0) {
       res.status(500).send("Preview kosong");
       return;
     }
 
     res.setHeader("Content-Type", "image/jpeg");
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.send(stdout);
+    res.send(frame);
   } catch (err: any) {
     console.error("[agent] Preview error:", err);
-    res.status(500).send("Gagal ambil preview");
+    res.status(500).send(err instanceof Error ? err.message : "Gagal ambil preview");
   }
 });
 
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+app.get("/preview-stream", async (_req: Request, res: Response) => {
+  try {
+    const boundary = "fremio-canon-liveview";
+    startSharedPreviewProcess();
+    markPreviewConsumer();
+
+    res.writeHead(200, {
+      "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      "Connection": "close",
+      "Pragma": "no-cache",
+    });
+
+    let closed = false;
+    const sendFrame = (frame: Buffer) => {
+      if (closed || res.writableEnded || frame.length === 0) return;
+      res.write(`--${boundary}\r\n`);
+      res.write("Content-Type: image/jpeg\r\n");
+      res.write(`Content-Length: ${frame.length}\r\n\r\n`);
+      res.write(frame);
+      res.write("\r\n");
+    };
+    previewFrameSubscribers.add(sendFrame);
+
+    if (latestPreviewFrame) {
+      sendFrame(latestPreviewFrame);
+    }
+
+    const keepAlive = setInterval(markPreviewConsumer, 1000);
+
+    res.on("close", () => {
+      closed = true;
+      clearInterval(keepAlive);
+      previewFrameSubscribers.delete(sendFrame);
+      scheduleSharedPreviewStop();
+    });
+  } catch (err: any) {
+    console.error("[agent] Preview stream error:", err);
+    if (!res.headersSent) {
+      res.status(500).send("Gagal mulai live preview");
+    } else if (!res.writableEnded) {
+      res.end();
+    }
+  }
+});
 app.post("/print", async (req: Request, res: Response) => {
   const { image, imageUrl, printerName, copies, paperWidthMm, paperHeightMm } = req.body as {
     image?:         string;
@@ -694,15 +1064,20 @@ TqbbwuTRFiZzBCbQKR34tPM=
 // Windows  → HTTP  (Chrome/Edge treat http://127.0.0.1 as secure context)
 // macOS    → HTTPS (Safari requires HTTPS even for loopback; cert must be trusted once)
 
-<<<<<<< HEAD
-const isMac = process.platform === "darwin";
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 const proto = isMac ? "https" : "http";
 
 const server = isMac
   ? https.createServer({ cert: TLS_CERT, key: TLS_KEY }, app)
   : http.createServer(app);
+
+server.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`[agent] Port ${PORT} sudah dipakai. Agent lain kemungkinan masih berjalan di ${proto}://127.0.0.1:${PORT}.`);
+    process.exit(0);
+  }
+  console.error(`[agent] Gagal menjalankan server: ${error.message}`);
+  process.exit(1);
+});
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`╔══════════════════════════════════════╗`);

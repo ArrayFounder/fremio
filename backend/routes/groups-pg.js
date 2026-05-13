@@ -22,10 +22,7 @@ const GROUP_SHARE_ANALYTICS_EVENT_TYPES = new Set([
 const GROUP_SHARE_DAILY_OPEN_LIMIT = 10;
 
 let ensureGroupShareAnalyticsTablePromise = null;
-<<<<<<< HEAD
-=======
 let ensureEventShareSubmissionsTablePromise = null;
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
 function ensureGroupShareAnalyticsTable() {
   if (!ensureGroupShareAnalyticsTablePromise) {
@@ -69,8 +66,6 @@ function ensureGroupShareAnalyticsTable() {
   return ensureGroupShareAnalyticsTablePromise;
 }
 
-<<<<<<< HEAD
-=======
 function ensureEventShareSubmissionsTable() {
   if (!ensureEventShareSubmissionsTablePromise) {
     ensureEventShareSubmissionsTablePromise = (async () => {
@@ -225,8 +220,6 @@ function toJakartaDateKey(value) {
   if (!year || !month || !day) return null;
   return `${year}-${month}-${day}`;
 }
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 /**
  * Returns the daily access quota limit for a given owner email.
  * Checks share_plus_subscriptions for an active tier; falls back to 10 (free tier).
@@ -250,21 +243,6 @@ async function getSharePlusDailyLimit(dbClient, ownerEmail) {
   return FREE_TIER_LIMIT;
 }
 
-<<<<<<< HEAD
-function parseJsonValue(value) {
-  if (!value) return null;
-  if (typeof value === "object") return value;
-  if (typeof value !== "string") return null;
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 function getPreferencesOwnerEmail(preferences) {
   const parsed = parseJsonValue(preferences);
   const ownerEmail = parsed?.ownerEmail;
@@ -788,8 +766,6 @@ router.get("/share-quota", authenticateToken, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-=======
 router.get("/my-share-links", authenticateToken, async (req, res) => {
   try {
     const requesterEmail = typeof req.user?.email === "string" ? req.user.email.trim().toLowerCase() : "";
@@ -1252,8 +1228,6 @@ router.delete("/admin/event-submissions/:id", authenticateToken, async (req, res
     return res.status(500).json({ success: false, message: "Gagal menghapus pengajuan event" });
   }
 });
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 // Get shared group by share_id (public)
 router.get("/share/:shareId", async (req, res) => {
   let client = null;

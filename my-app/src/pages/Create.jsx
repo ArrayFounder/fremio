@@ -813,6 +813,8 @@ export default function Create() {
             data: {
               photoIndex:
                 slot.photoIndex !== undefined ? slot.photoIndex : index,
+              slotNumber:
+                slot.slotNumber !== undefined ? slot.slotNumber : index + 1,
               borderRadius: slot.borderRadius || 0,
             },
           });

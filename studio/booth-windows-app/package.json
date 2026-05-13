@@ -1,6 +1,6 @@
 {
   "name": "fremio-booth-windows-app",
-  "version": "1.0.0",
+  "version": "1.0.29",
   "private": true,
   "description": "Windows kiosk shell for Fremio Studio booth flow",
   "main": "main.js",
@@ -24,7 +24,8 @@
       "preload.js",
       "setup.html",
       "setup.js",
-      "setup.css"
+      "setup.css",
+      "fremio_studio.png"
     ],
     "extraResources": [
       {
@@ -34,12 +35,9 @@
           "package.json",
           "package-lock.json",
           ".env.example",
+          "fremio-agent-win.exe",
           "bin/**/*",
           "src/**/*",
-<<<<<<< HEAD
-          "node_modules/**/*"
-        ]
-=======
           "dist/**/*",
           "node_modules/**/*"
         ]
@@ -48,7 +46,6 @@
         "from": "tools",
         "to": "tools",
         "filter": ["**/*"]
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
       }
     ],
     "win": {

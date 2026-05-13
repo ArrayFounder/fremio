@@ -20,6 +20,7 @@ interface PrintCountScreenProps {
   /** Voucher yang sudah divalidasi (opsional — hanya pada flow VOUCHER) */
   voucher?: VoucherInfo | null;
   onSelect: (count: number) => void;
+  onBack?:  () => void;
 }
 
 const MIN = 1;
@@ -34,7 +35,7 @@ function isLightColor(hex: string): boolean {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
 }
 
-export function PrintCountScreen({ booth, frame, voucher, onSelect }: PrintCountScreenProps) {
+export function PrintCountScreen({ booth, frame, voucher, onSelect, onBack }: PrintCountScreenProps) {
   const { primaryColor, accentColor } = booth;
   const bgColor = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.printCountBgColor as string | undefined ?? primaryColor;
   const [count, setCount] = useState(1);
@@ -67,6 +68,22 @@ export function PrintCountScreen({ booth, frame, voucher, onSelect }: PrintCount
       className={`flex flex-col h-full ${px} ${py} select-none`}
       style={{ backgroundColor: bgColor }}
     >
+      {/* Back button */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="self-start rounded-full p-3 active:scale-95 transition-transform shadow-lg mb-4"
+          style={{
+            backgroundColor: light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.2)",
+            color: textPrimary,
+          }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+      )}
+      
       {/* Header — compact */}
       <div className={`${isPortrait ? "mb-3" : "mb-6"}`}>
         <h2

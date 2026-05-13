@@ -58,8 +58,7 @@ export function DashboardShell({ businessName, email, tier, children }: Props) {
             </button>
 
             <div className="flex min-w-0 items-center gap-2">
-              <Image src="/logo-salem.png" alt="fremio" width={88} height={24} className="h-5 w-auto" />
-              <span className="text-[10px] font-semibold uppercase tracking-[0.28em] text-primary-300">studio</span>
+              <Image src="/fremio_studio.png" alt="Fremio Studio" width={150} height={48} className="h-8 w-auto" />
             </div>
           </div>
 

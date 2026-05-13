@@ -1,38 +1,13 @@
 let bridgePollTimer = null;
+let bridgePollingEnabled = false;
 
-<<<<<<< HEAD
-function renderBridgeStatus(bridgeStatus) {
-  const badgeEl = document.getElementById("bridgeBadge");
-  const summaryEl = document.getElementById("bridgeSummary");
-  const actionEl = document.getElementById("bridgeAction");
-  const notesEl = document.getElementById("bridgeNotes");
+const launcherSession = {
+  operatorName: "",
+  booths: [],
+};
 
-  if (!badgeEl || !summaryEl || !actionEl || !notesEl) return;
+const DEFAULT_START_LABEL = "Masuk Booth";
 
-  badgeEl.className = `badge ${bridgeStatus?.cameraAvailable ? "badge-ready" : bridgeStatus?.running ? "badge-waiting" : "badge-error"}`;
-  badgeEl.textContent = bridgeStatus?.cameraAvailable
-    ? "Kamera siap"
-    : bridgeStatus?.running
-      ? "Bridge aktif"
-      : "Belum siap";
-
-  summaryEl.textContent = bridgeStatus?.summary || "Bridge kamera belum siap.";
-  actionEl.textContent = bridgeStatus?.action || "";
-
-  notesEl.innerHTML = "";
-  const notes = Array.isArray(bridgeStatus?.notes) ? bridgeStatus.notes.filter(Boolean) : [];
-
-  notes.forEach((note) => {
-    const item = document.createElement("li");
-    item.textContent = note;
-    notesEl.appendChild(item);
-  });
-}
-
-async function refreshBridgeStatus(method = "get") {
-  const summaryEl = document.getElementById("bridgeSummary");
-  if (summaryEl) summaryEl.textContent = "Memeriksa perangkat lokal...";
-=======
 function setText(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text;
@@ -43,11 +18,72 @@ function setClass(id, className) {
   if (el) el.className = className;
 }
 
+function setPostLoginVisibility(isVisible) {
+  const loginStep = document.getElementById("loginStep");
+  const boothStep = document.getElementById("boothStep");
+  if (loginStep) loginStep.hidden = isVisible;
+  if (boothStep) boothStep.hidden = !isVisible;
+}
+
+function normalizeBaseUrl(url) {
+  return String(url || "").trim().replace(/\/+$/, "");
+}
+
+function parseBoothUrl(rawValue, fallbackBaseUrl) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return { ok: false, reason: "empty" };
+
+  try {
+    const parsed = new URL(raw);
+    const match = (parsed.pathname || "").match(/\/b\/([^/?#]+)/i);
+    if (!match || !match[1]) return { ok: false, reason: "missing-slug" };
+    return {
+      ok: true,
+      baseUrl: normalizeBaseUrl(`${parsed.protocol}//${parsed.host}`),
+      slug: decodeURIComponent(match[1]),
+    };
+  } catch {
+    if (!fallbackBaseUrl) return { ok: false, reason: "invalid-url" };
+    const candidate = raw.startsWith("/") ? raw : `/${raw}`;
+    const match = candidate.match(/\/b\/([^/?#]+)/i);
+    if (!match || !match[1]) return { ok: false, reason: "missing-slug" };
+    return {
+      ok: true,
+      baseUrl: normalizeBaseUrl(fallbackBaseUrl),
+      slug: decodeURIComponent(match[1]),
+    };
+  }
+}
+
+function stopBridgePolling() {
+  bridgePollingEnabled = false;
+  if (bridgePollTimer) {
+    window.clearInterval(bridgePollTimer);
+    bridgePollTimer = null;
+  }
+}
+
+function startBridgePolling() {
+  if (bridgePollingEnabled) return;
+  bridgePollingEnabled = true;
+  bridgePollTimer = window.setInterval(() => {
+    void refreshBridgeStatus("get");
+  }, 5000);
+}
+
+function normalizeDeviceNote(device) {
+  if (!device) return "";
+  if (typeof device === "string") return device;
+  const model = String(device?.model || device?.name || "Canon Camera").trim();
+  const port = String(device?.port || device?.path || "").trim();
+  return port ? `${model} (${port})` : model;
+}
+
 function renderNotes(id, items) {
   const el = document.getElementById(id);
   if (!el) return;
   el.innerHTML = "";
-  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  const list = Array.isArray(items) ? items.map((item) => normalizeDeviceNote(item)).filter(Boolean) : [];
   list.forEach((note) => {
     const li = document.createElement("li");
     li.textContent = note;
@@ -58,20 +94,30 @@ function renderNotes(id, items) {
 function renderBridgeStatus(bridgeStatus) {
   const raw = bridgeStatus?.raw || {};
   const camera = raw.camera || {};
-  const printers = Array.isArray(raw.printers) ? raw.printers : [];
+  const printers = Array.isArray(raw.printers) ? raw.printers : Array.isArray(bridgeStatus?.printers) ? bridgeStatus.printers : [];
 
-  const cameraAvailable = Boolean(camera.available);
-  const cameraCount = Number(camera.count || 0);
-  const cameraType = camera.type || "none";
-  const cameraDevices = Array.isArray(camera.devices) ? camera.devices : [];
-  const cameraError = camera.error || "";
+  const rawDevices = Array.isArray(camera.devices)
+    ? camera.devices
+    : Array.isArray(camera.cameras)
+      ? camera.cameras
+      : Array.isArray(bridgeStatus?.cameraDevices)
+        ? bridgeStatus.cameraDevices
+        : [];
+  const cameraDevices = rawDevices.map((device) => normalizeDeviceNote(device)).filter(Boolean);
+
+  const cameraCount = Number(camera.count || bridgeStatus?.cameraCount || cameraDevices.length || 0);
+  const cameraAvailable = typeof camera.available === "boolean"
+    ? camera.available
+    : typeof bridgeStatus?.cameraAvailable === "boolean"
+      ? bridgeStatus.cameraAvailable
+      : cameraCount > 0;
+  const cameraType = camera.type || bridgeStatus?.cameraType || (cameraAvailable ? "dslr" : "none");
+  const cameraError = camera.error || bridgeStatus?.cameraError || "";
 
   const printerCount = printers.length;
-
   const allReady = cameraAvailable && printerCount > 0;
   const anyReady = cameraAvailable || printerCount > 0;
 
-  // Overall badge
   if (allReady) {
     setClass("bridgeBadge", "badge badge-ready");
     setText("bridgeBadge", "Siap pakai");
@@ -86,7 +132,6 @@ function renderBridgeStatus(bridgeStatus) {
     setText("bridgeBadge", "Belum siap");
   }
 
-  // Camera panel
   if (cameraAvailable) {
     setClass("cameraBadge", "badge badge-ready");
     setText("cameraBadge", `${cameraCount} terdeteksi`);
@@ -106,7 +151,6 @@ function renderBridgeStatus(bridgeStatus) {
     renderNotes("cameraNotes", camNotes);
   }
 
-  // Printer panel
   if (printerCount > 0) {
     setClass("printerBadge", "badge badge-ready");
     setText("printerBadge", `${printerCount} terdeteksi`);
@@ -119,7 +163,6 @@ function renderBridgeStatus(bridgeStatus) {
     renderNotes("printerNotes", ["Pastikan printer USB tersambung dan menyala."]);
   }
 
-  // Action text
   const actionEl = document.getElementById("bridgeAction");
   if (actionEl) {
     if (allReady) {
@@ -139,7 +182,6 @@ function renderBridgeStatus(bridgeStatus) {
 async function refreshBridgeStatus(method = "get") {
   setText("cameraStatus", "Memeriksa...");
   setText("printerStatus", "Memeriksa...");
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   try {
     const bridgeStatus = method === "restart"
@@ -149,58 +191,238 @@ async function refreshBridgeStatus(method = "get") {
   } catch (error) {
     renderBridgeStatus({
       running: false,
-<<<<<<< HEAD
-      cameraAvailable: false,
-      summary: "Gagal membaca status perangkat.",
-      action: error instanceof Error ? error.message : "Unknown error",
-      notes: [],
-=======
       raw: {},
       action: error instanceof Error ? error.message : "Gagal membaca status perangkat.",
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     });
   }
+}
+
+function setStartButton(startBoothButton, label, enabled) {
+  if (!startBoothButton) return;
+  startBoothButton.textContent = label || DEFAULT_START_LABEL;
+  startBoothButton.disabled = !enabled;
+}
+
+function fillBoothOptions(boothSelectEl, booths, preferredUrl) {
+  if (!boothSelectEl) return;
+  boothSelectEl.innerHTML = "";
+
+  if (!Array.isArray(booths) || booths.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Tidak ada booth aktif di akun ini";
+    boothSelectEl.appendChild(option);
+    boothSelectEl.disabled = true;
+    return;
+  }
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Pilih booth...";
+  boothSelectEl.appendChild(placeholder);
+
+  booths.forEach((booth) => {
+    const option = document.createElement("option");
+    option.value = booth.boothUrl;
+    option.textContent = `${booth.boothName} (/b/${booth.slug})`;
+    option.dataset.boothName = booth.boothName;
+    boothSelectEl.appendChild(option);
+  });
+
+  const preferred = String(preferredUrl || "").trim();
+  if (preferred && booths.some((booth) => booth.boothUrl === preferred)) {
+    boothSelectEl.value = preferred;
+  }
+
+  boothSelectEl.disabled = false;
 }
 
 async function boot() {
   const form = document.getElementById("setup-form");
   const statusEl = document.getElementById("status");
-  const baseUrlEl = document.getElementById("studioBaseUrl");
-  const slugEl = document.getElementById("boothSlug");
-  const kioskEl = document.getElementById("kiosk");
+  const authStatusEl = document.getElementById("authStatus");
+  const accountNameEl = document.getElementById("accountName");
+
+  const emailInputEl = document.getElementById("emailInput");
+  const passwordInputEl = document.getElementById("passwordInput");
+  const loginButton = document.getElementById("loginButton");
+  const googleLoginButton = document.getElementById("googleLoginButton");
+
+  const boothSelectEl = document.getElementById("boothSelect");
+  const startBoothButton = document.getElementById("startBoothButton");
+  const backToLoginButton = document.getElementById("backToLoginButton");
+  const logoutButton = document.getElementById("logoutButton");
+
   const refreshBridgeButton = document.getElementById("refreshBridgeButton");
   const restartBridgeButton = document.getElementById("restartBridgeButton");
 
+  setPostLoginVisibility(false);
+  stopBridgePolling();
+
   const existing = await window.fremioBooth.getConfig();
-  baseUrlEl.value = existing?.studioBaseUrl || "https://studio.fremio.id";
-  slugEl.value = existing?.boothSlug || "";
-  kioskEl.checked = existing?.kiosk !== false;
+  const initialBase = normalizeBaseUrl(existing?.studioBaseUrl || "https://studio.fremio.id");
+  const initialSlug = existing?.boothSlug || "";
+  const initialBoothUrl = initialSlug ? `${initialBase}/b/${encodeURIComponent(initialSlug)}` : "";
+
+  setStartButton(startBoothButton, DEFAULT_START_LABEL, false);
+
+  fillBoothOptions(boothSelectEl, [], "");
+
+  const refreshStartButtonLabel = () => {
+    const parsed = parseBoothUrl(boothSelectEl.value, initialBase);
+    if (!parsed.ok) {
+      setStartButton(startBoothButton, DEFAULT_START_LABEL, false);
+      return;
+    }
+    setStartButton(startBoothButton, DEFAULT_START_LABEL, true);
+  };
+
+  const applyLoginResult = (result, fallbackEmail) => {
+    if (!result?.success || !result?.data) {
+      throw new Error(result?.error || "Login launcher gagal.");
+    }
+
+    const operatorName = result.data?.operator?.businessName || result.data?.operator?.email || fallbackEmail;
+    const booths = Array.isArray(result.data.booths) ? result.data.booths : [];
+    launcherSession.operatorName = operatorName;
+    launcherSession.booths = booths;
+
+    accountNameEl.textContent = operatorName;
+    authStatusEl.textContent = "";
+
+    fillBoothOptions(boothSelectEl, booths, initialBoothUrl);
+    refreshStartButtonLabel();
+    setPostLoginVisibility(true);
+  };
+
+  const resetLoginResult = (message) => {
+    authStatusEl.textContent = message;
+    accountNameEl.textContent = "Belum login";
+    launcherSession.operatorName = "";
+    launcherSession.booths = [];
+    fillBoothOptions(boothSelectEl, [], "");
+    refreshStartButtonLabel();
+    stopBridgePolling();
+    setPostLoginVisibility(false);
+  };
+
+  try {
+    const savedSession = await window.fremioBooth.launcherGetSession?.();
+    if (savedSession?.success && savedSession?.data) {
+      applyLoginResult(savedSession, "Fremio");
+    }
+  } catch {}
+
+  const doLauncherLogin = async () => {
+    const studioBaseUrl = initialBase || "https://studio.fremio.id";
+    const email = String(emailInputEl.value || "").trim();
+    const password = String(passwordInputEl.value || "");
+
+    if (!email || !password) {
+      authStatusEl.textContent = "Email dan password wajib diisi.";
+      return;
+    }
+
+    authStatusEl.textContent = "Memverifikasi akun...";
+    loginButton.disabled = true;
+    if (googleLoginButton) googleLoginButton.disabled = true;
+
+    try {
+      const result = await window.fremioBooth.launcherLogin({
+        studioBaseUrl,
+        email,
+        password,
+      });
+      applyLoginResult(result, email);
+    } catch (error) {
+      resetLoginResult(error instanceof Error ? error.message : "Login launcher gagal.");
+    } finally {
+      loginButton.disabled = false;
+      if (googleLoginButton) googleLoginButton.disabled = false;
+    }
+  };
+
+  const doGoogleLogin = async () => {
+    const studioBaseUrl = initialBase || "https://studio.fremio.id";
+    authStatusEl.textContent = "Membuka login Google...";
+    loginButton.disabled = true;
+    if (googleLoginButton) googleLoginButton.disabled = true;
+
+    try {
+      const result = await window.fremioBooth.launcherGoogleLogin({ studioBaseUrl });
+      applyLoginResult(result, "Google");
+    } catch (error) {
+      resetLoginResult(error instanceof Error ? error.message : "Login Google gagal.");
+    } finally {
+      loginButton.disabled = false;
+      if (googleLoginButton) googleLoginButton.disabled = false;
+    }
+  };
+
+  loginButton?.addEventListener("click", () => {
+    void doLauncherLogin();
+  });
+
+  googleLoginButton?.addEventListener("click", () => {
+    void doGoogleLogin();
+  });
+
+  backToLoginButton?.addEventListener("click", () => {
+    statusEl.textContent = "";
+    setPostLoginVisibility(false);
+  });
+
+  logoutButton?.addEventListener("click", async () => {
+    statusEl.textContent = "";
+    await window.fremioBooth.launcherLogout?.();
+    resetLoginResult("");
+  });
+
+  emailInputEl?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void doLauncherLogin();
+    }
+  });
+
+  passwordInputEl?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void doLauncherLogin();
+    }
+  });
+
+  boothSelectEl?.addEventListener("change", () => {
+    refreshStartButtonLabel();
+  });
 
   refreshBridgeButton?.addEventListener("click", () => {
-    refreshBridgeStatus("get");
+    void refreshBridgeStatus("get");
   });
 
   restartBridgeButton?.addEventListener("click", () => {
-    refreshBridgeStatus("restart");
+    void refreshBridgeStatus("restart");
   });
 
-  await refreshBridgeStatus("get");
-  bridgePollTimer = window.setInterval(() => {
-    refreshBridgeStatus("get");
-  }, 5000);
+  authStatusEl.textContent = "";
+  refreshStartButtonLabel();
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    statusEl.textContent = "Menyimpan...";
+    statusEl.textContent = "Membuka booth...";
 
     try {
-      const payload = {
-        studioBaseUrl: baseUrlEl.value.trim(),
-        boothSlug: slugEl.value.trim(),
-        kiosk: kioskEl.checked,
-      };
+      const selectedBoothUrl = String(boothSelectEl.value || "").trim();
+      const parsed = parseBoothUrl(selectedBoothUrl, initialBase);
+      if (!parsed.ok) {
+        statusEl.textContent = "Pilih booth dulu dari daftar login.";
+        return;
+      }
 
-      await window.fremioBooth.saveConfig(payload);
+      await window.fremioBooth.saveConfig({
+        studioBaseUrl: parsed.baseUrl,
+        boothUrl: selectedBoothUrl,
+      });
       statusEl.textContent = "Tersimpan. Booth sedang dibuka...";
     } catch (error) {
       statusEl.textContent = `Gagal menyimpan: ${error instanceof Error ? error.message : "Unknown error"}`;
@@ -214,5 +436,5 @@ boot().catch((error) => {
 });
 
 window.addEventListener("beforeunload", () => {
-  if (bridgePollTimer) window.clearInterval(bridgePollTimer);
+  stopBridgePolling();
 });

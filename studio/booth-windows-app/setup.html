@@ -3,98 +3,62 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fremio Studio Setup</title>
+  <title>Fremio Studio</title>
   <link rel="stylesheet" href="./setup.css" />
 </head>
 <body>
   <main class="card">
-    <h1>Fremio Studio Setup</h1>
-<<<<<<< HEAD
-    <p class="subtitle">Install sekali, buka app, lalu cek apakah kamera dan printer sudah siap dipakai.</p>
-=======
-    <p class="subtitle">Buka app → kamera &amp; printer langsung terdeteksi otomatis.</p>
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+    <div class="logo-wrap">
+      <img src="./fremio_studio.png" alt="Fremio Studio" />
+    </div>
 
-    <section class="bridge-panel" aria-labelledby="bridge-title">
-      <div class="bridge-head">
-        <div>
-          <p class="eyebrow">Status hardware</p>
-<<<<<<< HEAD
-          <h2 id="bridge-title">Kamera dan printer</h2>
-=======
-          <h2 id="bridge-title">Kamera dan Printer</h2>
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
-        </div>
-        <span id="bridgeBadge" class="badge badge-waiting">Memeriksa...</span>
-      </div>
+    <section id="loginStep" class="step">
+      <h1>Login</h1>
 
-<<<<<<< HEAD
-      <p id="bridgeSummary" class="bridge-summary">Launcher sedang menyiapkan bridge lokal.</p>
-      <p id="bridgeAction" class="bridge-action"></p>
-      <ul id="bridgeNotes" class="bridge-notes"></ul>
-=======
-      <div id="cameraPanel" class="device-panel">
-        <div class="device-row">
-          <span class="device-icon">📷</span>
-          <div class="device-info">
-            <p class="device-name">Kamera</p>
-            <p id="cameraStatus" class="device-status">Memeriksa...</p>
-          </div>
-          <span id="cameraBadge" class="badge badge-waiting">—</span>
-        </div>
-        <ul id="cameraNotes" class="device-notes"></ul>
-      </div>
+      <button type="button" id="googleLoginButton" class="google-button">
+        <svg class="google-logo" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06L5.84 9.9C6.71 7.3 9.14 5.38 12 5.38z"/>
+        </svg>
+        Login dengan Google
+      </button>
 
-      <div id="printerPanel" class="device-panel">
-        <div class="device-row">
-          <span class="device-icon">🖨️</span>
-          <div class="device-info">
-            <p class="device-name">Printer</p>
-            <p id="printerStatus" class="device-status">Memeriksa...</p>
-          </div>
-          <span id="printerBadge" class="badge badge-waiting">—</span>
-        </div>
-        <ul id="printerNotes" class="device-notes"></ul>
-      </div>
+      <div class="divider"><span>atau</span></div>
 
-      <p id="bridgeAction" class="bridge-action"></p>
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+      <label>
+        Email
+        <input id="emailInput" type="text" placeholder="email@bisnis.com" autocomplete="username" />
+      </label>
 
-      <div class="bridge-actions">
-        <button type="button" id="refreshBridgeButton" class="secondary-button">Cek lagi</button>
-        <button type="button" id="restartBridgeButton" class="ghost-button">Nyalakan ulang bridge</button>
-      </div>
+      <label>
+        Password
+        <input id="passwordInput" type="password" placeholder="••••••••" autocomplete="current-password" />
+      </label>
+
+      <button type="button" id="loginButton" class="primary-button">Next</button>
+      <p id="authStatus" class="status"></p>
     </section>
 
-    <form id="setup-form">
-      <label>
-        Studio URL
-        <input id="studioBaseUrl" type="url" placeholder="https://studio.fremio.id" required />
-      </label>
+    <section id="boothStep" class="step" hidden>
+      <h1>Pilih Booth</h1>
+      <p id="accountName" class="account-line"></p>
 
-      <label>
-        Booth Slug
-        <input id="boothSlug" type="text" placeholder="contoh: booth-ajeng" required />
-      </label>
+      <form id="setup-form">
+        <label>
+          Link Booth
+          <select id="boothSelect" required>
+            <option value="">Pilih booth...</option>
+          </select>
+        </label>
 
-      <label class="switch-row">
-        <input id="kiosk" type="checkbox" checked />
-        <span>Buka dalam mode kiosk fullscreen</span>
-      </label>
-
-      <button type="submit">Simpan dan Jalankan Studio</button>
-      <p id="status" class="status"></p>
-    </form>
-
-<<<<<<< HEAD
-    <p class="hint">Kalau kamera Canon belum terbaca, biarkan app tetap terbuka lalu klik <strong>Cek lagi</strong>. Shortcut saat app berjalan: <strong>Ctrl+Shift+S</strong> untuk buka setup.</p>
-=======
-    <p class="hint">
-      Webcam USB terdeteksi otomatis tanpa instalasi tambahan.<br>
-      Untuk kamera DSLR Canon: pastikan kabel USB tersambung dan kamera dalam mode PC/PTP.
-      Shortcut saat app berjalan: <strong>Ctrl+Shift+S</strong> untuk buka setup.
-    </p>
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+        <button type="submit" id="startBoothButton" class="primary-button" disabled>Masuk Booth</button>
+        <button type="button" id="backToLoginButton" class="text-button">Kembali</button>
+        <button type="button" id="logoutButton" class="text-button">Logout</button>
+        <p id="status" class="status"></p>
+      </form>
+    </section>
   </main>
 
   <script src="./setup.js"></script>

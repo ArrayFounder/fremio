@@ -27,6 +27,8 @@ export interface CreatePaymentResponse {
   qrString:     string | null;  // raw QR string untuk render sendiri (null jika tidak tersedia)
   expiresAt:    string;         // ISO string — QR expire dalam 15 menit
   snapToken:    string | null;  // Midtrans Snap token (dipakai jika QRIS Core API tidak aktif)
+  snapClientKey?:   string | null; // Midtrans client key yang sesuai merchant/env token
+  snapRedirectUrl?: string | null; // redirect URL Midtrans Snap (untuk deteksi env script)
 }
 
 /** Shape respons dari /api/payment/status/[orderId] */

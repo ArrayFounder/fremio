@@ -48,8 +48,7 @@ export function Sidebar({ businessName, email, tier, open, onClose }: Props) {
         <div className="px-5 py-6 border-b border-primary-200">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0">
-              <Image src="/logo-salem.png" alt="fremio" width={90} height={28} className="h-6 w-auto" />
-              <span className="text-primary-400 text-[10px] uppercase tracking-widest mt-0.5 font-semibold">studio</span>
+              <Image src="/fremio_studio.png" alt="Fremio Studio" width={150} height={48} className="h-8 w-auto" />
             </div>
             <button
               onClick={onClose}

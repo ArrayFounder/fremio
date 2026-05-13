@@ -12,7 +12,6 @@ import type { ApiResponse } from "@/types";
 // Returns: session + operator + booth branding, status expiry
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TRIAL_ONLY_MODE = true;
 const TRIAL_EXPIRY_MINUTES = 5;
 const DEFAULT_EXPIRY_HOURS = 24;
 
@@ -49,7 +48,7 @@ export async function GET(
       boothConfig: {
         include: {
           operator: {
-            select: { businessName: true, isActive: true },
+            select: { businessName: true, isActive: true, subscriptionTier: true, subscriptionExpiry: true },
           },
         },
       },
@@ -64,15 +63,25 @@ export async function GET(
   }
 
   const completedAt = session.completedAt ?? session.startedAt;
-  const fallbackExpiresAt = TRIAL_ONLY_MODE
-    ? new Date(completedAt.getTime() + TRIAL_EXPIRY_MINUTES * 60 * 1000)
-    : new Date(completedAt.getTime() + DEFAULT_EXPIRY_HOURS * 60 * 60 * 1000);
 
-  const expiresAt = session.expiresAt ?? fallbackExpiresAt;
-  const trialLimitAt = new Date(completedAt.getTime() + TRIAL_EXPIRY_MINUTES * 60 * 1000);
-  const isUpgradedWindow = expiresAt.getTime() > trialLimitAt.getTime();
-  const isTrial = TRIAL_ONLY_MODE && !isUpgradedWindow;
-  const canUpgrade = TRIAL_ONLY_MODE;
+  // Tentukan status trial & expiry berdasarkan subscription operator
+  const op = session.boothConfig.operator;
+  const hasValidSubscription =
+    (op.subscriptionTier === "PRO" || op.subscriptionTier === "ENTERPRISE")
+    && op.subscriptionExpiry && new Date(op.subscriptionExpiry) > new Date();
+
+  const trialExpiry = new Date(completedAt.getTime() + TRIAL_EXPIRY_MINUTES * 60 * 1000);
+  const paidExpiry = new Date(completedAt.getTime() + DEFAULT_EXPIRY_HOURS * 60 * 60 * 1000);
+
+  let expiresAt = session.expiresAt ?? (hasValidSubscription ? paidExpiry : trialExpiry);
+
+  // Backward-compatibility: jika session lama sempat dibuat saat trial (5 menit),
+  // tapi operator kini punya PRO/ENTERPRISE aktif, paksa minimal 24 jam dari completedAt.
+  if (hasValidSubscription && expiresAt < paidExpiry) {
+    expiresAt = paidExpiry;
+  }
+  const isTrial = !hasValidSubscription;
+  const canUpgrade = !hasValidSubscription;
   const isExpired = new Date() > expiresAt;
 
   // Extract social media from welcomeScreenPrefs

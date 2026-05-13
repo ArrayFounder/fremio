@@ -13,16 +13,7 @@
 
 import { createHash } from "crypto";
 
-const IS_PRODUCTION = process.env.MIDTRANS_ENV === "production";
-
-// Midtrans API base URLs
-const API_BASE = IS_PRODUCTION
-  ? "https://api.midtrans.com"
-  : "https://api.sandbox.midtrans.com";
-
-const SNAP_BASE = IS_PRODUCTION
-  ? "https://app.midtrans.com"
-  : "https://app.sandbox.midtrans.com";
+const DEFAULT_IS_PRODUCTION = process.env.MIDTRANS_ENV === "production";
 
 /** Resolve server key: pakai key operator jika ada, fallback ke env Fremio global */
 function resolveServerKey(operatorKey?: string | null): string {
@@ -33,6 +24,19 @@ function resolveServerKey(operatorKey?: string | null): string {
 
 function makeAuthHeader(serverKey: string): string {
   return `Basic ${Buffer.from(`${serverKey}:`).toString("base64")}`;
+}
+
+function resolveMidtransBase(serverKey: string): { apiBase: string; snapBase: string } {
+  const isProduction = serverKey.startsWith("Mid-server-")
+    ? true
+    : serverKey.startsWith("SB-Mid-server-")
+      ? false
+      : DEFAULT_IS_PRODUCTION;
+
+  return {
+    apiBase:  isProduction ? "https://api.midtrans.com" : "https://api.sandbox.midtrans.com",
+    snapBase: isProduction ? "https://app.midtrans.com" : "https://app.sandbox.midtrans.com",
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,6 +104,7 @@ export async function createQrisCharge(
   operatorServerKey?: string | null,
 ): Promise<QrisChargeResult> {
   const serverKey = resolveServerKey(operatorServerKey);
+  const { apiBase } = resolveMidtransBase(serverKey);
   const body = {
     payment_type:        "qris",
     transaction_details: { order_id: req.orderId, gross_amount: req.amount },
@@ -109,7 +114,7 @@ export async function createQrisCharge(
     qris: { acquirer: "gopay" },
   };
 
-  const res = await fetch(`${API_BASE}/v2/charge`, {
+  const res = await fetch(`${apiBase}/v2/charge`, {
     method:  "POST",
     headers: { "Content-Type": "application/json", Authorization: makeAuthHeader(serverKey) },
     body:    JSON.stringify(body),
@@ -151,6 +156,7 @@ export async function createSnapToken(
   operatorServerKey?: string | null,
 ): Promise<SnapTokenResult> {
   const serverKey = resolveServerKey(operatorServerKey);
+  const { snapBase } = resolveMidtransBase(serverKey);
   const body = {
     transaction_details: { order_id: req.orderId, gross_amount: req.amount },
     item_details: [
@@ -165,7 +171,7 @@ export async function createSnapToken(
     callbacks: { finish: "" },
   };
 
-  const res = await fetch(`${SNAP_BASE}/snap/v1/transactions`, {
+  const res = await fetch(`${snapBase}/snap/v1/transactions`, {
     method:  "POST",
     headers: { "Content-Type": "application/json", Authorization: makeAuthHeader(serverKey) },
     body:    JSON.stringify(body),
@@ -189,7 +195,8 @@ export async function getMidtransStatus(
   operatorServerKey?: string | null,
 ): Promise<MidtransStatusResponse> {
   const serverKey = resolveServerKey(operatorServerKey);
-  const res = await fetch(`${API_BASE}/v2/${encodeURIComponent(orderId)}/status`, {
+  const { apiBase } = resolveMidtransBase(serverKey);
+  const res = await fetch(`${apiBase}/v2/${encodeURIComponent(orderId)}/status`, {
     headers: { Authorization: makeAuthHeader(serverKey) },
   });
 

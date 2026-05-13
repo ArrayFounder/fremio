@@ -16,12 +16,12 @@ import { PreviewDemoScreen }    from "./screens/PreviewDemoScreen";
 import { DeliveryScreen }       from "./screens/DeliveryScreen";
 import { BoothSetupScreen, loadHardwareSettings } from "./screens/BoothSetupScreen";
 import { PromoBannerOverlay } from "./screens/PromoBannerOverlay";
-import { composeVideoLive } from "@/lib/frameEngine";
+import { composeVideoLive, isOverlayFrame } from "@/lib/frameEngine";
 import { EMPTY_SESSION, type BoothConfigData, type BoothHardwareSettings, type BoothScreen, type BoothSessionState, type FrameData, type PaymentMethod, type VoucherInfo } from "./types";
 import VoucherScreen from "./screens/VoucherScreen";
 import { BoothTimer } from "./screens/BoothTimer";
 import { cleanupRecoverySnapshots, getRecoverySnapshot, listRecoverySnapshots, markLogResumeUsed, removeRecoverySnapshot, saveRecoverySnapshot, type RecoverySnapshot } from "./sessionRecovery";
-import { getEffectiveCaptureCount } from "./frameSlotUtils";
+import { createCaptureIndexResolver, getEffectiveCaptureCount, getEffectiveSlots, isEffectiveDuplicateMode, mapSlotsToCaptureIndexes } from "./frameSlotUtils";
 
 function useIsPortrait() {
   const [portrait, setPortrait] = useState(false);
@@ -77,7 +77,7 @@ type Action =
   | { type: "PAYMENT_METHOD_SELECTED"; payload: { method: PaymentMethod } }
   | { type: "PRINT_COUNT_CONFIRMED"; payload: { count: number } }
   | { type: "START_CREATING" }
-  | { type: "PAYMENT_CREATED"; payload: { sessionId: string; orderId: string; amount: number; qrImageUrl: string | null; qrString: string | null; snapToken: string | null; expiresAt: Date | null } }
+  | { type: "PAYMENT_CREATED"; payload: { sessionId: string; orderId: string; amount: number; qrImageUrl: string | null; qrString: string | null; snapToken: string | null; snapClientKey: string | null; snapRedirectUrl: string | null; expiresAt: Date | null } }
   | { type: "VOUCHER_VALIDATED"; payload: VoucherInfo }
   | { type: "VOUCHER_SESSION_CREATED"; payload: { sessionId: string } }
   | { type: "PAYMENT_SUCCESS"; payload: { sessionId: string } }
@@ -85,14 +85,14 @@ type Action =
   | { type: "PHOTO_CAPTURED";  payload: { dataUrl: string; videoBlob: Blob | null } }
   | { type: "PHOTO_REVIEW_CONFIRM" }   // user tekan Lanjut di preview satu foto
   | { type: "PHOTO_RETAKE_SINGLE" }   // user tekan Ulangi di preview satu foto
-  | { type: "PHOTO_SAVED";     payload: { photoUrl: string; videoUrl: string | null; downloadUrl: string } }
+  | { type: "PHOTO_SAVED";     payload: { photoUrl: string; videoUrl: string | null; downloadUrl: string; printImageDataUrl?: string } }
   | { type: "RETAKE" }
   | { type: "RESET" }
   | { type: "SETUP_COMPLETE"; payload: BoothHardwareSettings }
   | { type: "GOTO_SETUP" }
   | { type: "LIVE_VIDEO_COMPOSITING" }
   | { type: "LIVE_VIDEO_DONE"; payload: Blob | null }
-  | { type: "PHOTO_VIDEO_READY"; payload: Blob | null }
+  | { type: "PHOTO_VIDEO_READY"; payload: { videoBlob: Blob | null; captureIndex?: number } }
   | { type: "RETAKE_SLOT"; payload: { slotIndex: number } }
   | { type: "PROCEED_TO_PREVIEW" }
   | { type: "RESUME_SESSION"; payload: RecoverySnapshot }
@@ -153,6 +153,8 @@ function reducer(state: State, action: Action): State {
           qrImageUrl:       action.payload.qrImageUrl,
           qrString:         action.payload.qrString,
           snapToken:        action.payload.snapToken,
+          snapClientKey:    action.payload.snapClientKey,
+          snapRedirectUrl:  action.payload.snapRedirectUrl,
           paymentExpiresAt: action.payload.expiresAt,
         },
       };
@@ -252,6 +254,7 @@ function reducer(state: State, action: Action): State {
         screen: "DELIVERY",
         session: {
           ...state.session,
+          printImageDataUrl: action.payload.printImageDataUrl ?? null,
           photoUrl:    action.payload.photoUrl,
           videoUrl:    action.payload.videoUrl,
           downloadUrl: action.payload.downloadUrl,
@@ -299,17 +302,20 @@ function reducer(state: State, action: Action): State {
       };
 
     case "PHOTO_VIDEO_READY": {
-      // Abaikan jika user sudah retake (sudah tidak di PHOTO_REVIEW)
-      if (state.screen !== "PHOTO_REVIEW") return state;
-      const idx = state.retakeSlotIndex !== null
+      const idx = typeof action.payload.captureIndex === "number"
+        ? action.payload.captureIndex
+        : state.retakeSlotIndex !== null
         ? state.retakeSlotIndex
         : state.session.capturedVideos.length - 1;
-      if (idx < 0) return { ...state, currentVideoReady: true };
+      if (idx < 0 || idx >= state.session.capturedVideos.length) return state;
       const newVids = [...state.session.capturedVideos];
-      newVids[idx] = action.payload;
+      newVids[idx] = action.payload.videoBlob;
+      const activeIdx = state.retakeSlotIndex !== null
+        ? state.retakeSlotIndex
+        : state.session.capturedVideos.length - 1;
       return {
         ...state,
-        currentVideoReady: true,
+        currentVideoReady: state.screen === "PHOTO_REVIEW" && idx === activeIdx ? true : state.currentVideoReady,
         session: { ...state.session, capturedVideos: newVids },
       };
     }
@@ -384,6 +390,8 @@ interface RecoveryTransactionLog {
 }
 
 export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) {
+  // eslint-disable-next-line no-console
+  console.log("[BoothClient] mount", { slug: booth?.slug, previewScreen });
   const mappedPreviewScreen = previewScreen ? (PREVIEW_SCREEN_MAP[previewScreen] ?? "IDLE") : null;
   const isPortrait = useIsPortrait();
   const boothPrefs = booth.welcomeScreenPrefs as Record<string, unknown> | null;
@@ -437,8 +445,11 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
   // Load hardware settings from localStorage on mount (client-only)
   // Dilewati kalau dalam preview mode
+  // Windows app: selalu tampilkan setting dulu agar user bisa cek koneksi Canon
   useEffect(() => {
     if (mappedPreviewScreen) return;
+    const isWindowsApp = typeof window !== "undefined" && Boolean(window.fremioBooth);
+    if (isWindowsApp) return; // Windows app selalu mulai dari BOOTH_SETUP
     const saved = loadHardwareSettings(booth.slug);
     if (saved?.setupCompleted) {
       dispatch({ type: "SETUP_COMPLETE", payload: saved });
@@ -449,6 +460,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   const { screen, isCreating, session, hwSettings, liveVideoState, liveVideoCompositeBlob, currentVideoReady, retakeSlotIndex, allPhotosDone } = state;
   const { primaryColor, accentColor }    = booth;
   const { textPrimary, textSecondary, textTertiary, surfaceBg, surfaceBorder } = getAdaptiveColors(primaryColor);
+  const livePhotoVideoEnabled = booth.welcomeScreenPrefs?.livePhotoVideoEnabled ?? true;
 
   const refreshLocalSnapshots = useCallback(() => {
     cleanupRecoverySnapshots(booth.slug);
@@ -513,6 +525,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
   // ── Mulai compositing video saat video terakhir sudah siap ──────────────
   useEffect(() => {
+    if (!livePhotoVideoEnabled) return;
     // Tunggu video slot saat ini selesai direkam
     if (!currentVideoReady) return;
     const frame = session.selectedFrame;
@@ -557,10 +570,13 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     let cancelled = false;
     dispatch({ type: "LIVE_VIDEO_COMPOSITING" });
 
+    const effectiveSlots = getEffectiveSlots(frame);
+    const resolvedEffectiveSlots = mapSlotsToCaptureIndexes(effectiveSlots, isEffectiveDuplicateMode(frame));
+
     composeVideoLive(session.capturedVideos, frame.assetUrl, {
       canvasWidth:     frame.canvasWidth  || 1080,
       canvasHeight:    frame.canvasHeight || 1920,
-      slots:           frame.slots ?? undefined,
+      slots:           resolvedEffectiveSlots,
       backgroundColor: frame.backgroundColor || "#ffffff",
       overlayUrl:      frame.overlayUrl ?? undefined,
       sceneElements:   frame.sceneElements ?? undefined,
@@ -577,7 +593,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVideoReady, session.capturedPhotos.length]);
+  }, [currentVideoReady, session.capturedPhotos.length, livePhotoVideoEnabled]);
 
   // ─── Socket.io — dengarkan session:unlocked dari server ──────────────────
   useBoothSocket(booth.id, {
@@ -606,7 +622,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
       });
 
       // Safely parse JSON — non-JSON response (e.g. Nginx 502 HTML) causes SyntaxError
-      let body: { success: boolean; data?: { sessionId: string; orderId: string; amount: number; qrImageUrl: string; qrString: string; snapToken?: string; expiresAt: string }; error?: string };
+      let body: { success: boolean; data?: { sessionId: string; orderId: string; amount: number; qrImageUrl: string; qrString: string; snapToken?: string; snapClientKey?: string; snapRedirectUrl?: string; expiresAt: string }; error?: string };
       try {
         body = await res.json() as typeof body;
       } catch {
@@ -626,6 +642,8 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
           qrImageUrl: body.data.qrImageUrl ?? null,
           qrString:   body.data.qrString   ?? null,
           snapToken:  body.data.snapToken   ?? null,
+          snapClientKey: body.data.snapClientKey ?? null,
+          snapRedirectUrl: body.data.snapRedirectUrl ?? null,
           expiresAt:  body.data.expiresAt ? new Date(body.data.expiresAt) : null,
         },
       });
@@ -670,7 +688,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         });
         const json = await res.json() as {
           success: boolean;
-          data?: { sessionId: string; orderId: string; amount: number; qrImageUrl: string; qrString: string; snapToken?: string; expiresAt: string };
+          data?: { sessionId: string; orderId: string; amount: number; qrImageUrl: string; qrString: string; snapToken?: string; snapClientKey?: string; snapRedirectUrl?: string; expiresAt: string };
           error?: string;
         };
         if (!json.success || !json.data) throw new Error(json.error ?? "Gagal membuat pembayaran");
@@ -683,6 +701,8 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             qrImageUrl: json.data.qrImageUrl ?? null,
             qrString:   json.data.qrString   ?? null,
             snapToken:  json.data.snapToken   ?? null,
+            snapClientKey: json.data.snapClientKey ?? null,
+            snapRedirectUrl: json.data.snapRedirectUrl ?? null,
             expiresAt:  json.data.expiresAt ? new Date(json.data.expiresAt) : null,
           },
         });
@@ -703,7 +723,17 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ boothConfigId: booth.id, frameId, printCount }),
       });
-      const json = await res.json() as { success: boolean; data?: { sessionId: string }; error?: string };
+
+      let json: { success: boolean; data?: { sessionId: string }; error?: string };
+      try {
+        json = await res.json() as typeof json;
+      } catch {
+        throw new Error(`Sesi cash gagal (${res.status}). Coba lagi.`);
+      }
+
+      if (!res.ok) {
+        throw new Error(json?.error || `Sesi cash gagal (${res.status})`);
+      }
       if (!json.success || !json.data) throw new Error(json.error ?? "Gagal membuat sesi");
       dispatch({ type: "VOUCHER_SESSION_CREATED", payload: { sessionId: json.data.sessionId } });
     } catch (err) {
@@ -714,6 +744,23 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   }, [booth.id]);
 
   const handleReset = useCallback(() => dispatch({ type: "RESET" }), []);
+
+  // Back navigation handlers
+  const handleBackFromTutorial = useCallback(() => {
+    dispatch({ type: "RESET" });
+  }, []);
+
+  const handleBackFromPaymentMethod = useCallback(() => {
+    dispatch({ type: "GOTO_TUTORIAL" });
+  }, []);
+
+  const handleBackFromFrameSelect = useCallback(() => {
+    dispatch({ type: "TUTORIAL_DONE" });
+  }, []);
+
+  const handleBackFromPrintCount = useCallback(() => {
+    dispatch({ type: "FRAME_SELECTED", payload: { frame: session.selectedFrame! } });
+  }, [session.selectedFrame]);
 
   useEffect(() => {
     if (mappedPreviewScreen) return;
@@ -835,6 +882,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
   const [timerSecondsLeft, setTimerSecondsLeft] = useState<number | null>(null);
   const [timerTotal,       setTimerTotal]       = useState<number>(180);
+  const [cameraCountingDown, setCameraCountingDown] = useState(false);
 
   // ─── Promo banner inactivity timer ───────────────────────────────────────
   const [showPromoBanner, setShowPromoBanner] = useState(false);
@@ -1599,6 +1647,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button
                 onClick={handlePinDelete}
+                onTouchStart={handlePinDelete}
                 className="w-full py-3 rounded-2xl text-sm font-bold"
                 style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.9)" }}
               >
@@ -1675,6 +1724,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button
                 onClick={handleSettingsPinDelete}
+                onTouchStart={handleSettingsPinDelete}
                 className="w-full py-3 rounded-2xl text-sm font-bold"
                 style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.9)" }}
               >
@@ -1776,6 +1826,8 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             qrImageUrl={session.qrImageUrl}
             qrString={session.qrString}
             snapToken={session.snapToken}
+            snapClientKey={session.snapClientKey}
+            snapRedirectUrl={session.snapRedirectUrl}
             amount={session.amount}
             expiresAt={session.paymentExpiresAt}
             onPaid={(sessionId) => dispatch({ type: "PAYMENT_SUCCESS", payload: { sessionId } })}
@@ -1788,6 +1840,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             booth={booth}
             frames={frames}
             onSelect={(frame) => dispatch({ type: "FRAME_SELECTED", payload: { frame } })}
+            onBack={handleBackFromFrameSelect}
           />
         )}
 
@@ -1796,6 +1849,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             booth={booth}
             frame={session.selectedFrame}
             voucher={session.paymentMethod === "VOUCHER" ? session.voucher : null}
+            onBack={handleBackFromPrintCount}
             onSelect={(count) => {
               const frameId = session.selectedFrame?.id;
               if (session.paymentMethod === "VOUCHER" && session.voucher)
@@ -2022,6 +2076,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
           <TutorialScreen
             booth={booth}
             onStart={() => dispatch({ type: "TUTORIAL_DONE" })}
+            onBack={handleBackFromTutorial}
             prefsOverride={booth.welcomeScreenPrefs}
           />
         )}
@@ -2030,6 +2085,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
           <PaymentMethodScreen
             booth={booth}
             onSelect={(method) => dispatch({ type: "PAYMENT_METHOD_SELECTED", payload: { method } })}
+            onBack={handleBackFromPaymentMethod}
             prefsOverride={liveWelcomePrefs as import("./types").WelcomeScreenPrefs | null}
           />
         )}
@@ -2070,11 +2126,14 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
               onCapture={(dataUrl) =>
                 dispatch({ type: "PHOTO_CAPTURED", payload: { dataUrl, videoBlob: null } })
               }
-              onVideoReady={(videoBlob) =>
-                dispatch({ type: "PHOTO_VIDEO_READY", payload: videoBlob })
+              onVideoReady={(videoBlob, captureIndex) =>
+                dispatch({ type: "PHOTO_VIDEO_READY", payload: { videoBlob, captureIndex } })
               }
               onProceed={() => dispatch({ type: "PROCEED_TO_PREVIEW" })}
               onRetakeSlot={(slotIndex) => dispatch({ type: "RETAKE_SLOT", payload: { slotIndex } })}
+              onCountdownChange={setCameraCountingDown}
+              livePhotoVideoEnabled={livePhotoVideoEnabled}
+              mode={booth.photoSessionMode as "live_view" | "fullscreen"}
             />
 
             {/* PHOTO_REVIEW — overlay card di atas camera screen */}
@@ -2084,10 +2143,27 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
               const photoIdx    = retakeSlotIndex !== null ? retakeSlotIndex + 1 : session.capturedPhotos.length;
               const lastPhoto   = session.capturedPhotos[photoIdx - 1];
               const isLast      = retakeSlotIndex !== null ? true : photoIdx >= totalNeeded;
+              const showFullscreenFramedPreview = booth.photoSessionMode === "fullscreen";
+              const previewFrameIsOverlay = isOverlayFrame(frame.assetUrl);
+              const effectiveSlots = getEffectiveSlots(frame);
+              const sceneElements = frame.sceneElements ?? [];
+              const useSceneRendering = sceneElements.length > 0;
+              const previewBaseUrl = useSceneRendering && frame.thumbnailUrl ? frame.thumbnailUrl : frame.assetUrl;
+              const isDuplicateMode = isEffectiveDuplicateMode(frame);
+              const captureIndex = photoIdx - 1;
+              const resolvePreviewCaptureIndex = createCaptureIndexResolver(effectiveSlots, isDuplicateMode);
+              const slotRenderMap = effectiveSlots.map((slot) => {
+                return { slot, slotCaptureIndex: resolvePreviewCaptureIndex(slot) };
+              });
+              const mappedPreviewSlots = slotRenderMap
+                .filter((item) => item.slotCaptureIndex === captureIndex)
+                .map((item) => item.slot);
 
-              const currentSlot = frame.slots?.find((s) => s.photoIndex === photoIdx - 1);
+              const currentSlot = mappedPreviewSlots[0] ?? frame.slots?.find((s) => s.photoIndex === photoIdx - 1);
               const cw = frame.canvasWidth  || 1080;
               const ch = frame.canvasHeight || 1920;
+              const isVerticalFrame = ch > cw;
+              const useStackedVerticalPreview = showFullscreenFramedPreview && isVerticalFrame;
               const slotAspect  = currentSlot
                 ? (currentSlot.width * cw) / (currentSlot.height * ch)
                 : 16 / 9;
@@ -2095,99 +2171,260 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
               const cardMaxW = 560; // px, matches max-w-lg below
               const photoW = cardMaxW - 56; // card padding 28px each side
               const photoH = Math.round(photoW / slotAspect);
+              const photoLayerZ = effectiveSlots.length > 0
+                ? effectiveSlots.reduce((min, slot) => Math.min(min, Number.isFinite(slot.zIndex) ? Number(slot.zIndex) : 0), Infinity)
+                : 0;
+              const sceneBeforePhotos = sceneElements.filter((el) => (Number.isFinite(el.zIndex) ? Number(el.zIndex) : 0) < photoLayerZ);
+              const sceneAfterPhotos = sceneElements.filter((el) => (Number.isFinite(el.zIndex) ? Number(el.zIndex) : 0) >= photoLayerZ);
+              const renderSceneElement = (el: NonNullable<FrameData["sceneElements"]>[number], idx: number, zBase: number) => {
+                const isFullCanvasShape = el.type === "shape"
+                  && el.left <= 0.001
+                  && el.top <= 0.001
+                  && el.width >= 0.999
+                  && el.height >= 0.999
+                  && !el.stroke;
+                if (isFullCanvasShape) return null;
+
+                const baseStyle: React.CSSProperties = {
+                  position: "absolute",
+                  left: `${el.left * 100}%`,
+                  top: `${el.top * 100}%`,
+                  width: `${el.width * 100}%`,
+                  height: `${el.height * 100}%`,
+                  zIndex: zBase + (Number.isFinite(el.zIndex) ? Number(el.zIndex) : idx),
+                  transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+                  transformOrigin: "center center",
+                  borderRadius: el.borderRadius ? `${el.borderRadius}px` : undefined,
+                  overflow: "hidden",
+                  pointerEvents: "none",
+                };
+
+                if ((el.type === "background-photo" || el.type === "upload") && el.src) {
+                  return (
+                    <img
+                      key={`${el.type}-${zBase}-${idx}`}
+                      src={el.src}
+                      alt=""
+                      className="absolute"
+                      style={{
+                        ...baseStyle,
+                        objectFit: el.objectFit === "fill" ? "fill" : (el.objectFit ?? "contain"),
+                      }}
+                    />
+                  );
+                }
+
+                if (el.type === "text" && el.text) {
+                  return (
+                    <div
+                      key={`${el.type}-${zBase}-${idx}`}
+                      style={{
+                        ...baseStyle,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: el.align === "left" ? "flex-start" : el.align === "right" ? "flex-end" : "center",
+                        color: el.color ?? "#000000",
+                        fontSize: `${Math.max(8, (el.fontSize ?? 0.05) * ch)}px`,
+                        fontFamily: el.fontFamily ?? "inherit",
+                        fontWeight: el.fontWeight ?? 600,
+                        textAlign: el.align ?? "center",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {el.text}
+                    </div>
+                  );
+                }
+
+                if (el.type === "shape") {
+                  return (
+                    <div
+                      key={`${el.type}-${zBase}-${idx}`}
+                      style={{
+                        ...baseStyle,
+                        background: el.fill ?? "transparent",
+                        border: el.stroke ? `${el.strokeWidth ?? 1}px solid ${el.stroke}` : undefined,
+                      }}
+                    />
+                  );
+                }
+
+                return null;
+              };
+
+              const renderFramedPreview = () => (
+                <div
+                  className="relative w-full h-full"
+                  style={{ background: frame.backgroundColor ?? "#ffffff" }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {(!previewFrameIsOverlay || useSceneRendering) && (
+                    <img src={previewBaseUrl} alt="Frame background" className="absolute inset-0 w-full h-full object-cover" />
+                  )}
+                  {useSceneRendering && sceneBeforePhotos.map((el, idx) => renderSceneElement(el, idx, 1))}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {effectiveSlots.length > 0 ? (
+                    slotRenderMap.map(({ slot, slotCaptureIndex }, slotIdx) => {
+                      const slotPhoto = session.capturedPhotos[slotCaptureIndex];
+                      if (!slotPhoto) return null;
+
+                      return (
+                        <img
+                          key={`${slot.photoIndex}-${slotIdx}`}
+                          src={slotPhoto}
+                          alt={`Preview sesi ${slotCaptureIndex + 1}`}
+                          className="absolute object-cover"
+                          style={{
+                            left: `${slot.left * 100}%`,
+                            top: `${slot.top * 100}%`,
+                            width: `${slot.width * 100}%`,
+                            height: `${slot.height * 100}%`,
+                            zIndex: useSceneRendering ? 1000 : 10,
+                          }}
+                        />
+                      );
+                    })
+                  ) : lastPhoto && currentSlot ? (
+                    <img
+                      src={lastPhoto}
+                      alt={`Preview sesi ${photoIdx}`}
+                      className="absolute object-cover"
+                      style={{
+                        left: `${currentSlot.left * 100}%`,
+                        top: `${currentSlot.top * 100}%`,
+                        width: `${currentSlot.width * 100}%`,
+                        height: `${currentSlot.height * 100}%`,
+                        zIndex: useSceneRendering ? 1000 : 10,
+                      }}
+                    />
+                  ) : lastPhoto ? (
+                    <img src={lastPhoto} alt={`Preview sesi ${photoIdx}`} className="absolute inset-0 w-full h-full object-cover" style={{ zIndex: useSceneRendering ? 1000 : 10 }} />
+                  ) : null}
+                  {useSceneRendering && sceneAfterPhotos.map((el, idx) => renderSceneElement(el, idx, 2000))}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {!useSceneRendering && previewFrameIsOverlay && (
+                    <img src={frame.assetUrl} alt="Frame overlay" className="absolute inset-0 w-full h-full object-cover" style={{ zIndex: 20 }} />
+                  )}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {!useSceneRendering && frame.overlayUrl && (
+                    <img src={frame.overlayUrl} alt="Frame decoration overlay" className="absolute inset-0 w-full h-full object-cover" style={{ zIndex: 30 }} />
+                  )}
+                </div>
+              );
 
               return (
-                <div
-                  className="absolute inset-0 flex items-center justify-center select-none px-6"
-                  style={{
-                    background: "rgba(0,0,0,0.55)",
-                    backdropFilter: "blur(6px)",
-                    // On landscape, shrink the overlay to only cover the camera column
-                    // (right side = preview panel width: clamp(200px, 30vw, 400px))
-                    right: isPortrait ? 0 : "clamp(200px, 30vw, 400px)",
-                  }}
-                >
+                <>
                   <div
-                    className="w-full max-w-lg rounded-3xl p-7 shadow-2xl"
-                    style={{ backgroundColor: primaryColor, border: "1px solid rgba(255,255,255,0.15)" }}
+                    className="absolute inset-0 flex items-center justify-center select-none px-6"
+                    style={{
+                      background: "rgba(0,0,0,0.55)",
+                      backdropFilter: "blur(6px)",
+                      right: 0,
+                    }}
                   >
-                    {/* Header: teks di atas */}
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <p className="text-sm uppercase tracking-widest" style={{ color: textSecondary }}>
-                          Foto {photoIdx} dari {totalNeeded}
-                        </p>
-                        <h3 className="text-3xl font-bold mt-0.5" style={{ color: textPrimary }}>Sudah oke?</h3>
-                        <p className="text-base mt-0.5" style={{ color: textSecondary }}>
-                          {isLast ? "Ini foto terakhir" : `${totalNeeded - photoIdx} foto lagi setelah ini`}
-                        </p>
-                      </div>
-
-                      {/* Status badge */}
-                      <div className="flex-shrink-0 ml-4">
-                        {!currentVideoReady && (
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm"
-                            style={{ backgroundColor: surfaceBg, border: `1px solid ${surfaceBorder}`, color: textTertiary }}>
-                            <span className="h-2.5 w-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                            Memproses…
-                          </div>
-                        )}
-                        {currentVideoReady && !isLast && (
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold"
-                            style={{ background: accentColor + "33", color: accentColor }}>
-                            ✓ Siap
-                          </div>
-                        )}
-                        {isLast && currentVideoReady && liveVideoState === "compositing" && (
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm"
-                            style={{ backgroundColor: surfaceBg, border: `1px solid ${surfaceBorder}`, color: textTertiary }}>
-                            <span className="h-2.5 w-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                            🎬 Rendering…
-                          </div>
-                        )}
-                        {isLast && liveVideoState === "done" && (
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold"
-                            style={{ background: accentColor + "33", color: accentColor }}>
-                            ✓ Siap
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Foto utama — full width, dominan */}
                     <div
-                      className="w-full rounded-2xl overflow-hidden shadow-xl mb-5"
-                      style={{ height: Math.min(photoH, 340) }}
+                      className={`w-full rounded-3xl shadow-2xl ${useStackedVerticalPreview ? "max-w-md p-5" : "max-w-lg p-7"}`}
+                      style={{ backgroundColor: primaryColor, border: "1px solid rgba(255,255,255,0.15)" }}
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      {lastPhoto && <img src={lastPhoto} alt="Foto" className="w-full h-full object-cover" />}
-                    </div>
+                      {/* Header: teks di atas */}
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <p className="text-sm uppercase tracking-widest" style={{ color: textSecondary }}>
+                            Foto {photoIdx} dari {totalNeeded}
+                          </p>
+                          <h3 className={`${useStackedVerticalPreview ? "text-2xl" : "text-3xl"} font-bold mt-0.5`} style={{ color: textPrimary }}>Sudah oke?</h3>
+                          <p className="text-base mt-0.5" style={{ color: textSecondary }}>
+                            {isLast ? "Ini foto terakhir" : `${totalNeeded - photoIdx} foto lagi setelah ini`}
+                          </p>
+                        </div>
 
-                    {/* Tombol aksi di bawah */}
-                    <div className="flex gap-4">
-                      <button
-                        onClick={() => dispatch({ type: "PHOTO_RETAKE_SINGLE" })}
-                        className="flex-shrink-0 px-6 py-4 rounded-2xl text-base font-semibold transition-colors active:opacity-70"
-                        style={{ color: textSecondary, border: `1px solid ${surfaceBorder}`, backgroundColor: surfaceBg }}
-                      >
-                        🔄 Ulangi
-                      </button>
-                      <button
-                        onClick={() => dispatch({ type: "PHOTO_REVIEW_CONFIRM" })}
-                        disabled={!currentVideoReady}
-                        style={{
-                          backgroundColor: currentVideoReady ? accentColor : `${accentColor}55`,
-                          color: primaryColor,
-                        }}
-                        className="flex-1 py-4 rounded-2xl text-xl font-black active:scale-95 transition-all disabled:cursor-not-allowed"
-                      >
-                        {!currentVideoReady
-                          ? "⌛ Menyiapkan…"
-                          : isLast ? "✅ Lanjut" : "👍 Foto Berikutnya"}
-                      </button>
+                        {/* Status badge */}
+                        <div className="flex-shrink-0 ml-4">
+                          {!currentVideoReady && (
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm"
+                              style={{ backgroundColor: surfaceBg, border: `1px solid ${surfaceBorder}`, color: textTertiary }}>
+                              <span className="h-2.5 w-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                              Memproses…
+                            </div>
+                          )}
+                          {currentVideoReady && !isLast && (
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold"
+                              style={{ background: accentColor + "33", color: accentColor }}>
+                              ✓ Siap
+                            </div>
+                          )}
+                          {isLast && currentVideoReady && liveVideoState === "compositing" && (
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm"
+                              style={{ backgroundColor: surfaceBg, border: `1px solid ${surfaceBorder}`, color: textTertiary }}>
+                              <span className="h-2.5 w-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                              🎬 Rendering…
+                            </div>
+                          )}
+                          {isLast && liveVideoState === "done" && (
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold"
+                              style={{ background: accentColor + "33", color: accentColor }}>
+                              ✓ Siap
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Foto plain utama + panel preview frame (fullscreen) */}
+                      <div className={`mb-4 ${showFullscreenFramedPreview ? "grid grid-cols-[minmax(0,1fr)_minmax(0,200px)] gap-4 items-center" : ""}`}>
+                        <div className="w-full rounded-2xl overflow-hidden shadow-xl flex items-center justify-center">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {lastPhoto ? (
+                            <img
+                              src={lastPhoto}
+                              alt="Foto plain"
+                              className="max-w-full object-contain"
+                              style={{ maxHeight: "min(40vh, 280px)" }}
+                            />
+                          ) : null}
+                        </div>
+
+                        {showFullscreenFramedPreview && (
+                          <div
+                            className="rounded-2xl p-2 w-full"
+                            style={{ backgroundColor: surfaceBg, border: `1px solid ${surfaceBorder}`, maxWidth: 200 }}
+                          >
+                            <p className="text-[11px] font-semibold px-1 pb-1" style={{ color: textTertiary }}>
+                              Preview Frame
+                            </p>
+                            <div className="w-full rounded-xl overflow-hidden shadow-md" style={{ aspectRatio: `${cw} / ${ch}` }}>
+                              {renderFramedPreview()}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Tombol aksi di bawah */}
+                      <div className={`flex ${useStackedVerticalPreview ? "gap-3" : "gap-4"}`}>
+                        <button
+                          onClick={() => dispatch({ type: "PHOTO_RETAKE_SINGLE" })}
+                          className={`flex-shrink-0 rounded-2xl text-base font-semibold transition-colors active:opacity-70 ${useStackedVerticalPreview ? "px-4 py-3" : "px-6 py-4"}`}
+                          style={{ color: textSecondary, border: `1px solid ${surfaceBorder}`, backgroundColor: surfaceBg }}
+                        >
+                          🔄 Ulangi
+                        </button>
+                        <button
+                          onClick={() => dispatch({ type: "PHOTO_REVIEW_CONFIRM" })}
+                          disabled={!currentVideoReady}
+                          style={{
+                            backgroundColor: currentVideoReady ? accentColor : `${accentColor}55`,
+                            color: primaryColor,
+                          }}
+                          className={`flex-1 rounded-2xl font-black active:scale-95 transition-all disabled:cursor-not-allowed ${useStackedVerticalPreview ? "py-3 text-lg" : "py-4 text-xl"}`}
+                        >
+                          {!currentVideoReady
+                            ? "⌛ Menyiapkan…"
+                            : isLast ? "✅ Lanjut" : "👍 Foto Berikutnya"}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+
+                </>
               );
             })()}
           </div>
@@ -2210,10 +2447,12 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
               sessionId={session.sessionId}
               liveVideoState={liveVideoState}
               liveVideoCompositeBlob={liveVideoCompositeBlob}
+              livePhotoVideoEnabled={livePhotoVideoEnabled}
               onSaved={(result) =>
                 dispatch({ type: "PHOTO_SAVED", payload: result })
               }
               onRetake={() => dispatch({ type: "RETAKE" })}
+              mode={booth.photoSessionMode as "live_view" | "fullscreen"}
             />
           )}
 
@@ -2223,11 +2462,13 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
             sessionId={session.sessionId ?? undefined}
             downloadUrl={session.downloadUrl}
             photoUrl={session.photoUrl ?? undefined}
+            printImageDataUrl={session.printImageDataUrl ?? undefined}
             printerName={hwSettings.printerName ?? undefined}
             printCount={session.printCount}
             canvasWidth={session.selectedFrame?.canvasWidth}
             canvasHeight={session.selectedFrame?.canvasHeight}
             paperSizeOverride={hwSettings.paperSize ?? null}
+            timerSecondsLeft={timerSecondsLeft}
             onDone={handleReset}
           />
         )}
@@ -2266,8 +2507,8 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         ));
       })()}
 
-      {/* Session countdown timer — top-right overlay */}
-      {timerSecondsLeft !== null && (
+      {/* Session countdown timer — top-right overlay (hidden saat camera countdown) */}
+      {timerSecondsLeft !== null && !cameraCountingDown && (
         <BoothTimer
           secondsLeft={timerSecondsLeft}
           totalSeconds={timerTotal}

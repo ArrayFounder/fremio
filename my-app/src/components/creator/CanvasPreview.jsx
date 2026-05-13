@@ -22,6 +22,7 @@ import {
   DEFAULT_ELEMENT_MIN,
   BACKGROUND_MIN_SHORT_SIDE,
 } from "./canvasConstants.js";
+import { buildSlotMaps } from "../../utils/slotSystem.js";
 const HOLD_THRESHOLD_MS = 350;
 const formatRadius = (value, fallback) => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -413,6 +414,7 @@ const ElementContent = forwardRef(
       onTextChange,
       onTextBlur,
       textInputRef,
+      resolvedSlotNumber,
     },
     ref
   ) => {
@@ -648,7 +650,7 @@ const ElementContent = forwardRef(
       // Photo slot: Dummy placeholder that shows position & size for real photos later
       // This is the "recipe" that Editor will use to place real captured photos
       const slotNumber =
-        element.data?.slotNumber || element.data?.label || null;
+        (resolvedSlotNumber ?? element.data?.slotNumber) || element.data?.label || null;
 
       const rotationDegrees = Number.isFinite(element?.rotation)
         ? element.rotation
@@ -1108,6 +1110,35 @@ function CanvasPreviewComponent({
     const width = Math.round((CANVAS_HEIGHT * ratioWidth) / ratioHeight);
     return { width, height: CANVAS_HEIGHT };
   }, [aspectRatio]);
+
+  const resolvedPhotoSlotNumbers = useMemo(() => {
+    const photoElements = (Array.isArray(elements) ? elements : []).filter(
+      (element) => element?.type === "photo"
+    );
+
+    if (photoElements.length === 0) return {};
+
+    const slots = photoElements.map((element) => ({
+      left: parseNumeric(element?.x, 0) / Math.max(canvasDimensions.width, 1),
+      top: parseNumeric(element?.y, 0) / Math.max(canvasDimensions.height, 1),
+      width: parseNumeric(element?.width, 0) / Math.max(canvasDimensions.width, 1),
+      height: parseNumeric(element?.height, 0) / Math.max(canvasDimensions.height, 1),
+    }));
+
+    const { slotNumberMap } = buildSlotMaps(slots);
+    const byElementId = {};
+
+    photoElements.forEach((element, index) => {
+      const existing = Number(element?.data?.slotNumber);
+      if (Number.isFinite(existing) && existing > 0) {
+        byElementId[element.id] = existing;
+        return;
+      }
+      byElementId[element.id] = slotNumberMap[index] ?? index + 1;
+    });
+
+    return byElementId;
+  }, [elements, canvasDimensions.width, canvasDimensions.height]);
 
   const { maxWidth, maxHeight } = useMemo(() => {
     if (!previewConstraints) {
@@ -2313,6 +2344,7 @@ function CanvasPreviewComponent({
                 onTextChange={handleTextChange}
                 onTextBlur={handleTextBlur}
                 textInputRef={textInputRef}
+                resolvedSlotNumber={resolvedPhotoSlotNumbers[element.id]}
                 ref={isBackgroundPhoto ? backgroundTouchRef : null}
               />
               {/* Toolbar: outside rotating wrapper so buttons stay upright */}

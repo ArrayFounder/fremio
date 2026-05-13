@@ -33,11 +33,11 @@ import {
   toggleDraftInGroup,
   updateDraftGroupPreferences,
 } from "../utils/draftGroupStorage.js";
-<<<<<<< HEAD
-import { fetchGroupShareAnalytics, fetchGroupShareQuota } from "../services/groupService.js";
-=======
-import { deleteMyShareLink, fetchGroupShareAnalytics, fetchGroupShareQuota } from "../services/groupService.js";
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+import {
+  deleteMyShareLink,
+  fetchGroupShareAnalytics,
+  fetchGroupShareQuota,
+} from "../services/groupService.js";
 import { getStaticFrames } from "../data/staticFrames.js";
 import "./Shares.css";
 
@@ -2021,19 +2021,13 @@ export default function Shares() {
     setConfirmDialog({ type: "group", id: groupId, title: name });
   };
 
-<<<<<<< HEAD
-  const confirmDeleteGroup = (groupId) => {
-=======
   const confirmDeleteGroup = async (groupId) => {
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     if (groupId === TUTORIAL_GROUP_ID) {
       showToast("info", "Group tutorial tidak dihapus. Ulangi tutorial saja jika ingin melihat alurnya lagi.");
       setConfirmDialog(null);
       return;
     }
     if (!user?.email) return;
-<<<<<<< HEAD
-=======
 
     const targetGroup = groups.find((item) => item?.id === groupId) || null;
     const targetShareId = targetGroup?.preferences?.shareId || null;
@@ -2047,7 +2041,6 @@ export default function Shares() {
       }
     }
 
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
     const updated = deleteDraftGroup(user.email, groupId);
     setGroups((current) => {
       const currentTutorial = current.find((item) => item?.id === TUTORIAL_GROUP_ID) || null;

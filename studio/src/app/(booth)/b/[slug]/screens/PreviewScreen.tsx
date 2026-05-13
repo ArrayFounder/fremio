@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { composePhoto, applyFilterToBlob, uploadToR2, uploadVideo, uploadGif, uploadRawPhoto, encodeGif, composeVideoLive, applyPixelFiltersToData, isOverlayFrame, applyTrialWatermarkToDataUrl } from "@/lib/frameEngine";
 import { getAdaptiveColors } from "../colorUtils";
 import type { BoothConfigData, FrameData } from "../types";
-import { getEffectiveSlots, isEffectiveDuplicateMode } from "../frameSlotUtils";
+import { getEffectiveSlots, isEffectiveDuplicateMode, mapSlotsToCaptureIndexes } from "../frameSlotUtils";
 
 // ── Filter presets (sama seperti EditPhoto di fremio.id) ──────────────────
 const FILTER_PRESETS = [
@@ -131,8 +131,10 @@ interface PreviewScreenProps {
   capturedVideos:         (Blob | null)[];
   /** Mirror setting kamera — harus sama dengan saat rekaman original */
   mirrorVideo?:           boolean;
-  onSaved:  (result: { photoUrl: string; videoUrl: string | null; downloadUrl: string }) => void;
+  livePhotoVideoEnabled?: boolean;
+  onSaved:  (result: { photoUrl: string; videoUrl: string | null; downloadUrl: string; printImageDataUrl?: string }) => void;
   onRetake: () => void;
+  mode?:                  "live_view" | "fullscreen"; // mode sesi foto
 }
 
 export function PreviewScreen({
@@ -141,11 +143,13 @@ export function PreviewScreen({
   capturedPhotos,
   capturedVideos,
   mirrorVideo = false,
+  livePhotoVideoEnabled = true,
   sessionId,
   liveVideoState,
   liveVideoCompositeBlob,
   onSaved,
   onRetake,
+  mode = "live_view",
 }: PreviewScreenProps) {
   const { primaryColor, accentColor } = booth;
   const bgColor = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.previewBgColor as string | undefined ?? primaryColor;
@@ -168,6 +172,13 @@ export function PreviewScreen({
   const [isCompositing, setIsCompositing]         = useState(true);
   const [composeError, setComposeError]           = useState<string | null>(null);
   const compositeBlobRef                          = useRef<Blob | null>(null);
+
+  const blobToDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 
   // ── Video preview URL ──────────────────────────────────────────────────────
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
@@ -193,32 +204,19 @@ export function PreviewScreen({
   const videoIsOriginal = activeVideoFilter === "Original";
   const effectiveSlots = getEffectiveSlots(frame);
   const isDuplicate = isEffectiveDuplicateMode(frame);
+  const resolvedEffectiveSlots = mapSlotsToCaptureIndexes(effectiveSlots, isDuplicate);
   const showTrialWatermark = booth.showTrialWatermark === true;
 
   const frameOpts = {
     canvasWidth:     frame.canvasWidth  || 1080,
     canvasHeight:    frame.canvasHeight || 1920,
-    slots:           effectiveSlots,
+    slots:           resolvedEffectiveSlots,
     backgroundColor: frame.backgroundColor || "#ffffff",
     overlayUrl:      frame.overlayUrl ?? undefined,
     sceneElements:   frame.sceneElements ?? undefined,
     trialWatermark:  booth.showTrialWatermark === true,
     trialWatermarkText: "Trial",
   } as const;
-
-  // Mode duplicate: expand photos array (slot j → capturedPhotos yang dipetakan ke pasangan slot).
-  const expandPhotos = (photos: string[]): string[] => {
-    if (!isDuplicate || effectiveSlots.length === 0) return photos;
-    const n = effectiveSlots.length;
-    const nRows = n / 2;
-    // 2-kolom: kiri-row-r (pi%2===0) → photos[r]; kanan-row-r (pi%2===1) → photos[nRows-1-r]
-    return Array.from({ length: n }, (_, j) => {
-      const captureIdx = j % 2 === 0
-        ? Math.floor(j / 2)
-        : nRows - 1 - Math.floor(j / 2);
-      return photos[captureIdx] ?? "";
-    });
-  };
 
   const renderTrialBadge = () => (
     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-1 rounded-full text-xs font-black uppercase tracking-[0.16em] pointer-events-none"
@@ -240,6 +238,8 @@ export function PreviewScreen({
     let objectUrl: string | null = null;
     setIsCompositing(true);
 
+    console.log("[PreviewScreen] Starting composite photo generation", { capturedPhotos: capturedPhotos.length, mode });
+
     // Pre-apply filter ke setiap foto via pixel manipulation (TIDAK ctx.filter)
     // agar filter HANYA mengenai area foto — frame/overlay tidak tersentuh sama sekali.
     const applyAndCompose = async () => {
@@ -249,7 +249,8 @@ export function PreviewScreen({
             capturedPhotos.map((p) => applyFilterToPhotoDataUrl(p, photoPreset.filters))
           );
       if (cancelled) return;
-      return composePhoto(expandPhotos(filteredPhotos), frame.assetUrl, frameOpts);
+      console.log("[PreviewScreen] Photos filtered, calling composePhoto");
+      return composePhoto(filteredPhotos, frame.assetUrl, frameOpts);
     };
 
     applyAndCompose()
@@ -259,6 +260,7 @@ export function PreviewScreen({
         objectUrl = URL.createObjectURL(blob);
         setCompositeDataUrl(objectUrl);
         setIsCompositing(false);
+        console.log("[PreviewScreen] Composite photo generated successfully", { objectUrl });
       })
       .catch((err) => {
         console.error("[PreviewScreen] composePhoto error:", err);
@@ -404,6 +406,7 @@ export function PreviewScreen({
       // ── Filter foto: pixel-level manipulation (tidak pakai ctx.filter) ──────
       // Setiap foto diproses satu per satu menggunakan getImageData/putImageData.
       // Tidak ada ketergantungan pada ctx.filter yang bermasalah.
+      // Raw/plain foto selalu original — filter hanya untuk composite & live video.
       const photosForCompose = photoIsOriginal
         ? capturedPhotos
         : await Promise.all(
@@ -411,15 +414,15 @@ export function PreviewScreen({
           );
       const rawPhotosForUpload = showTrialWatermark
         ? await Promise.all(
-            photosForCompose.map((photo) => applyTrialWatermarkToDataUrl(photo, { text: "Trial" }))
+            capturedPhotos.map((photo) => applyTrialWatermarkToDataUrl(photo, { text: "Trial" }))
           )
-        : photosForCompose;
+        : capturedPhotos;
 
-      const filteredBlob = await composePhoto(expandPhotos(photosForCompose), frame.assetUrl, frameOpts);
+      const filteredBlob = await composePhoto(photosForCompose, frame.assetUrl, frameOpts);
 
       const [photoUrl, videoUrl, gifUrl, rawPhotoUrls] = await Promise.all([
         uploadToR2(filteredBlob, sessionId),
-        liveVideoCompositeBlob
+        livePhotoVideoEnabled && liveVideoCompositeBlob
           ? (async () => {
               if (!videoIsOriginal && capturedVideos.some(Boolean)) {
                 try {
@@ -495,8 +498,7 @@ export function PreviewScreen({
         ];
         if (gifUrl)   files.push({ url: gifUrl,   name: `slideshow-${slug}.gif` });
         if (videoUrl) {
-          const videoExt = (() => { try { return new URL(videoUrl).pathname.toLowerCase().endsWith(".mp4") ? "mp4" : "webm"; } catch { return "webm"; } })();
-          files.push({ url: videoUrl, name: `video-${slug}.${videoExt}` });
+          files.push({ url: videoUrl, name: `video-${slug}.webm` });
         }
         validRawUrls.forEach((url, i) =>
           files.push({ url, name: `foto-${i + 1}-original-${slug}.jpg` })
@@ -518,7 +520,7 @@ export function PreviewScreen({
         });
       }
 
-      onSaved(body.data);
+      onSaved({ ...body.data, printImageDataUrl: await blobToDataUrl(filteredBlob) });
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Gagal menyimpan foto");
     } finally {
@@ -526,16 +528,17 @@ export function PreviewScreen({
     }
   };
 
-  const hasVideo     = liveVideoState !== "idle";
-  const videoReady   = liveVideoState === "done" && !!videoPreviewUrl;
-  const videoLoading = liveVideoState === "compositing";
-  const videoError   = liveVideoState === "error";
+  const hasVideo     = livePhotoVideoEnabled && liveVideoState !== "idle";
+  const videoReady   = livePhotoVideoEnabled && liveVideoState === "done" && !!videoPreviewUrl;
+  const videoLoading = livePhotoVideoEnabled && liveVideoState === "compositing";
+  const videoError   = livePhotoVideoEnabled && liveVideoState === "error";
+  const showVideoColumn = livePhotoVideoEnabled && (hasVideo || capturedVideos.some(Boolean));
 
 
 
   return (
     <div
-      className="flex flex-col h-full items-center justify-between py-2 px-3 select-none"
+      className="flex flex-col h-full w-full items-center justify-between py-2 px-3 select-none"
       style={{ backgroundColor: bgColor }}
     >
       {/* Header */}
@@ -559,29 +562,29 @@ export function PreviewScreen({
         )}
       </div>
 
-      {/* ── Layout ── */}
+      {/* ── Layout (semua mode: photo+frame, gif, live video) ── */}
       {isPortrait ? (
-        /* ── PORTRAIT: GIF (atas) | [Foto | Video] (bawah) ── */
-        <div className="flex-1 flex flex-col w-full gap-1.5 min-h-0 overflow-hidden">
+            /* ── PORTRAIT: GIF (atas) | [Foto | Video?] (bawah) ── */
+            <div className="flex-1 flex flex-col w-full gap-2 min-h-0 overflow-hidden mt-4 pt-14 pb-0">
 
-          {/* Baris atas: GIF — flex grow 38 */}
-          <div style={{ flex: "38 1 0", minHeight: 0 }}
-               className="relative rounded-xl overflow-hidden shadow-2xl">
-            <canvas ref={gifCanvasRef}
-                    style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
-            <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold"
-                 style={{ zIndex: 3, background: accentColor + "cc", color: primaryColor }}>
-              🎞 GIF
-            </div>
-            {showTrialWatermark && renderTrialBadge()}
-          </div>
+              {/* Baris atas: GIF — flex grow 18 (kecil) */}
+              <div style={{ flex: "18 1 0", minHeight: 0 }}
+                   className="relative rounded-xl overflow-hidden shadow-2xl">
+                <canvas ref={gifCanvasRef}
+                        style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold"
+                     style={{ zIndex: 3, background: accentColor + "cc", color: primaryColor }}>
+                  🎞 GIF
+                </div>
+                {showTrialWatermark && renderTrialBadge()}
+              </div>
 
-          {/* Baris bawah: Foto + Video — flex grow 50 */}
-          <div style={{ flex: "50 1 0", minHeight: 0 }} className="flex flex-row gap-1.5">
+              {/* Baris bawah: Foto + Video(optional) — flex grow 62 */}
+          <div style={{ flex: "62 1 0", minHeight: 0 }} className={`flex flex-row gap-1.5 ${showVideoColumn ? "" : "justify-center"}`}>
 
             {/* Foto */}
-            <div className="flex flex-col flex-1 min-w-0 min-h-0">
-              <div className="min-h-0 relative rounded-xl overflow-hidden shadow-2xl" style={{ flex: 1, maxHeight: "38vh" }}>
+            <div className={`flex flex-col min-w-0 min-h-0 ${showVideoColumn ? "flex-1" : "w-full max-w-[420px]"}`}>
+              <div className="min-h-0 relative rounded-xl overflow-hidden shadow-2xl" style={{ flex: 1, maxHeight: "44vh" }}>
                 {isCompositing && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2"
                        style={{ color: textPrimary }}>
@@ -603,21 +606,21 @@ export function PreviewScreen({
                 )}
               </div>
               {!isCompositing && !composeError && (
-                <div className="shrink-0 pt-0.5 pb-0.5">
-                  <div className="flex justify-center gap-0.5">
+                <div className="shrink-0 mt-2 pt-1 pb-0.5">
+                  <div className="flex justify-center gap-1.5">
                     {FILTER_PRESETS.map((preset) => {
                       const isActive = activePhotoFilter === preset.name;
                       return (
                         <button key={preset.name} onClick={() => setActivePhotoFilter(preset.name)}
-                                className="flex-shrink-0 flex flex-col items-center gap-0.5 transition-all active:scale-95">
-                          <div className="rounded-md shadow-sm"
+                                className="flex-shrink-0 flex flex-col items-center gap-1 transition-all active:scale-95">
+                          <div className="rounded-lg shadow-sm"
                                style={{
-                                 width: 26, height: 26, background: preset.color,
-                                 outline: isActive ? `2px solid ${accentColor}` : "2px solid transparent",
-                                 outlineOffset: 1,
+                                 width: 44, height: 44, background: preset.color,
+                                 outline: isActive ? `3px solid ${accentColor}` : "2px solid transparent",
+                                 outlineOffset: 2,
                                }} />
                           <span className="font-semibold whitespace-nowrap"
-                                style={{ fontSize: 6, color: isActive ? accentColor : textSecondary }}>
+                                style={{ fontSize: 10, color: isActive ? accentColor : textSecondary }}>
                             {preset.name}
                           </span>
                         </button>
@@ -629,9 +632,10 @@ export function PreviewScreen({
             </div>
 
             {/* Video */}
+            {showVideoColumn && (
             <div className="flex flex-col flex-1 min-w-0 min-h-0">
               <div className="min-h-0 relative rounded-xl overflow-hidden shadow-2xl"
-                   style={{ flex: 1, maxHeight: "38vh", opacity: (videoReady || videoError) ? 1 : 0.6, transition: "opacity 0.3s ease" }}>
+                   style={{ flex: 1, maxHeight: "44vh", opacity: (videoReady || videoError) ? 1 : 0.6, transition: "opacity 0.3s ease" }}>
                 {/* Placeholder saat video belum siap */}
                 {!videoReady && !videoError && compositeDataUrl && (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -674,21 +678,21 @@ export function PreviewScreen({
                 )}
               </div>
               {!videoError && (
-                <div className="shrink-0 pt-0.5 pb-0.5">
-                  <div className="flex justify-center gap-0.5">
+                <div className="shrink-0 mt-2 pt-1 pb-0.5">
+                  <div className="flex justify-center gap-1.5">
                     {FILTER_PRESETS.map((preset) => {
                       const isActive = activeVideoFilter === preset.name;
                       return (
                         <button key={preset.name} onClick={() => setActiveVideoFilter(preset.name)}
-                                className="flex-shrink-0 flex flex-col items-center gap-0.5 transition-all active:scale-95">
-                          <div className="rounded-md shadow-sm"
+                                className="flex-shrink-0 flex flex-col items-center gap-1 transition-all active:scale-95">
+                          <div className="rounded-lg shadow-sm"
                                style={{
-                                 width: 26, height: 26, background: preset.color,
-                                 outline: isActive ? `2px solid ${accentColor}` : "2px solid transparent",
-                                 outlineOffset: 1,
+                                 width: 44, height: 44, background: preset.color,
+                                 outline: isActive ? `3px solid ${accentColor}` : "2px solid transparent",
+                                 outlineOffset: 2,
                                }} />
                           <span className="font-semibold whitespace-nowrap"
-                                style={{ fontSize: 6, color: isActive ? accentColor : textSecondary }}>
+                                style={{ fontSize: 10, color: isActive ? accentColor : textSecondary }}>
                             {preset.name}
                           </span>
                         </button>
@@ -698,15 +702,16 @@ export function PreviewScreen({
                 </div>
               )}
             </div>
+            )}
 
           </div>
         </div>
       ) : (
-        /* ── LANDSCAPE: Foto | GIF | Video (3 kolom) ── */
-        <div className="flex-1 flex flex-row w-full gap-1.5 min-h-0 overflow-hidden">
+        /* ── LANDSCAPE: Foto | GIF | Video(optional) ── */
+        <div className={`flex-1 flex flex-row w-full gap-1.5 min-h-0 overflow-hidden ${showVideoColumn ? "" : "justify-center"}`}>
 
           {/* Foto */}
-          <div style={{ flex: "1 1 0" }} className="flex flex-col min-w-0 min-h-0">
+          <div style={showVideoColumn ? { flex: "1 1 0" } : { flex: "0 1 34vw", maxWidth: 430 }} className="flex flex-col min-w-0 min-h-0">
             <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden shadow-2xl">
               {isCompositing && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3"
@@ -770,7 +775,7 @@ export function PreviewScreen({
           </div>
 
           {/* Video */}
-          {(hasVideo || capturedVideos.length > 0) && (
+          {showVideoColumn && (
             <div style={{ flex: "1 1 0" }} className="flex flex-col min-w-0 min-h-0">
               <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden shadow-2xl"
                    style={{ opacity: (videoReady || videoError) ? 1 : 0.6, transition: "opacity 0.3s ease" }}>

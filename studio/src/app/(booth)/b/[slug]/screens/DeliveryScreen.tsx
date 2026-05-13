@@ -6,11 +6,25 @@ import { getAdaptiveColors } from "../colorUtils";
 import { detectPaperSize, getPaperSizeByName } from "../paperSize";
 import type { BoothConfigData } from "../types";
 
+declare global {
+  interface Window {
+    fremioBooth?: {
+      getBridgeStatus?: () => Promise<unknown>;
+      agentStatus: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
+      agentCapture: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
+      agentPreview: () => Promise<{ ok: boolean; base64?: string; mimeType?: string; error?: string }>;
+      agentPreviewStreamUrl?: (cacheKey?: string | number) => string;
+      agentPrint: (job: unknown) => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
+    };
+  }
+}
+
 interface DeliveryScreenProps {
   booth:        BoothConfigData;
   sessionId?:   string;
   downloadUrl:  string;
   photoUrl?:    string;   // URL foto final untuk dicetak (opsional)
+  printImageDataUrl?: string; // data URL foto final lokal untuk silent print
   printerName?: string;   // printer dari BoothHardwareSettings
   /** Jumlah cetak yang dipilih customer — untuk auto-print otomatis */
   printCount?:  number;
@@ -19,22 +33,21 @@ interface DeliveryScreenProps {
   canvasHeight?: number;
   /** Override ukuran kertas manual dari BoothSetupScreen (null = auto-detect) */
   paperSizeOverride?: string | null;
+  /** Timer dari BoothClient (sumber yang sama dengan timer kanan atas) */
+  timerSecondsLeft?: number | null;
   onDone:       () => void;
 }
-
-const AUTO_RESET_SECONDS = 120;
-const TRIAL_ONLY_MODE = true;
 
 /**
  * DELIVERY SCREEN — Tampilkan QR code untuk download foto.
  * Auto-print sesuai jumlah yang dipilih customer (tanpa tombol cetak manual).
- * Auto-reset ke IDLE setelah AUTO_RESET_SECONDS detik tanpa interaksi.
+ * Countdown reset mengikuti timer Delivery dari BoothClient (sumber yang sama dengan timer kanan atas).
  */
-export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printerName, printCount = 1, canvasWidth, canvasHeight, paperSizeOverride, onDone }: DeliveryScreenProps) {
+export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printImageDataUrl, printerName, printCount = 1, canvasWidth, canvasHeight, paperSizeOverride, timerSecondsLeft = null, onDone }: DeliveryScreenProps) {
   const { primaryColor, accentColor } = booth;
   const bgColor = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.deliveryBgColor as string | undefined ?? primaryColor;
   const { textPrimary, textSecondary, textTertiary, surfaceBg, surfaceBorder } = getAdaptiveColors(bgColor);
-  const [seconds, setSeconds]       = useState(AUTO_RESET_SECONDS);
+  const isTrialBooth = booth.showTrialWatermark === true;
   const [qrDataUrl, setQrDataUrl]   = useState<string | null>(null);
   const [printStatus, setPrintStatus] = useState<"pending" | "printing" | "airprint" | "done" | "error" | "unavailable">(
     booth.printEnabled && photoUrl ? "pending" : "unavailable"
@@ -45,6 +58,8 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
   const channels = (prefs?.deliveryChannels as string[]) ?? ["DOWNLOAD", "WHATSAPP", "EMAIL"];
   const waEnabled = channels.includes("WHATSAPP");
   const emailEnabled = channels.includes("EMAIL");
+  const waMode = (prefs?.deliveryWaMode as "API" | "SHARE") ?? "SHARE";
+  const waMessageTemplate = (prefs?.deliveryWaMessage as string) ?? "Hai, terimakasih telah datang ke photobox kami. Hasil foto bisa kamu buka di link berikut [url]";
 
   // WA / Email send states
   const [waNumber, setWaNumber] = useState("");
@@ -95,8 +110,10 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     }
   }, [sessionId]);
 
-  const triggerSystemPrint = useCallback(() => {
-    if (!photoUrl) return;
+  const printImageSource = printImageDataUrl || photoUrl;
+
+  const triggerSystemPrint = useCallback(async () => {
+    if (!printImageSource) return;
 
     mobilePrintAwaitingGestureRef.current = false;
     setPrintStatus("airprint");
@@ -126,7 +143,7 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     printDiv.style.cssText = "display:none;";
 
     const printImg = document.createElement("img");
-    printImg.src = photoUrl;
+    printImg.src = printImageSource;
     printImg.alt = "Print Photo";
     printDiv.appendChild(printImg);
     document.body.appendChild(printDiv);
@@ -139,27 +156,100 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     };
 
     window.addEventListener("afterprint", cleanup, { once: true });
+    if (!printImg.complete || printImg.naturalWidth === 0) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(new Error("Timeout memuat gambar untuk print")), 10000);
+        printImg.onload = () => {
+          window.clearTimeout(timer);
+          resolve();
+        };
+        printImg.onerror = () => {
+          window.clearTimeout(timer);
+          reject(new Error("Gagal memuat gambar untuk print"));
+        };
+      });
+    }
     window.print();
-  }, [paperSize.cssPageSize, photoUrl, reportSuccessfulPrint]);
+  }, [paperSize.cssPageSize, printImageSource, reportSuccessfulPrint]);
 
 
   // ─── Auto-print on mount ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!booth.printEnabled || !photoUrl || printTriggeredRef.current) return;
+    if (!booth.printEnabled || !printImageSource || printTriggeredRef.current) return;
     printTriggeredRef.current = true;
 
     const doPrint = async () => {
       setPrintStatus("printing");
 
-      // Android/iPad/iPhone perlu user gesture untuk membuka sheet print.
+      // ── 1. Coba silent print via IPC Electron (booth-windows-app) ──
+      if (window.fremioBooth?.agentPrint) {
+        try {
+          const ipcRes = await window.fremioBooth.agentPrint({
+            image: printImageSource,
+            printerName: printerName || undefined,
+            copies: printCount,
+            paperWidthMm: paperSize.widthMm,
+            paperHeightMm: paperSize.heightMm,
+          });
+          if (ipcRes.ok) {
+            setPrintStatus("done");
+            void reportSuccessfulPrint();
+            return;
+          }
+        } catch {
+          // IPC print gagal → fallback
+        }
+      }
+
+      // ── 2. Coba silent print via direct local agent (browser desktop) ──
+      const fetchWithTimeout = (url: string, ms: number) => {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), ms);
+        return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+      };
+
+      const agentCandidates = [
+        "http://127.0.0.1:7432",
+        "http://localhost:7432",
+        "http://127.0.0.1:3002",
+        "http://localhost:3002",
+      ];
+
+      for (const base of agentCandidates) {
+        try {
+          const statusRes = await fetchWithTimeout(`${base}/status`, 1200);
+          if (!statusRes.ok) continue;
+          const printRes = await fetch(`${base}/print`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageUrl: photoUrl,
+              image: printImageSource,
+              printerName: printerName || undefined,
+              copies: printCount,
+              paperWidthMm: paperSize.widthMm,
+              paperHeightMm: paperSize.heightMm,
+            }),
+          });
+          if (printRes.ok) {
+            setPrintStatus("done");
+            void reportSuccessfulPrint();
+            return;
+          }
+        } catch {
+          // agent tidak tersedia di base ini, coba berikutnya
+        }
+      }
+
+      // ── 3. Fallback: mobile/tablet masih perlu gesture ──
       if (isMobileOrTablet) {
         mobilePrintAwaitingGestureRef.current = true;
         setPrintStatus("airprint");
         return;
       }
 
-      // Desktop/Windows app: gunakan native system print (tanpa agent).
-      triggerSystemPrint();
+      // ── 3. Desktop: jangan buka print dialog jika silent print gagal ──
+      setPrintStatus("error");
     };
 
     doPrint().catch((err) => {
@@ -167,7 +257,7 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
       setPrintStatus("error");
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMobileOrTablet, paperSize.heightMm, paperSize.name, paperSize.widthMm, photoUrl, printCount, printerName, reportSuccessfulPrint, triggerSystemPrint]);
+  }, [isMobileOrTablet, paperSize.heightMm, paperSize.name, paperSize.widthMm, photoUrl, printCount, printerName, printImageSource, reportSuccessfulPrint, triggerSystemPrint]);
 
   // ─── Generate QR code via frameEngine ────────────────────────────────────
   useEffect(() => {
@@ -186,16 +276,6 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
     return () => { cancelled = true; };
   }, [downloadUrl]);
 
-  // ─── Countdown auto-reset ─────────────────────────────────────────────────
-  useEffect(() => {
-    if (seconds <= 0) {
-      onDone();
-      return;
-    }
-    const id = setTimeout(() => setSeconds((s) => s - 1), 1000);
-    return () => clearTimeout(id);
-  }, [seconds, onDone]);
-
   const printStatusLabel = () => {
     if (printStatus === "printing") return `🖨️ Mencetak ${printCount} lembar (${paperSize.name})… mohon tunggu`;
     if (printStatus === "airprint" && mobilePrintAwaitingGestureRef.current) return "📲 Tap tombol Cetak Foto untuk membuka print Mopria";
@@ -207,11 +287,39 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
 
   const handleMobileAutoPrintGesture = useCallback(() => {
     if (!isMobileOrTablet || !mobilePrintAwaitingGestureRef.current || !photoUrl) return;
-    triggerSystemPrint();
+    void triggerSystemPrint();
   }, [isMobileOrTablet, photoUrl, triggerSystemPrint]);
+
+  // Helper: normalize phone number (08xxx -> 628xxx)
+  const normalizePhone = (phone: string): string => {
+    let cleaned = phone.trim().replace(/\s/g, "").replace(/[-+]/g, "");
+    // Convert 08xx to 628xx
+    if (cleaned.startsWith("0")) {
+      cleaned = "62" + cleaned.slice(1);
+    }
+    // Ensure starts with 62
+    if (!cleaned.startsWith("62")) {
+      cleaned = "62" + cleaned;
+    }
+    return cleaned;
+  };
 
   const handleSendWhatsApp = useCallback(async () => {
     if (!waNumber.trim() || !downloadUrl) return;
+    
+    const normalizedPhone = normalizePhone(waNumber.trim());
+    
+    // Mode SHARE: open wa.me link
+    if (waMode === "SHARE") {
+      const message = waMessageTemplate.replace(/\[url\]/g, downloadUrl);
+      const waUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(message)}`;
+      window.open(waUrl, "_blank");
+      setWaSent(true);
+      setWaNumber("");
+      return;
+    }
+    
+    // Mode API: send via Fonnte
     setWaSending(true);
     setWaError(null);
     setWaSent(false);
@@ -220,7 +328,7 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phone: waNumber.trim(),
+          phone: normalizedPhone,
           downloadUrl,
           boothConfigId: booth.id,
           boothName: booth.boothName,
@@ -237,7 +345,7 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
       setWaError("Gagal kirim ke WhatsApp. Cek koneksi.");
     }
     setWaSending(false);
-  }, [waNumber, downloadUrl, booth.id, booth.boothName]);
+  }, [waNumber, downloadUrl, booth.id, booth.boothName, waMode, waMessageTemplate]);
 
   const handleSendEmail = useCallback(async () => {
     if (!emailAddress.trim() || !downloadUrl) return;
@@ -281,7 +389,7 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
 
       {/* QR Code */}
       <div className="flex flex-col items-center gap-4">
-        {TRIAL_ONLY_MODE && (
+        {isTrialBooth && (
           <div className="rounded-full px-3 py-1 text-xs font-black uppercase tracking-wide bg-amber-100 text-amber-700 border border-amber-300">
             Trial · Link QR 5 Menit
           </div>
@@ -308,23 +416,26 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
           {downloadUrl}
         </p>
 
-        {TRIAL_ONLY_MODE && (
-          <p className="text-[11px] text-center max-w-xs" style={{ color: textTertiary }}>
-            Scan QR lalu upgrade subscription di halaman link untuk mengaktifkan akses 24 jam.
-          </p>
-        )}
+        <p className="text-[11px] text-center max-w-xs" style={{ color: textTertiary }}>
+          {isTrialBooth
+            ? "Scan QR lalu upgrade subscription di halaman link untuk mengaktifkan akses 24 jam."
+            : "Link QR aktif 24 jam untuk akun PRO/ENTERPRISE."}
+        </p>
       </div>
 
       {/* WhatsApp input */}
       {waEnabled && (
         <div className="flex flex-col gap-2 w-full max-w-sm">
+          <p className="text-[10px] text-center" style={{ color: textTertiary }}>
+            Mode: {waMode === "SHARE" ? "Buka WhatsApp dengan pesan" : "Kirim otomatis via API"}
+          </p>
           <div className="flex gap-2">
             <input
               type="tel"
               inputMode="numeric"
               value={waNumber}
               onChange={(e) => { setWaNumber(e.target.value); setWaError(null); setWaSent(false); }}
-              placeholder="Nomor WhatsApp (08xx...)"
+              placeholder="08xx... (otomatis jadi 628xx)"
               className="flex-1 rounded-2xl px-4 py-3 text-sm font-semibold outline-none border"
               style={{ borderColor: surfaceBorder, background: surfaceBg, color: textPrimary }}
               disabled={waSending}
@@ -335,11 +446,15 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
               className="px-4 py-3 rounded-2xl text-sm font-bold disabled:opacity-40 active:scale-95 transition-transform"
               style={{ backgroundColor: accentColor, color: primaryColor }}
             >
-              {waSending ? "Mengirim..." : "Kirim WA"}
+              {waMode === "SHARE" ? "Kirim ke WhatsApp" : waSending ? "Mengirim..." : "Kirim WA"}
             </button>
           </div>
           {waError && <p className="text-xs text-red-300 text-center">{waError}</p>}
-          {waSent && <p className="text-xs text-green-300 text-center">✓ Link hasil foto terkirim ke WhatsApp!</p>}
+          {waSent && (
+            <p className="text-xs text-center" style={{ color: accentColor }}>
+              {waMode === "SHARE" ? "✓ WhatsApp terbuka! Tinggal kirim foto hasil sesi." : "✓ Link hasil foto terkirim ke WhatsApp!"}
+            </p>
+          )}
         </div>
       )}
 
@@ -371,11 +486,13 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printe
       )}
       {/* Countdown + tombol */}
       <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-        <p className="text-sm" style={{ color: textTertiary }}>
-          Layar reset otomatis dalam{" "}
-          <span className="font-bold" style={{ color: accentColor }}>{seconds}</span>
-          {" "}detik
-        </p>
+        {typeof timerSecondsLeft === "number" && (
+          <p className="text-sm" style={{ color: textTertiary }}>
+            Layar reset otomatis dalam{" "}
+            <span className="font-bold" style={{ color: accentColor }}>{timerSecondsLeft}</span>
+            {" "}detik
+          </p>
+        )}
 
         <button
           onClick={onDone}

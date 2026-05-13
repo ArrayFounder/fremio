@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { ApiResponse } from "@/types";
 
-const TRIAL_ONLY_MODE = true;
 const TRIAL_DOWNLOAD_EXPIRY_MINUTES = 5;
 const DEFAULT_DOWNLOAD_EXPIRY_HOURS = 24;
 
@@ -20,6 +19,15 @@ export async function POST(
 ): Promise<Response> {
   const session = await prisma.boothSession.findUnique({
     where: { id: params.id },
+    include: {
+      boothConfig: {
+        include: {
+          operator: {
+            select: { subscriptionTier: true, subscriptionExpiry: true },
+          },
+        },
+      },
+    },
   });
 
   if (!session) {
@@ -53,14 +61,20 @@ export async function POST(
     );
   }
 
+  // Tentukan expiry berdasarkan subscription operator
+  const op = session.boothConfig.operator;
+  const hasValidSubscription =
+    (op.subscriptionTier === "PRO" || op.subscriptionTier === "ENTERPRISE")
+    && op.subscriptionExpiry && new Date(op.subscriptionExpiry) > new Date();
+
   // Buat qrCode unik untuk halaman download customer
   const { randomUUID } = await import("crypto");
   const qrCode  = randomUUID();
   const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? "https://studio.fremio.id";
   const completedAt = new Date();
-  const downloadExpiry = TRIAL_ONLY_MODE
-    ? new Date(completedAt.getTime() + TRIAL_DOWNLOAD_EXPIRY_MINUTES * 60 * 1000)
-    : new Date(completedAt.getTime() + DEFAULT_DOWNLOAD_EXPIRY_HOURS * 60 * 60 * 1000);
+  const downloadExpiry = hasValidSubscription
+    ? new Date(completedAt.getTime() + DEFAULT_DOWNLOAD_EXPIRY_HOURS * 60 * 60 * 1000)
+    : new Date(completedAt.getTime() + TRIAL_DOWNLOAD_EXPIRY_MINUTES * 60 * 1000);
 
   let safeFrameId: string | null | undefined = undefined;
   if (requestedFrameId) {

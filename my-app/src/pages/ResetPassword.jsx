@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
-import { confirmPasswordReset, verifyPasswordResetCode } from "firebase/auth";
-import { auth } from "../config/firebase.js";
+
+const API_URL = import.meta.env.VITE_API_URL || "/api";
 
 export default function ResetPassword() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const oobCode = searchParams.get("oobCode");
+  const resetToken = searchParams.get("token") || searchParams.get("oobCode");
 
   const [formData, setFormData] = useState({
     newPassword: "",
@@ -16,45 +16,16 @@ export default function ResetPassword() {
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
   const [verifying, setVerifying] = useState(true);
-  const [email, setEmail] = useState("");
   const [invalidLink, setInvalidLink] = useState(false);
 
   // Verify the reset code when component mounts
   useEffect(() => {
-    const verifyCode = async () => {
-      if (!oobCode) {
-        setInvalidLink(true);
-        setVerifying(false);
-        setError("Invalid or missing reset code");
-        return;
-      }
-
-      try {
-        // Verify the password reset code is valid
-        const userEmail = await verifyPasswordResetCode(auth, oobCode);
-        setEmail(userEmail);
-        setVerifying(false);
-      } catch (error) {
-        console.error("Code verification error:", error);
-        setInvalidLink(true);
-        setVerifying(false);
-
-        if (error.code === "auth/expired-action-code") {
-          setError(
-            "This password reset link has expired. Please request a new one."
-          );
-        } else if (error.code === "auth/invalid-action-code") {
-          setError(
-            "This password reset link is invalid or has already been used."
-          );
-        } else {
-          setError("Unable to verify reset link. Please request a new one.");
-        }
-      }
-    };
-
-    verifyCode();
-  }, [oobCode]);
+    if (!resetToken) {
+      setInvalidLink(true);
+      setError("Invalid or missing reset token");
+    }
+    setVerifying(false);
+  }, [resetToken]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -92,8 +63,24 @@ export default function ResetPassword() {
     }
 
     try {
-      // Confirm the password reset
-      await confirmPasswordReset(auth, oobCode, formData.newPassword);
+      const response = await fetch(`${API_URL}/auth/confirm-reset`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          token: resetToken,
+          password: formData.newPassword,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data?.success) {
+        setError(data?.message || data?.error || "Failed to reset password. Please try again.");
+        setLoading(false);
+        return;
+      }
 
       setSuccess("✅ Password has been reset successfully!");
       setFormData({
@@ -112,16 +99,7 @@ export default function ResetPassword() {
       }, 3000);
     } catch (error) {
       console.error("Password reset error:", error);
-
-      if (error.code === "auth/weak-password") {
-        setError("Password is too weak. Please use a stronger password.");
-      } else if (error.code === "auth/expired-action-code") {
-        setError("This reset link has expired. Please request a new one.");
-      } else if (error.code === "auth/invalid-action-code") {
-        setError("This reset link is invalid or has already been used.");
-      } else {
-        setError("Failed to reset password. Please try again.");
-      }
+      setError("Failed to reset password. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -284,35 +262,6 @@ export default function ResetPassword() {
                 </div>
               </div>
             )}
-
-            <div
-              style={{
-                marginBottom: "20px",
-                padding: "12px",
-                background: "#f8fafc",
-                borderRadius: "8px",
-                border: "1px solid #e2e8f0",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "0.85rem",
-                  color: "#64748b",
-                  marginBottom: "4px",
-                }}
-              >
-                Reset password for:
-              </div>
-              <div
-                style={{
-                  fontSize: "0.9rem",
-                  fontWeight: "600",
-                  color: "#334155",
-                }}
-              >
-                {email}
-              </div>
-            </div>
 
             <label className="auth-label">New Password</label>
             <input

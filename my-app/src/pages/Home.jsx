@@ -58,30 +58,18 @@ export default function Home() {
             </p>
 
             <div className="cta-group">
-<<<<<<< HEAD
-              <NavLink to="/shares" className="cta-share">
-                {t("home.cta_share")}
-              </NavLink>
-=======
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               <NavLink to="/frames" className="cta-primary">
                 {t("home.cta_frames")}
               </NavLink>
-              <NavLink
-                to={"/create"}
-                className="cta-secondary"
-              >
+              <NavLink to="/create" className="cta-secondary">
                 {t("home.cta_create")}
-              </NavLink>
-<<<<<<< HEAD
-=======
-              <NavLink to="/event" className="cta-event">
-                {t("home.cta_event")}
               </NavLink>
               <NavLink to="/shares" className="cta-share">
                 {t("home.cta_share")}
               </NavLink>
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+              <NavLink to="/event" className="cta-event">
+                {t("home.cta_event")}
+              </NavLink>
               <NavLink to="/designer" className="cta-tertiary">
                 {t("home.cta_designer")}
               </NavLink>
@@ -99,7 +87,7 @@ export default function Home() {
             <span className="home-stats-desc">Awareness</span>
           </div>
           <div className="home-stats-item">
-            <span className="home-stats-num">1M+</span>
+            <span className="home-stats-num">100K+</span>
             <span className="home-stats-desc">Pengguna dari berbagai negara</span>
             <span className="home-stats-sub">🇮🇩 Indonesia &nbsp;·&nbsp; 🇲🇾 Malaysia &nbsp;·&nbsp; 🇸🇬 Singapura &nbsp;·&nbsp; 🇹🇭 Thailand &nbsp;·&nbsp; 🇵🇭 Filipina &nbsp;·&nbsp; 🇯🇵 Jepang &nbsp;·&nbsp; 🇺🇸 Amerika Serikat &nbsp;·&nbsp; 🇬🇧 Inggris &nbsp;·&nbsp; 🇫🇷 Prancis</span>
           </div>

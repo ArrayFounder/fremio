@@ -20,9 +20,9 @@ const TRIAL_ONLY_MODE = true;
 // Tidak memerlukan operator auth — booth berjalan sebagai publik.
 //
 // Gateway selection (prioritas):
-//  1. Midtrans  — jika midtransServerKey tersedia
+//  1. DOKU      — jika dokuClientId + dokuSecretKey tersedia
 //  2. Xendit    — jika xenditSecretKey tersedia
-//  3. DOKU      — jika dokuClientId + dokuSecretKey tersedia
+//  3. Midtrans  — jika midtransServerKey tersedia
 //
 // Flow:
 //  1. Validasi input
@@ -54,6 +54,9 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const { boothConfigId, frameId, printCount, voucherId, voucherCode } = parsed.data;
+  const requestedFrameId = typeof frameId === "string" && frameId.trim().length > 0
+    ? frameId.trim()
+    : null;
 
   // 2. Ambil BoothConfig — pastikan booth aktif dan operator masih subscribe
   const boothConfig = await prisma.boothConfig.findUnique({
@@ -66,9 +69,11 @@ export async function POST(req: Request): Promise<Response> {
           subscriptionExpiry: true,
           isActive:          true,
           midtransServerKey: true,
+          midtransClientKey: true,
           xenditSecretKey:   true,
           dokuClientId:      true,
           dokuSecretKey:     true,
+          paymentGateway:    true,
         },
       },
     },
@@ -100,30 +105,52 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  // Tentukan gateway aktif — prioritas: Midtrans → Xendit → DOKU
+  const preferredGateway: "MIDTRANS" | "XENDIT" | "DOKU" =
+    operator.paymentGateway === "DOKU" || operator.paymentGateway === "XENDIT" || operator.paymentGateway === "MIDTRANS"
+      ? operator.paymentGateway
+      : "MIDTRANS";
+  const gatewayReady: Record<"MIDTRANS" | "XENDIT" | "DOKU", boolean> = {
+    MIDTRANS: !!operator.midtransServerKey,
+    XENDIT:   !!operator.xenditSecretKey,
+    DOKU:     !!operator.dokuClientId && !!operator.dokuSecretKey,
+  };
   const activeGateway: "MIDTRANS" | "XENDIT" | "DOKU" | null =
-    operator.midtransServerKey                              ? "MIDTRANS" :
-    operator.xenditSecretKey                               ? "XENDIT"   :
-    (operator.dokuClientId && operator.dokuSecretKey)      ? "DOKU"     :
-    null;
+    gatewayReady[preferredGateway] ? preferredGateway : null;
 
   if (!activeGateway) {
     return NextResponse.json<ApiResponse>(
-      { success: false, error: "Tidak ada payment gateway yang dikonfigurasi. Hubungi operator booth." },
+      { success: false, error: `${preferredGateway} belum dikonfigurasi lengkap. Pilih gateway aktif lain atau lengkapi API key di dashboard.` },
       { status: 503 }
     );
   }
 
   // Jika frameId diberikan, pastikan frame ada di allowedFrameIds (jika diset)
   if (
-    frameId &&
+    requestedFrameId &&
     boothConfig.allowedFrameIds.length > 0 &&
-    !boothConfig.allowedFrameIds.includes(frameId)
+    !boothConfig.allowedFrameIds.includes(requestedFrameId)
   ) {
-    return NextResponse.json<ApiResponse>(
-      { success: false, error: "Frame tidak tersedia di booth ini" },
-      { status: 422 }
-    );
+    const exists = await prisma.frame.findUnique({
+      where: { id: requestedFrameId },
+      select: { id: true },
+    });
+    if (exists) {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: "Frame tidak tersedia di booth ini" },
+        { status: 422 }
+      );
+    }
+  }
+
+  let persistedFrameId: string | null = null;
+  if (requestedFrameId) {
+    const frame = await prisma.frame.findUnique({
+      where: { id: requestedFrameId },
+      select: { id: true, isActive: true },
+    });
+    if (frame?.isActive) {
+      persistedFrameId = frame.id;
+    }
   }
 
   // 3. Generate ID untuk Transaction dan BoothSession
@@ -165,6 +192,8 @@ export async function POST(req: Request): Promise<Response> {
   let qrString:   string = "";
   let qrImageUrl: string = "";
   let snapToken:  string = "";
+  let snapRedirectUrl: string = "";
+  let snapClientKey: string = "";
   let expiresAt:  Date   = new Date(Date.now() + 15 * 60 * 1000);
   let gatewayTxId: string = "";
 
@@ -189,7 +218,9 @@ export async function POST(req: Request): Promise<Response> {
             { orderId, amount, description },
             operator.midtransServerKey,
           );
-          snapToken   = snapResult.snapToken;
+          snapToken      = snapResult.snapToken;
+          snapRedirectUrl = snapResult.redirectUrl;
+          snapClientKey   = operator.midtransClientKey ?? "";
           gatewayTxId = orderId; // Snap tidak return txId sampai bayar
         } else {
           throw qrisErr; // lempar ulang error lain (401, 500, dll)
@@ -245,7 +276,7 @@ export async function POST(req: Request): Promise<Response> {
       data: {
         id:            sessionId,
         boothConfigId,
-        frameId:       frameId ?? null,
+        frameId:       persistedFrameId,
         status:        "PENDING",
         transactionId: txId,
         expiresAt,
@@ -278,6 +309,8 @@ export async function POST(req: Request): Promise<Response> {
     qrString:   qrString   || null,
     expiresAt:  expiresAt.toISOString(),
     snapToken:  snapToken  || null,
+    snapRedirectUrl: snapRedirectUrl || null,
+    snapClientKey:   snapClientKey || null,
   };
 
   return NextResponse.json<ApiResponse<CreatePaymentResponse>>(

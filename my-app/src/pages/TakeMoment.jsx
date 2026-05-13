@@ -1449,40 +1449,10 @@ export default function TakeMoment() {
         if (_p0Raw) {
           const _p0 = JSON.parse(_p0Raw);
           const _p0cfg = _p0?.frameConfig;
-<<<<<<< HEAD
           if (_p0cfg && (_p0cfg.isSharedFrame || _p0cfg.maxCaptures > 1 || (_p0cfg.slots?.length ?? 0) > 0)) {
             console.log("⏭️ Skipping VPS fetch — valid PRIORITY 0 sessionStorage config found (", _p0cfg.maxCaptures, "captures,", _p0cfg.slots?.length || 0, "slots)");
             return;
           }
-=======
-          const requestedShareId = String(shareId);
-          const configShareId = String(
-            _p0cfg?.shareId ||
-              (_p0cfg?.id?.startsWith("share-") ? _p0cfg.id.slice(6) : "") ||
-              (_p0cfg?.id?.startsWith("shared-") ? _p0cfg.id.slice(7) : "")
-          );
-          const isShareMatch = requestedShareId === configShareId;
-
-          if (
-            _p0cfg &&
-            isShareMatch &&
-            (_p0cfg.isSharedFrame || _p0cfg.maxCaptures > 1 || (_p0cfg.slots?.length ?? 0) > 0)
-          ) {
-            console.log("⏭️ Skipping VPS fetch — valid PRIORITY 0 sessionStorage config found (", _p0cfg.maxCaptures, "captures,", _p0cfg.slots?.length || 0, "slots)");
-            return;
-          }
-
-          if (_p0cfg && !isShareMatch) {
-            console.log("🧹 Clearing stale PRIORITY 0 shared frame (share mismatch):", {
-              requestedShareId,
-              configShareId,
-              configId: _p0cfg.id,
-            });
-            try {
-              sessionStorage.removeItem("__fremio_shared_frame_temp__");
-            } catch (_) {}
-          }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         }
       } catch (_) {}
       console.log("🔗 Loading shared frame from VPS:", shareId);

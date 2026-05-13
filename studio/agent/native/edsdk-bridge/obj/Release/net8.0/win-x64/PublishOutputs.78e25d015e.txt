@@ -1,0 +1,5 @@
+/Users/salwa/Documents/fremio copy/publish/win-x64/edsdk-bridge-native.exe
+/Users/salwa/Documents/fremio copy/publish/win-x64/edsdk-bridge-native.dll
+/Users/salwa/Documents/fremio copy/publish/win-x64/edsdk-bridge-native.deps.json
+/Users/salwa/Documents/fremio copy/publish/win-x64/edsdk-bridge-native.runtimeconfig.json
+/Users/salwa/Documents/fremio copy/publish/win-x64/edsdk-bridge-native.pdb

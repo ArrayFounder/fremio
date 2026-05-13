@@ -21,6 +21,7 @@ interface Booth {
   timerCameraSeconds:      number;
   timerPreviewSeconds:     number;
   timerDeliverySeconds:    number;
+  photoSessionMode:        string;
   _count?: { sessions: number };
 }
 
@@ -159,9 +160,9 @@ function BoothScreenPreview({ slug, screenId }: { slug: string; screenId: string
 
 // ─── Tool Card ────────────────────────────────────────────────────────────────
 
-function ToolCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ToolCard({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 p-5">
+    <div id={id} className="bg-white rounded-2xl border border-gray-100 p-5 scroll-mt-24">
       <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">{title}</p>
       {children}
     </div>
@@ -529,9 +530,11 @@ interface GatewayStatus {
   xenditSecretPreview: string | null; xenditPublicPreview: string | null;
   hasDokuClientId: boolean; hasDokuSecretKey: boolean;
   dokuClientIdPreview: string | null; dokuSecretPreview: string | null;
+  paymentGateway?: "MIDTRANS" | "XENDIT" | "DOKU";
 }
 
 type GatewayTab = "midtrans" | "xendit" | "doku";
+type PaymentGateway = "MIDTRANS" | "XENDIT" | "DOKU";
 
 const GW_TABS: { id: GatewayTab; label: string; emoji: string }[] = [
   { id: "midtrans", label: "Midtrans", emoji: "🏦" },
@@ -554,9 +557,18 @@ function PaymentGatewayCard() {
   const [dkClientId,  setDkClientId]  = useState("");
   const [dkSecretKey, setDkSecretKey] = useState("");
 
+  const [localActiveGateway, setLocalActiveGateway] = useState<PaymentGateway | null>(null);
+
   const [saving,  setSaving]  = useState(false);
   const [saveOk,  setSaveOk]  = useState(false);
   const [saveErr, setSaveErr] = useState("");
+
+  // Sync localActiveGateway from SWR data after mount (avoids hydration mismatch)
+  useEffect(() => {
+    if (gw?.paymentGateway) {
+      setLocalActiveGateway(gw.paymentGateway);
+    }
+  }, [gw?.paymentGateway]);
 
   async function save(payload: Record<string, string | null>) {
     setSaving(true); setSaveErr(""); setSaveOk(false);
@@ -565,11 +577,42 @@ function PaymentGatewayCard() {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body:   JSON.stringify(payload),
       });
-      const json = await res.json() as { success: boolean; error?: string };
+      const json = await res.json() as { success: boolean; error?: string; data?: GatewayStatus };
       if (!json.success) throw new Error(json.error ?? "Gagal menyimpan");
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 2500);
-      mutateGw();
+      if (json.data) {
+        mutateGw({ success: true, data: json.data }, { revalidate: false });
+      } else if (gw) {
+        const updated = { ...gw };
+        if ("paymentGateway" in payload) updated.paymentGateway = payload.paymentGateway as GatewayStatus["paymentGateway"];
+        if ("midtransServerKey" in payload) {
+          updated.hasServerKey = payload.midtransServerKey !== null;
+          updated.serverKeyPreview = payload.midtransServerKey ? "••••" + payload.midtransServerKey.slice(-4) : null;
+        }
+        if ("midtransClientKey" in payload) {
+          updated.hasClientKey = payload.midtransClientKey !== null;
+          updated.clientKeyPreview = payload.midtransClientKey ? "••••" + payload.midtransClientKey.slice(-4) : null;
+        }
+        if ("xenditSecretKey" in payload) {
+          updated.hasXenditSecretKey = payload.xenditSecretKey !== null;
+          updated.xenditSecretPreview = payload.xenditSecretKey ? "••••" + payload.xenditSecretKey.slice(-4) : null;
+        }
+        if ("xenditPublicKey" in payload) {
+          updated.hasXenditPublicKey = payload.xenditPublicKey !== null;
+          updated.xenditPublicPreview = payload.xenditPublicKey ? "••••" + payload.xenditPublicKey.slice(-4) : null;
+        }
+        if ("dokuClientId" in payload) {
+          updated.hasDokuClientId = payload.dokuClientId !== null;
+          updated.dokuClientIdPreview = payload.dokuClientId ? "••••" + payload.dokuClientId.slice(-4) : null;
+        }
+        if ("dokuSecretKey" in payload) {
+          updated.hasDokuSecretKey = payload.dokuSecretKey !== null;
+          updated.dokuSecretPreview = payload.dokuSecretKey ? "••••" + payload.dokuSecretKey.slice(-4) : null;
+        }
+        mutateGw({ success: true, data: updated }, { revalidate: false });
+      }
+      globalMutate("/api/dashboard/settings/payment");
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : "Gagal menyimpan");
     }
@@ -581,11 +624,55 @@ function PaymentGatewayCard() {
     await save(nullPayload);
   }
 
-  const activeStatus = tab === "midtrans"
+  async function setActiveGateway(gateway: PaymentGateway) {
+    setLocalActiveGateway(gateway);
+    await save({ paymentGateway: gateway });
+  }
+
+  async function saveMidtransKeys() {
+    const payload: Record<string, string | null> = {};
+    const server = mtServerKey.trim();
+    const client = mtClientKey.trim();
+    if (server) payload.midtransServerKey = server;
+    if (client) payload.midtransClientKey = client;
+    if (Object.keys(payload).length === 0) return;
+    await save(payload);
+    setMtServerKey("");
+    setMtClientKey("");
+  }
+
+  async function saveXenditKeys() {
+    const payload: Record<string, string | null> = {};
+    const secret = xdSecretKey.trim();
+    const pub = xdPublicKey.trim();
+    if (secret) payload.xenditSecretKey = secret;
+    if (pub) payload.xenditPublicKey = pub;
+    if (Object.keys(payload).length === 0) return;
+    await save(payload);
+    setXdSecretKey("");
+    setXdPublicKey("");
+  }
+
+  async function saveDokuKeys() {
+    const payload: Record<string, string | null> = {};
+    const clientId = dkClientId.trim();
+    const secret = dkSecretKey.trim();
+    if (clientId) payload.dokuClientId = clientId;
+    if (secret) payload.dokuSecretKey = secret;
+    if (Object.keys(payload).length === 0) return;
+    await save(payload);
+    setDkClientId("");
+    setDkSecretKey("");
+  }
+
+  const tabGateway: PaymentGateway = tab === "midtrans" ? "MIDTRANS" : tab === "xendit" ? "XENDIT" : "DOKU";
+  const activeGateway: PaymentGateway = localActiveGateway ?? "MIDTRANS";
+  const configuredStatus = tab === "midtrans"
     ? (gw?.hasServerKey || gw?.hasClientKey)
     : tab === "xendit"
       ? (gw?.hasXenditSecretKey || gw?.hasXenditPublicKey)
       : (gw?.hasDokuClientId || gw?.hasDokuSecretKey);
+  const isSelectedGateway = activeGateway === tabGateway;
 
   return (
     <ToolCard title="Payment Gateway">
@@ -601,6 +688,8 @@ function PaymentGatewayCard() {
               : t.id === "xendit"
                 ? (gw?.hasXenditSecretKey || gw?.hasXenditPublicKey)
                 : (gw?.hasDokuClientId || gw?.hasDokuSecretKey);
+            const gatewayId: PaymentGateway = t.id === "midtrans" ? "MIDTRANS" : t.id === "xendit" ? "XENDIT" : "DOKU";
+            const isGatewayActive = activeGateway === gatewayId;
             return (
               <button
                 key={t.id}
@@ -611,7 +700,8 @@ function PaymentGatewayCard() {
               >
                 <span>{t.emoji}</span>
                 <span>{t.label}</span>
-                {hasKey && <span className="w-1.5 h-1.5 rounded-full bg-green-500 ml-0.5" />}
+                {isGatewayActive && <span className="text-[10px] rounded-full bg-green-100 text-green-700 px-1.5 py-0.5 ml-0.5">Aktif</span>}
+                {!isGatewayActive && hasKey && <span className="w-1.5 h-1.5 rounded-full bg-gray-400 ml-0.5" />}
               </button>
             );
           })}
@@ -620,40 +710,51 @@ function PaymentGatewayCard() {
         {/* Status badge */}
         {gw && (
           <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium border ${
-            activeStatus
+            isSelectedGateway && configuredStatus
               ? "bg-green-50 border-green-200 text-green-700"
+              : configuredStatus
+                ? "bg-blue-50 border-blue-200 text-blue-700"
               : "bg-amber-50 border-amber-200 text-amber-700"
           }`}>
-            <span>{activeStatus ? "✅" : "⚠️"}</span>
+            <span>{isSelectedGateway && configuredStatus ? "✅" : configuredStatus ? "ℹ️" : "⚠️"}</span>
             <span>
-              {activeStatus
-                ? `${GW_TABS.find(t => t.id === tab)?.label} aktif — uang langsung masuk ke rekening kamu`
+              {isSelectedGateway && configuredStatus
+                ? `${GW_TABS.find(t => t.id === tab)?.label} AKTIF untuk cashless booth`
+                : configuredStatus
+                  ? `${GW_TABS.find(t => t.id === tab)?.label} key tersimpan, tetapi gateway aktif saat ini: ${GW_TABS.find(t => t.id === (activeGateway.toLowerCase() as GatewayTab))?.label || activeGateway}`
                 : `${GW_TABS.find(t => t.id === tab)?.label} belum dikonfigurasi`}
             </span>
           </div>
         )}
 
+        {gw && configuredStatus && !isSelectedGateway && (
+          <button onClick={() => setActiveGateway(tabGateway)} disabled={saving}
+            className="w-full py-2 rounded-xl bg-green-600 text-white text-xs font-bold disabled:opacity-40">
+            Jadikan {GW_TABS.find(t => t.id === tab)?.label} Gateway Aktif
+          </button>
+        )}
+
         {/* Midtrans */}
         {tab === "midtrans" && (
           <div className="space-y-3">
-            {gw?.hasServerKey && (
+            {gw && (gw.hasServerKey || gw.hasClientKey) && (
               <div className="text-xs border border-gray-200 rounded-xl p-3 space-y-1">
                 <p className="font-semibold text-gray-400 uppercase tracking-wide mb-2">Key tersimpan</p>
-                <div className="flex justify-between"><span className="text-gray-500">Server Key</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.serverKeyPreview}</code></div>
-                <div className="flex justify-between"><span className="text-gray-500">Client Key</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.clientKeyPreview}</code></div>
+                {gw.hasServerKey && <div className="flex justify-between"><span className="text-gray-500">Server Key</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.serverKeyPreview}</code></div>}
+                {gw.hasClientKey && <div className="flex justify-between"><span className="text-gray-500">Client Key</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.clientKeyPreview}</code></div>}
                 <button onClick={() => remove({ midtransServerKey: null, midtransClientKey: null })} className="text-red-500 hover:text-red-700 underline mt-1">Hapus keys</button>
               </div>
             )}
             <div className="space-y-2">
               <div>
                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide block mb-1">Server Key</label>
-                <input type="password" autoComplete="off" className={gwInputCls}
+                <input type="text" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} data-lpignore="true" data-1p-ignore="true" className={gwInputCls}
                   placeholder={gw?.hasServerKey ? "Isi untuk mengganti" : "Mid-server-XXXXXXXXXXXXXXXX"}
                   value={mtServerKey} onChange={(e) => setMtServerKey(e.target.value)} />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide block mb-1">Client Key</label>
-                <input type="password" autoComplete="off" className={gwInputCls}
+                <input type="text" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} data-lpignore="true" data-1p-ignore="true" className={gwInputCls}
                   placeholder={gw?.hasClientKey ? "Isi untuk mengganti" : "Mid-client-XXXXXXXXXXXXXXXX"}
                   value={mtClientKey} onChange={(e) => setMtClientKey(e.target.value)} />
               </div>
@@ -661,7 +762,7 @@ function PaymentGatewayCard() {
             </div>
             {saveErr && <p className="text-xs text-red-500">{saveErr}</p>}
             {saveOk  && <p className="text-xs text-green-600">✓ Tersimpan</p>}
-            <button onClick={() => save({ midtransServerKey: mtServerKey || null, midtransClientKey: mtClientKey || null })} disabled={saving || (!mtServerKey && !mtClientKey)}
+            <button onClick={saveMidtransKeys} disabled={saving || (!mtServerKey.trim() && !mtClientKey.trim())}
               className="w-full py-2 rounded-xl bg-primary-900 text-white text-xs font-bold disabled:opacity-40">
               {saving ? "Menyimpan…" : "Simpan Midtrans Keys"}
             </button>
@@ -671,10 +772,10 @@ function PaymentGatewayCard() {
         {/* Xendit */}
         {tab === "xendit" && (
           <div className="space-y-3">
-            {gw?.hasXenditSecretKey && (
+            {gw && (gw.hasXenditSecretKey || gw.hasXenditPublicKey) && (
               <div className="text-xs border border-gray-200 rounded-xl p-3 space-y-1">
                 <p className="font-semibold text-gray-400 uppercase tracking-wide mb-2">Key tersimpan</p>
-                <div className="flex justify-between"><span className="text-gray-500">Secret Key</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.xenditSecretPreview}</code></div>
+                {gw.hasXenditSecretKey && <div className="flex justify-between"><span className="text-gray-500">Secret Key</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.xenditSecretPreview}</code></div>}
                 {gw.hasXenditPublicKey && <div className="flex justify-between"><span className="text-gray-500">Public Key</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.xenditPublicPreview}</code></div>}
                 <button onClick={() => remove({ xenditSecretKey: null, xenditPublicKey: null })} className="text-red-500 hover:text-red-700 underline mt-1">Hapus keys</button>
               </div>
@@ -682,13 +783,13 @@ function PaymentGatewayCard() {
             <div className="space-y-2">
               <div>
                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide block mb-1">Secret Key</label>
-                <input type="password" autoComplete="off" className={gwInputCls}
+                <input type="text" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} data-lpignore="true" data-1p-ignore="true" className={gwInputCls}
                   placeholder={gw?.hasXenditSecretKey ? "Isi untuk mengganti" : "xnd_production_XXXXXXXXXXXXXXXX"}
                   value={xdSecretKey} onChange={(e) => setXdSecretKey(e.target.value)} />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide block mb-1">Public Key (opsional)</label>
-                <input type="password" autoComplete="off" className={gwInputCls}
+                <input type="text" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} data-lpignore="true" data-1p-ignore="true" className={gwInputCls}
                   placeholder={gw?.hasXenditPublicKey ? "Isi untuk mengganti" : "xnd_public_production_XXXXXXXX"}
                   value={xdPublicKey} onChange={(e) => setXdPublicKey(e.target.value)} />
               </div>
@@ -696,7 +797,7 @@ function PaymentGatewayCard() {
             </div>
             {saveErr && <p className="text-xs text-red-500">{saveErr}</p>}
             {saveOk  && <p className="text-xs text-green-600">✓ Tersimpan</p>}
-            <button onClick={() => save({ xenditSecretKey: xdSecretKey || null, xenditPublicKey: xdPublicKey || null })} disabled={saving || !xdSecretKey}
+            <button onClick={saveXenditKeys} disabled={saving || (!xdSecretKey.trim() && !xdPublicKey.trim())}
               className="w-full py-2 rounded-xl bg-primary-900 text-white text-xs font-bold disabled:opacity-40">
               {saving ? "Menyimpan…" : "Simpan Xendit Keys"}
             </button>
@@ -706,10 +807,10 @@ function PaymentGatewayCard() {
         {/* Doku */}
         {tab === "doku" && (
           <div className="space-y-3">
-            {gw?.hasDokuClientId && (
+            {gw && (gw.hasDokuClientId || gw.hasDokuSecretKey) && (
               <div className="text-xs border border-gray-200 rounded-xl p-3 space-y-1">
                 <p className="font-semibold text-gray-400 uppercase tracking-wide mb-2">Key tersimpan</p>
-                <div className="flex justify-between"><span className="text-gray-500">Client ID</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.dokuClientIdPreview}</code></div>
+                {gw.hasDokuClientId && <div className="flex justify-between"><span className="text-gray-500">Client ID</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.dokuClientIdPreview}</code></div>}
                 {gw.hasDokuSecretKey && <div className="flex justify-between"><span className="text-gray-500">Secret Key</span><code className="bg-gray-100 px-2 py-0.5 rounded">{gw.dokuSecretPreview}</code></div>}
                 <button onClick={() => remove({ dokuClientId: null, dokuSecretKey: null })} className="text-red-500 hover:text-red-700 underline mt-1">Hapus keys</button>
               </div>
@@ -717,21 +818,21 @@ function PaymentGatewayCard() {
             <div className="space-y-2">
               <div>
                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide block mb-1">Client ID</label>
-                <input type="password" autoComplete="off" className={gwInputCls}
+                <input type="text" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} data-lpignore="true" data-1p-ignore="true" className={gwInputCls}
                   placeholder={gw?.hasDokuClientId ? "Isi untuk mengganti" : "BRN-XXXX-XXXXXXXXXXXXXXXXXX"}
                   value={dkClientId} onChange={(e) => setDkClientId(e.target.value)} />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide block mb-1">Secret Key</label>
-                <input type="password" autoComplete="off" className={gwInputCls}
+                <input type="text" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} data-lpignore="true" data-1p-ignore="true" className={gwInputCls}
                   placeholder={gw?.hasDokuSecretKey ? "Isi untuk mengganti" : "SK-XXXXXXXXXXXXXXXXXXXXXXXX"}
                   value={dkSecretKey} onChange={(e) => setDkSecretKey(e.target.value)} />
               </div>
-              <p className="text-xs text-gray-400">Dapatkan di <a href="https://dashboard.doku.com" target="_blank" rel="noopener noreferrer" className="text-primary-700 underline">dashboard.doku.com</a> → My Projects → API Keys</p>
+              <p className="text-xs text-gray-400">Gunakan <span className="font-semibold">Client ID (BRN-...)</span> dan <span className="font-semibold">Active Secret Key (SK-...)</span> dari <a href="https://dashboard.doku.com" target="_blank" rel="noopener noreferrer" className="text-primary-700 underline">dashboard.doku.com</a> → My Projects → API Keys. <span className="font-semibold">Jangan pakai API Key (doku_key_...)</span>.</p>
             </div>
             {saveErr && <p className="text-xs text-red-500">{saveErr}</p>}
             {saveOk  && <p className="text-xs text-green-600">✓ Tersimpan</p>}
-            <button onClick={() => save({ dokuClientId: dkClientId || null, dokuSecretKey: dkSecretKey || null })} disabled={saving || !dkClientId}
+            <button onClick={saveDokuKeys} disabled={saving || (!dkClientId.trim() && !dkSecretKey.trim())}
               className="w-full py-2 rounded-xl bg-primary-900 text-white text-xs font-bold disabled:opacity-40">
               {saving ? "Menyimpan…" : "Simpan Doku Keys"}
             </button>
@@ -1113,12 +1214,6 @@ function ImportFremioModal({
 
 // ─── Delivery Card ───────────────────────────────────────────────────────────
 
-const DELIVERY_CHANNELS = [
-  { id: "DOWNLOAD", label: "Link Download" },
-  { id: "WHATSAPP", label: "WhatsApp" },
-  { id: "EMAIL", label: "Email" },
-] as const;
-
 function DeliveryCard({ boothId }: { boothId: string }) {
   const { data: allBooths, mutate } = useSWR<{ success: boolean; data: Array<{ id: string; welcomeScreenPrefs?: Record<string, unknown> | null }> }>(
     "/api/dashboard/booths"
@@ -1127,6 +1222,7 @@ function DeliveryCard({ boothId }: { boothId: string }) {
   const [enabled, setEnabled] = useState<Set<string>>(new Set(["DOWNLOAD", "WHATSAPP", "EMAIL"]));
   const [fonnteToken, setFonnteToken] = useState("");
   const [waMessage, setWaMessage] = useState("Hai, terimakasih telah datang ke photobox kami. Hasil foto bisa kamu buka di link berikut [url]");
+  const [waMode, setWaMode] = useState<"API" | "SHARE">("SHARE");
   const [emailUser, setEmailUser] = useState("");
   const [emailPassword, setEmailPassword] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1144,6 +1240,7 @@ function DeliveryCard({ boothId }: { boothId: string }) {
     setEnabled(new Set(saved ?? ["DOWNLOAD", "WHATSAPP", "EMAIL"]));
     setFonnteToken((prefs?.deliveryFonnteToken as string) ?? "");
     setWaMessage((prefs?.deliveryWaMessage as string) ?? "Hai, terimakasih telah datang ke photobox kami. Hasil foto bisa kamu buka di link berikut [url]");
+    setWaMode((prefs?.deliveryWaMode as "API" | "SHARE") ?? "SHARE");
     setEmailUser((prefs?.deliveryGmailUser as string) ?? "");
     setEmailPassword((prefs?.deliveryGmailAppPassword as string) ?? "");
   }, [allBooths, boothId]);
@@ -1173,6 +1270,7 @@ function DeliveryCard({ boothId }: { boothId: string }) {
         deliveryChannels: Array.from(enabled),
         deliveryFonnteToken: fonnteToken,
         deliveryWaMessage: waMessage,
+        deliveryWaMode: waMode,
         deliveryGmailUser: emailUser,
         deliveryGmailAppPassword: emailPassword,
       };
@@ -1199,37 +1297,92 @@ function DeliveryCard({ boothId }: { boothId: string }) {
       <div className="space-y-3">
         <p className="text-xs text-gray-400">Atur channel pengiriman hasil foto ke customer.</p>
 
-        {DELIVERY_CHANNELS.filter((c) => c.id !== "DOWNLOAD").map((c) => (
-          <div key={c.id} className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-gray-800">{c.label}</p>
-            <button
-              onClick={() => toggle(c.id)}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${enabled.has(c.id) ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}
-            >
-              {enabled.has(c.id) ? "Aktif" : "Nonaktif"}
-            </button>
-          </div>
-        ))}
-
-        <div className="pt-2 border-t border-gray-100">
-          <p className="text-[11px] font-semibold text-gray-700 mb-2">Integrasi WhatsApp (Fonnte)</p>
-          <input
-            type="text"
-            value={fonnteToken}
-            onChange={(e) => setFonnteToken(e.target.value)}
-            placeholder="Fonnte API Token"
-            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300 mb-2"
-          />
-          <textarea
-            value={waMessage}
-            onChange={(e) => setWaMessage(e.target.value)}
-            placeholder="Pesan WA (gunakan [url] untuk link foto)"
-            rows={2}
-            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300 resize-none"
-          />
-          <p className="text-[10px] text-gray-400 mt-1">Gunakan <code className="text-gray-600 bg-gray-50 px-1 rounded">[url]</code> sebagai placeholder link foto.</p>
+        {/* 1. WhatsApp */}
+        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+          <p className="text-sm font-semibold text-gray-800">WhatsApp</p>
+          <button
+            onClick={() => toggle("WHATSAPP")}
+            className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${enabled.has("WHATSAPP") ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}
+          >
+            {enabled.has("WHATSAPP") ? "Aktif" : "Nonaktif"}
+          </button>
         </div>
 
+        {/* 2. Mode WhatsApp */}
+        {enabled.has("WHATSAPP") && (
+          <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+            <div className="flex flex-col">
+              <p className="text-sm font-semibold text-gray-800">Mode WhatsApp</p>
+              <p className="text-[10px] text-gray-400">
+                {waMode === "API" ? "Fonnte: kirim otomatis via API" : "WA Biasa: buka WhatsApp dengan template pesan"}
+              </p>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => setWaMode("SHARE")}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${waMode === "SHARE" ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}
+              >
+                WA Biasa
+              </button>
+              <button
+                onClick={() => setWaMode("API")}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${waMode === "API" ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}
+              >
+                Fonnte
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 3. Integrasi WhatsApp (sesuai mode) */}
+        {enabled.has("WHATSAPP") && waMode === "API" && (
+          <div className="pt-2 border-t border-gray-100">
+            <p className="text-[11px] font-semibold text-gray-700 mb-2">Integrasi WhatsApp (Fonnte)</p>
+            <input
+              type="text"
+              value={fonnteToken}
+              onChange={(e) => setFonnteToken(e.target.value)}
+              placeholder="Fonnte API Token"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300 mb-2"
+            />
+            <textarea
+              value={waMessage}
+              onChange={(e) => setWaMessage(e.target.value)}
+              placeholder="Pesan WA (gunakan [url] untuk link foto)"
+              rows={2}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300 resize-none"
+            />
+            <p className="text-[10px] text-gray-400 mt-1">Gunakan <code className="text-gray-600 bg-gray-50 px-1 rounded">[url]</code> sebagai placeholder link foto.</p>
+          </div>
+        )}
+
+        {enabled.has("WHATSAPP") && waMode === "SHARE" && (
+          <div className="pt-2 border-t border-gray-100">
+            <p className="text-[11px] font-semibold text-gray-700 mb-2">Integrasi WhatsApp (WA Biasa)</p>
+            <textarea
+              value={waMessage}
+              onChange={(e) => setWaMessage(e.target.value)}
+              placeholder="Template pesan WA (gunakan [url] untuk link foto)"
+              rows={2}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300 resize-none"
+            />
+            <p className="text-[10px] text-gray-400 mt-1">Nomor pengirim mengikuti akun WhatsApp yang terbuka di device booth.</p>
+            <p className="text-[10px] text-gray-400 mt-1">Gunakan <code className="text-gray-600 bg-gray-50 px-1 rounded">[url]</code> sebagai placeholder link foto.</p>
+          </div>
+        )}
+
+        {/* 4. Email */}
+        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+          <p className="text-sm font-semibold text-gray-800">Email</p>
+          <button
+            onClick={() => toggle("EMAIL")}
+            className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${enabled.has("EMAIL") ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}
+          >
+            {enabled.has("EMAIL") ? "Aktif" : "Nonaktif"}
+          </button>
+        </div>
+
+        {/* 5. Integrasi Gmail */}
         <div className="pt-2 border-t border-gray-100">
           <p className="text-[11px] font-semibold text-gray-700 mb-2">Integrasi Email (Gmail)</p>
           <input
@@ -2369,31 +2522,68 @@ export default function BoothsPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Lompat ke Tools</p>
           <span className="text-[11px] text-gray-400">Klik untuk scroll otomatis</span>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => scrollToToolsCategory("tools-akses")}
-            className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-primary-300 hover:text-primary-700 hover:bg-primary-50"
-          >
-            Akses Booth
-          </button>
-          <button
-            onClick={() => scrollToToolsCategory("tools-operasional")}
-            className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-primary-300 hover:text-primary-700 hover:bg-primary-50"
-          >
-            Operasional
-          </button>
-          <button
-            onClick={() => scrollToToolsCategory("tools-monetisasi")}
-            className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-primary-300 hover:text-primary-700 hover:bg-primary-50"
-          >
-            Monetisasi
-          </button>
-          <button
-            onClick={() => scrollToToolsCategory("tools-konten")}
-            className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-primary-300 hover:text-primary-700 hover:bg-primary-50"
-          >
-            Konten & Engagement
-          </button>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {/* Akses Booth */}
+          <div className="space-y-2">
+            <button
+              onClick={() => scrollToToolsCategory("tools-akses")}
+              className="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-primary-300 hover:text-primary-700 hover:bg-primary-50"
+            >
+              📌 Akses Booth
+            </button>
+            <div className="flex flex-col gap-1">
+              <button onClick={() => scrollToToolsCategory("section-link-booth")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Link Booth</button>
+              <button onClick={() => scrollToToolsCategory("section-pin-akses")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">PIN Akses</button>
+              <button onClick={() => scrollToToolsCategory("section-status-booth")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Status</button>
+            </div>
+          </div>
+          {/* Operasional */}
+          <div className="space-y-2">
+            <button
+              onClick={() => scrollToToolsCategory("tools-operasional")}
+              className="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-primary-300 hover:text-primary-700 hover:bg-primary-50"
+            >
+              ⚙️ Operasional
+            </button>
+            <div className="flex flex-col gap-1">
+              <button onClick={() => scrollToToolsCategory("section-harga-photobox")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Harga Photobox</button>
+              <button onClick={() => scrollToToolsCategory("section-harga-print-tambahan")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Harga Print</button>
+              <button onClick={() => scrollToToolsCategory("section-timer-per-tahap")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Timer</button>
+              <button onClick={() => scrollToToolsCategory("section-cetak-foto")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Cetak Foto</button>
+              <button onClick={() => scrollToToolsCategory("section-mode-sesi-foto")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Mode Sesi</button>
+              <button onClick={() => scrollToToolsCategory("section-auto-download-booth")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Auto-download Booth</button>
+              <button onClick={() => scrollToToolsCategory("section-live-photo-video")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Live Photo / Video</button>
+            </div>
+          </div>
+          {/* Monetisasi */}
+          <div className="space-y-2">
+            <button
+              onClick={() => scrollToToolsCategory("tools-monetisasi")}
+              className="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-primary-300 hover:text-primary-700 hover:bg-primary-50"
+            >
+              💰 Monetisasi
+            </button>
+            <div className="flex flex-col gap-1">
+              <button onClick={() => scrollToToolsCategory("section-payment-gateway")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Payment Gateway</button>
+              <button onClick={() => scrollToToolsCategory("section-payment-method")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Metode Bayar</button>
+              <button onClick={() => scrollToToolsCategory("section-voucher")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Voucher</button>
+            </div>
+          </div>
+          {/* Konten & Engagement */}
+          <div className="space-y-2">
+            <button
+              onClick={() => scrollToToolsCategory("tools-konten")}
+              className="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-primary-300 hover:text-primary-700 hover:bg-primary-50"
+            >
+              🎨 Konten & Engagement
+            </button>
+            <div className="flex flex-col gap-1">
+              <button onClick={() => scrollToToolsCategory("section-frame-selection")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Frame</button>
+              <button onClick={() => scrollToToolsCategory("section-promo-banner")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Banner</button>
+              <button onClick={() => scrollToToolsCategory("section-delivery")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Pengiriman</button>
+              <button onClick={() => scrollToToolsCategory("section-social-media")} className="text-left px-2 py-1 rounded-md border border-gray-100 text-[10px] text-gray-500 hover:border-primary-200 hover:text-primary-600 hover:bg-primary-50 transition-colors">Sosial Media</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2438,7 +2628,7 @@ export default function BoothsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
         {/* Link Booth */}
-        <ToolCard title="Link Booth">
+        <ToolCard id="section-link-booth" title="Link Booth">
           <div className="flex items-center gap-2 rounded-xl bg-gray-50 border border-gray-100 px-3 py-2 mb-2.5">
             <span className="flex-1 text-xs text-gray-500 truncate">{boothUrl}</span>
           </div>
@@ -2456,7 +2646,7 @@ export default function BoothsPage() {
         </ToolCard>
 
         {/* Akses Booth (PIN) */}
-        <ToolCard title="Akses Booth (PIN 6 Digit)">
+        <ToolCard id="section-pin-akses" title="Akses Booth (PIN 6 Digit)">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2529,7 +2719,7 @@ export default function BoothsPage() {
         </ToolCard>
 
         {/* Status */}
-        <ToolCard title="Status Booth">
+        <ToolCard id="section-status-booth" title="Status Booth">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-gray-800">{booth.isActive ? "Booth Aktif" : "Booth Nonaktif"}</p>
@@ -2557,7 +2747,7 @@ export default function BoothsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
         {/* Harga Photobox (base price) */}
-        <ToolCard title="Harga Photobox + 1 Print">
+        <ToolCard id="section-harga-photobox" title="Harga Photobox + 1 Print">
           {editPrice !== null ? (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -2586,7 +2776,7 @@ export default function BoothsPage() {
         </ToolCard>
 
         {/* Harga Print Tambahan */}
-        <ToolCard title="Harga Print Tambahan / Lembar">
+        <ToolCard id="section-harga-print-tambahan" title="Harga Print Tambahan / Lembar">
           {editPrintPrice !== null ? (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -2615,7 +2805,7 @@ export default function BoothsPage() {
         </ToolCard>
 
         {/* Timer Per Tahap */}
-        <ToolCard title="Timer Per Tahap">
+        <ToolCard id="section-timer-per-tahap" title="Timer Per Tahap">
           {(() => {
             const TIMER_STAGES: { key: keyof Booth; label: string }[] = [
               { key: "timerTutorialSeconds",    label: "Tutorial + Metode Bayar" },
@@ -2678,73 +2868,168 @@ export default function BoothsPage() {
           })()}
         </ToolCard>
 
-        {/* Cetak Foto */}
-        <ToolCard title="Cetak Foto">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-gray-800">{booth.printEnabled ? "Cetak Aktif" : "Cetak Nonaktif"}</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {booth.printEnabled ? "Opsi cetak tersedia untuk pengunjung" : "Tanpa cetak fisik"}
-                </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Cetak Foto */}
+          <ToolCard id="section-cetak-foto" title="Cetak Foto">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">{booth.printEnabled ? "Cetak Aktif" : "Cetak Nonaktif"}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {booth.printEnabled ? "Opsi cetak tersedia untuk pengunjung" : "Tanpa cetak fisik"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => saveBooth("print", { printEnabled: !booth.printEnabled })}
+                  disabled={saving === "print"}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${booth.printEnabled ? "bg-green-500" : "bg-gray-200"}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${booth.printEnabled ? "translate-x-6" : "translate-x-1"}`} />
+                </button>
               </div>
-              <button
-                onClick={() => saveBooth("print", { printEnabled: !booth.printEnabled })}
-                disabled={saving === "print"}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${booth.printEnabled ? "bg-green-500" : "bg-gray-200"}`}
-              >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${booth.printEnabled ? "translate-x-6" : "translate-x-1"}`} />
-              </button>
-            </div>
 
-            <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
-              <p className="text-xs text-gray-500">Sisa Kertas</p>
-              {editPaperSheets !== null ? (
-                <div className="mt-2 flex items-center gap-2">
-                  <input
-                    autoFocus
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={editPaperSheets}
-                    onChange={(e) => setEditPaperSheets(e.target.value)}
-                    className="w-28 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300"
-                  />
-                  <span className="text-xs text-gray-500">lembar</span>
-                  <button
-                    onClick={() => {
-                      const parsed = Number(editPaperSheets);
-                      const safe = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
-                      savePaperSheetsRemaining(safe);
-                      setEditPaperSheets(null);
-                    }}
-                    disabled={saving === "paperSheetsRemaining"}
-                    className="px-3 py-1.5 rounded-lg bg-primary-900 text-white text-xs font-bold"
-                  >
-                    Simpan
-                  </button>
-                  <button
-                    onClick={() => setEditPaperSheets(null)}
-                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs"
-                  >
-                    Batal
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-1.5 flex items-center justify-between">
-                  <p className="text-lg font-bold text-gray-900 tabular-nums">{paperSheetsRemaining} lembar</p>
-                  <button
-                    onClick={() => setEditPaperSheets(String(paperSheetsRemaining))}
-                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-white"
-                  >
-                    Ubah
-                  </button>
-                </div>
-              )}
-              <p className="mt-1.5 text-[11px] text-gray-400">Akan berkurang otomatis 1 setiap cetak berhasil.</p>
+              <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                <p className="text-xs text-gray-500">Sisa Kertas</p>
+                {editPaperSheets !== null ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      autoFocus
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={editPaperSheets}
+                      onChange={(e) => setEditPaperSheets(e.target.value)}
+                      className="w-28 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                    />
+                    <span className="text-xs text-gray-500">lembar</span>
+                    <button
+                      onClick={() => {
+                        const parsed = Number(editPaperSheets);
+                        const safe = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+                        savePaperSheetsRemaining(safe);
+                        setEditPaperSheets(null);
+                      }}
+                      disabled={saving === "paperSheetsRemaining"}
+                      className="px-3 py-1.5 rounded-lg bg-primary-900 text-white text-xs font-bold"
+                    >
+                      Simpan
+                    </button>
+                    <button
+                      onClick={() => setEditPaperSheets(null)}
+                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <p className="text-lg font-bold text-gray-900 tabular-nums">{paperSheetsRemaining} lembar</p>
+                    <button
+                      onClick={() => setEditPaperSheets(String(paperSheetsRemaining))}
+                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-white"
+                    >
+                      Ubah
+                    </button>
+                  </div>
+                )}
+                <p className="mt-1.5 text-[11px] text-gray-400">Akan berkurang otomatis 1 setiap cetak berhasil.</p>
+              </div>
             </div>
-          </div>
-        </ToolCard>
+          </ToolCard>
+
+          {/* Mode Sesi Foto */}
+          <ToolCard id="section-mode-sesi-foto" title="Mode Sesi Foto">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">
+                    {booth.photoSessionMode === "fullscreen" ? "Mode Fullscreen" : "Mode Live View"}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {booth.photoSessionMode === "fullscreen"
+                      ? "Layar fullscreen dengan tombol capture overlay"
+                      : "Mode standar dengan preview frame"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => saveBooth("mode", { photoSessionMode: booth.photoSessionMode === "fullscreen" ? "live_view" : "fullscreen" })}
+                  disabled={saving === "mode"}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${booth.photoSessionMode === "fullscreen" ? "bg-green-500" : "bg-gray-200"}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${booth.photoSessionMode === "fullscreen" ? "translate-x-6" : "translate-x-1"}`} />
+                </button>
+              </div>
+            </div>
+          </ToolCard>
+
+          {/* Auto-download ke Device Booth */}
+          <ToolCard id="section-auto-download-booth" title="Auto-download Booth">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">
+                    {((booth.welcomeScreenPrefs as Record<string, unknown> | null)?.autoDownloadEnabled as boolean | undefined)
+                      ? "Auto-download Aktif"
+                      : "Auto-download Nonaktif"}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Download otomatis hasil sesi ke device booth.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const prefs = (booth.welcomeScreenPrefs as Record<string, unknown> | null) ?? {};
+                    const isEnabled = (prefs.autoDownloadEnabled as boolean | undefined) === true;
+                    saveBooth("autoDownload", {
+                      welcomeScreenPrefs: {
+                        ...prefs,
+                        autoDownloadEnabled: !isEnabled,
+                      },
+                    });
+                  }}
+                  disabled={saving === "autoDownload"}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${(((booth.welcomeScreenPrefs as Record<string, unknown> | null)?.autoDownloadEnabled as boolean | undefined) === true) ? "bg-green-500" : "bg-gray-200"}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${(((booth.welcomeScreenPrefs as Record<string, unknown> | null)?.autoDownloadEnabled as boolean | undefined) === true) ? "translate-x-6" : "translate-x-1"}`} />
+                </button>
+              </div>
+            </div>
+          </ToolCard>
+
+          {/* Live Photo / Video */}
+          <ToolCard id="section-live-photo-video" title="Live Photo / Video">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">
+                    {((booth.welcomeScreenPrefs as Record<string, unknown> | null)?.livePhotoVideoEnabled as boolean | undefined) === false
+                      ? "Live Nonaktif"
+                      : "Live Aktif"}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Nonaktif: hanya Foto+Frame, GIF, dan foto original.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const prefs = (booth.welcomeScreenPrefs as Record<string, unknown> | null) ?? {};
+                    const isEnabled = (prefs.livePhotoVideoEnabled as boolean | undefined) !== false;
+                    saveBooth("livePhotoVideo", {
+                      welcomeScreenPrefs: {
+                        ...prefs,
+                        livePhotoVideoEnabled: !isEnabled,
+                      },
+                    });
+                  }}
+                  disabled={saving === "livePhotoVideo"}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${(((booth.welcomeScreenPrefs as Record<string, unknown> | null)?.livePhotoVideoEnabled as boolean | undefined) !== false) ? "bg-green-500" : "bg-gray-200"}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${(((booth.welcomeScreenPrefs as Record<string, unknown> | null)?.livePhotoVideoEnabled as boolean | undefined) !== false) ? "translate-x-6" : "translate-x-1"}`} />
+                </button>
+              </div>
+            </div>
+          </ToolCard>
+        </div>
 
         </div>
       </section>
@@ -2756,8 +3041,13 @@ export default function BoothsPage() {
         </div>
         <div className="grid grid-cols-1 gap-4">
           <PaymentGatewayCard />
-          <PaymentMethodCard boothId={booth.id} />
-          <VoucherCard boothId={booth.id} pricePerSession={booth.pricePerSession} />
+          <div id="section-payment-gateway" />
+          <div id="section-payment-method">
+            <PaymentMethodCard boothId={booth.id} />
+          </div>
+          <div id="section-voucher">
+            <VoucherCard boothId={booth.id} pricePerSession={booth.pricePerSession} />
+          </div>
         </div>
       </section>
 
@@ -2767,10 +3057,18 @@ export default function BoothsPage() {
           <span className="text-[11px] text-gray-400">Frame, banner, dan distribusi hasil</span>
         </div>
         <div className="grid grid-cols-1 gap-4">
-          <FrameSelectionCard boothId={booth.id} />
-          <PromoBannerCard boothId={booth.id} />
-          <DeliveryCard boothId={booth.id} />
-          <SocialMediaCard boothId={booth.id} />
+          <div id="section-frame-selection">
+            <FrameSelectionCard boothId={booth.id} />
+          </div>
+          <div id="section-promo-banner">
+            <PromoBannerCard boothId={booth.id} />
+          </div>
+          <div id="section-delivery">
+            <DeliveryCard boothId={booth.id} />
+          </div>
+          <div id="section-social-media">
+            <SocialMediaCard boothId={booth.id} />
+          </div>
         </div>
       </section>
 

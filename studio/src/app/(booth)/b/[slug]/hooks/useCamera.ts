@@ -2,11 +2,12 @@
 
 import React, { useRef, useState, useCallback } from "react";
 
-/** Cari mimeType WebM terbaik yang didukung browser */
+/** Cari mimeType video terbaik yang didukung browser — prioritaskan H.264 (MP4-compatible) */
 function getBestVideoMime(): string {
   for (const t of [
-    "video/mp4;codecs=avc1",
-    "video/mp4",
+    "video/webm;codecs=h264",   // Chrome/Edge — H.264 dalam container WebM, bisa di-rename ke .mp4
+    "video/mp4;codecs=avc1",    // Safari natif
+    "video/mp4",                // Safari fallback
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",

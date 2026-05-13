@@ -129,8 +129,6 @@ export async function fetchGroupShareQuota(token) {
   const data = await response.json();
   return data.quota;
 }
-<<<<<<< HEAD
-=======
 
 export async function fetchApprovedEvents(options = {}) {
   const API_URL = getApiUrl();
@@ -231,4 +229,3 @@ export async function submitEventApplication({ shareLink, description, eventDate
 
   return response.json();
 }
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d

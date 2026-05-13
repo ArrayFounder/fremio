@@ -150,8 +150,7 @@ export default function DownloadPage({ data }: Props) {
       const url  = URL.createObjectURL(blob);
       const a    = videoLinkRef.current!;
       a.href     = url;
-      const videoExt = videoUrl?.endsWith(".mp4") ? "mp4" : "webm";
-      a.download = `video-${boothName.replace(/\s+/g, "-").toLowerCase()}.${videoExt}`;
+      a.download = `video-${boothName.replace(/\s+/g, "-").toLowerCase()}.webm`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch {
@@ -303,8 +302,10 @@ export default function DownloadPage({ data }: Props) {
             >
               {countdownLabel}
             </p>
-            <p className="text-[11px] font-semibold text-amber-600 text-center px-4">
-              (Link trial aktif selama 5 menit, upgrade subscription untuk tingkatkan hingga 24 jam)
+            <p className="text-[11px] font-semibold text-center px-4" style={{ color: isTrial ? "#d97706" : "#16a34a" }}>
+              {isTrial
+                ? "(Link trial aktif selama 5 menit, upgrade subscription untuk tingkatkan hingga 24 jam)"
+                : "(Link PRO aktif selama 24 jam)"}
             </p>
           </div>
 
@@ -506,9 +507,9 @@ export default function DownloadPage({ data }: Props) {
             <p className="text-xs text-gray-300 mb-1">Powered by</p>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/logo-salem.png"
-              alt="Salem"
-              className="h-6 w-auto mx-auto opacity-60 hover:opacity-80 transition-opacity"
+              src="/fremio_studio.png"
+              alt="Fremio Studio"
+              className="h-8 w-auto mx-auto opacity-60 hover:opacity-80 transition-opacity"
             />
           </div>
         </>

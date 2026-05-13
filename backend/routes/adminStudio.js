@@ -115,8 +115,6 @@ router.put("/managed-frames", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-=======
 router.put("/operators/:id", verifyToken, requireAdmin, async (req, res) => {
   if (!ensureStudioSecret(res)) return;
 
@@ -150,6 +148,4 @@ router.put("/operators/:id", verifyToken, requireAdmin, async (req, res) => {
     });
   }
 });
-
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 export default router;

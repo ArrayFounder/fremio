@@ -1,12 +1,13 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import frameProvider from "../utils/frameProvider.js";
-import safeStorage from "../utils/safeStorage.js";
+import safeStorage from "../utils/safeStorage";
 import unifiedFrameService from "../services/unifiedFrameService";
+import frameProvider from "../utils/frameProvider";
 import paymentService from "../services/paymentService";
 import { trackFrameView } from "../services/analyticsService";
 import { useSEO } from "../hooks/useSEO.js";
+import { buildSlotMaps } from "../utils/slotSystem";
 
 const DEBUG_FRAMES =
   import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_FRAMES) === "true";
@@ -60,6 +61,12 @@ const getFrameImageUrl = (frame) => {
 };
 
 const normalizeRatio = (value) => String(value || "").toLowerCase().trim();
+
+const toFinite = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
 
 const getCanvasSize = (frame) => {
   const layout = frame?.layout;
@@ -167,11 +174,20 @@ function LayoutPreview({ frame }) {
         ctx.strokeStyle = "rgba(100,116,139,0.6)";
         ctx.lineWidth = 1;
         ctx.strokeRect(ex, ey, ew, eh);
-        ctx.fillStyle = "rgba(100,116,139,0.8)";
-        ctx.font = `${Math.max(7, ew * 0.12)}px sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("FOTO", ex + ew / 2, ey + eh / 2);
+        const slotNum = el.data?.slotNumber;
+        if (typeof slotNum === "number") {
+          ctx.fillStyle = "rgba(99,102,241,0.45)";
+          ctx.font = `bold ${Math.max(10, Math.min(ew, eh) * 0.5)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(slotNum), ex + ew / 2, ey + eh / 2);
+        } else {
+          ctx.fillStyle = "rgba(100,116,139,0.8)";
+          ctx.font = `${Math.max(7, ew * 0.12)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("FOTO", ex + ew / 2, ey + eh / 2);
+        }
       } else if (el.type === "shape") {
         ctx.fillStyle = el.data?.fill || el.data?.color || "#cccccc";
         ctx.fillRect(ex, ey, ew, eh);
@@ -293,17 +309,21 @@ function FrameCard({
             <span style={{ fontSize: "12px" }}>Gambar tidak tersedia</span>
           </div>
         ) : (
-          <img
-            src={getImageUrl(frame)}
-            alt={frame.name}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
-              borderRadius: "4px",
-            }}
-            onError={() => onImageError(frame.id)}
-          />
+          <>
+            <img
+              src={getImageUrl(frame)}
+              alt={frame.name}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                borderRadius: "4px",
+                position: "relative",
+                zIndex: 2,
+              }}
+              onError={() => onImageError(frame.id)}
+            />
+          </>
         )}
       </div>
 

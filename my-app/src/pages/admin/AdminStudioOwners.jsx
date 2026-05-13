@@ -141,14 +141,16 @@ export default function AdminStudioOwners() {
                                </div>
                              ) : <p style={{ margin:"8px 0 0", color:"#aaa", fontSize:12 }}>Belum ada booth.</p>}
 
-                             {/* Upgrade form for free/trial accounts */}
-                             {(o.subscriptionTier === "STARTER" || o.subscriptionTier === "FREE") && (
-                               <div style={{ marginTop:12, padding:12, background:"white", border:"1px solid #e0b7a9", borderRadius:8 }}>
-                                 <div style={{ fontSize:12, fontWeight:700, color:"#333", marginBottom:8 }}>Upgrade ke Paid</div>
+                             {/* Subscription management form */}
+                             <div style={{ marginTop:12, padding:12, background:"white", border:"1px solid #e0b7a9", borderRadius:8 }}>
+                                 <div style={{ fontSize:12, fontWeight:700, color:"#333", marginBottom:8 }}>
+                                   {(o.subscriptionTier === "STARTER" || o.subscriptionTier === "FREE") ? "Upgrade ke Paid" : "Perpanjang Masa Aktif"}
+                                 </div>
                                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
                                    <select value={upgradeTier} onChange={e=>setUpgradeTier(e.target.value)} onClick={e=>e.stopPropagation()}
                                      style={{ padding:"6px 10px", border:"1px solid #e0b7a9", borderRadius:6, fontSize:12 }}>
                                      <option value="PRO">PRO</option>
+                                     <option value="ENTERPRISE">ENTERPRISE</option>
                                    </select>
                                    <select value={upgradeMonths} onChange={e=>setUpgradeMonths(Number(e.target.value))} onClick={e=>e.stopPropagation()}
                                      style={{ padding:"6px 10px", border:"1px solid #e0b7a9", borderRadius:6, fontSize:12 }}>
@@ -162,11 +164,10 @@ export default function AdminStudioOwners() {
                                    </select>
                                    <button onClick={e=>{e.stopPropagation(); upgradeAccount(o.id);}} disabled={upgradeLoading}
                                      style={{ padding:"6px 14px", background:upgradeLoading?"#f0f0f0":"#111827", color:upgradeLoading?"#999":"#fff", border:"none", borderRadius:6, fontSize:12, fontWeight:600, cursor:upgradeLoading?"not-allowed":"pointer" }}>
-                                     {upgradeLoading ? "Menyimpan..." : "Konfirmasi Upgrade"}
+                                     {upgradeLoading ? "Menyimpan..." : (o.subscriptionTier === "STARTER" || o.subscriptionTier === "FREE") ? "Konfirmasi Upgrade" : "Konfirmasi Perpanjangan"}
                                    </button>
                                  </div>
                                </div>
-                             )}
                            </td>
                          </tr>
                        )}

@@ -12,6 +12,8 @@ interface PaymentScreenProps {
   qrImageUrl:   string | null;
   qrString:     string | null;
   snapToken:    string | null;
+  snapClientKey: string | null;
+  snapRedirectUrl: string | null;
   amount:       number;
   expiresAt:    Date | null;
   onPaid:       (sessionId: string) => void;
@@ -30,6 +32,8 @@ export function PaymentScreen({
   qrImageUrl,
   qrString,
   snapToken,
+  snapClientKey,
+  snapRedirectUrl,
   amount,
   expiresAt,
   onPaid,
@@ -46,11 +50,22 @@ export function PaymentScreen({
   useEffect(() => {
     if (!snapToken || snapOpenedRef.current) return;
 
-    const clientKey = process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY ?? "";
-    const isProduction = process.env.NEXT_PUBLIC_MIDTRANS_ENV === "production";
+    const clientKey = snapClientKey ?? process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY ?? "";
+    const redirectUrl = snapRedirectUrl ?? "";
+    const isProduction = redirectUrl.includes("app.midtrans.com")
+      ? true
+      : redirectUrl.includes("app.sandbox.midtrans.com")
+        ? false
+        : process.env.NEXT_PUBLIC_MIDTRANS_ENV === "production";
     const snapSrc = isProduction
       ? "https://app.midtrans.com/snap/snap.js"
       : "https://app.sandbox.midtrans.com/snap/snap.js";
+
+    if (!clientKey) {
+      console.error("[PaymentScreen] Snap client key kosong");
+      onCancel();
+      return;
+    }
 
     async function handleSnapSuccess() {
       snapPaidRef.current = true;
@@ -89,13 +104,8 @@ export function PaymentScreen({
       });
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if ((window as any).snap) {
-      openSnap();
-      return;
-    }
-
     setSnapLoading(true);
+    Array.from(document.querySelectorAll('script[src*="midtrans.com/snap/snap.js"]')).forEach((el) => el.remove());
     const script = document.createElement("script");
     script.src = snapSrc;
     script.setAttribute("data-client-key", clientKey);
@@ -106,7 +116,7 @@ export function PaymentScreen({
     return () => {
       // Jangan remove script — mungkin sudah dibersihkan oleh Snap
     };
-  }, [snapToken, sessionId, onPaid, onCancel]);
+  }, [snapToken, snapClientKey, snapRedirectUrl, sessionId, onPaid, onCancel]);
 
   // Render qrString → data URL jika qrImageUrl tidak tersedia (Xendit)
   useEffect(() => {
@@ -119,7 +129,9 @@ export function PaymentScreen({
   // Polling
   usePaymentPolling(orderId, onPaid, onCancel);
 
-  const isSandbox = process.env.NEXT_PUBLIC_MIDTRANS_ENV !== "production";
+  const isSandbox = snapToken
+    ? (snapRedirectUrl?.includes("sandbox") ?? false)
+    : process.env.NEXT_PUBLIC_MIDTRANS_ENV !== "production";
 
   // ── QR / Snap embed ─────────────────────────────────────────────────────
   const QrContent = snapToken ? (

@@ -1,11 +1,24 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { getAdaptiveColors } from "../colorUtils";
 import { getAllPaperSizes } from "../paperSize";
 import type { BoothConfigData, BoothHardwareSettings } from "../types";
 
 interface VideoDevice { deviceId: string; label: string }
+
+declare global {
+  interface Window {
+    fremioBooth?: {
+      getBridgeStatus?: () => Promise<unknown>;
+      agentStatus: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
+      agentCapture: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
+      agentPreview: () => Promise<{ ok: boolean; base64?: string; mimeType?: string; error?: string }>;
+      agentPreviewStreamUrl?: (cacheKey?: string | number) => string;
+      agentPrint: (job: unknown) => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
+    };
+  }
+}
 
 interface BoothSetupScreenProps {
   booth:    BoothConfigData;
@@ -67,7 +80,14 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   // ── Camera state ──────────────────────────────────────────────────────────
   const [devices,    setDevices]    = useState<VideoDevice[]>([]);
   const [deviceId,   setDeviceId]   = useState<string | null>(null);
-  const [mirror,     setMirror]     = useState(true);
+  const [mirror,     setMirror]     = useState(() => {
+    // Default mirror=true untuk Canon camera, false untuk webcam
+    if (typeof sessionStorage === "undefined") return false;
+    const savedSource = sessionStorage.getItem("booth_camera_source");
+    const savedMirror = sessionStorage.getItem("booth_camera_mirror");
+    if (savedMirror) return savedMirror === "true";
+    return savedSource === "dslr"; // Auto-enable mirror for Canon
+  });
   const [camLoading, setCamLoading] = useState(true);
   const [camError,   setCamError]   = useState<string | null>(null);
   const [previewEl,  setPreviewEl]  = useState<HTMLVideoElement | null>(null);
@@ -89,7 +109,24 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     supportsLiveView?: boolean;
     mode?: string;
   } | null>(null);
-  const [captureSource, setCaptureSource] = useState<CaptureSource>("auto");
+  const [captureSource, setCaptureSource] = useState<CaptureSource>(() => {
+    if (typeof sessionStorage === "undefined") return "auto";
+    const savedSource = sessionStorage.getItem("booth_camera_source");
+    return savedSource === "auto" || savedSource === "webcam" || savedSource === "dslr" ? savedSource : "auto";
+  });
+  const [agentBase, setAgentBase] = useState<string | null>(null);
+  const [dslrPreviewKey, setDslrPreviewKey] = useState(() => Date.now());
+  const [dslrPreviewError, setDslrPreviewError] = useState<string | null>(null);
+  const [dslrPreviewActive, setDslrPreviewActive] = useState(() => {
+    if (typeof sessionStorage === "undefined") return false;
+    // Jika captureSource sudah dslr (dari persistence), auto-aktifkan live view
+    const savedSource = sessionStorage.getItem("booth_camera_source");
+    return savedSource === "dslr" ? true : false;
+  });
+  const [dslrPreviewFrameSrc, setDslrPreviewFrameSrc] = useState<string | null>(null);
+  const [startingBooth, setStartingBooth] = useState(false);
+  const dslrPreviewImgRef = useRef<HTMLImageElement | null>(null);
+  const agentCheckInFlightRef = useRef<Promise<void> | null>(null);
 
   // ── Paper size state ──────────────────────────────────────────────────────
   // null = auto-detect dari canvas frame dimensions
@@ -106,13 +143,56 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       setPaperSizeOverride(saved.paperSize ?? null);
     }
 
+    // Load DSLR state from sessionStorage
     if (typeof sessionStorage !== "undefined") {
-      const savedSource = sessionStorage.getItem("booth_camera_source");
-      if (savedSource === "auto" || savedSource === "webcam" || savedSource === "dslr") {
-        setCaptureSource(savedSource);
+      const savedDslrCameras = sessionStorage.getItem("booth_dslr_cameras");
+      const savedDslrCapabilities = sessionStorage.getItem("booth_dslr_capabilities");
+      const savedAgentBase = sessionStorage.getItem("booth_agent_base");
+      const savedAgentOnline = sessionStorage.getItem("booth_agent_online");
+      // dslrPreviewActive di-infer dari captureSource persistence, bukan key terpisah
+      // agar tidak perlu key tambahan di sessionStorage
+      
+      if (savedDslrCameras) {
+        try {
+          setDslrCameras(JSON.parse(savedDslrCameras));
+        } catch {}
+      }
+      
+      if (savedDslrCapabilities) {
+        try {
+          setDslrCapabilities(JSON.parse(savedDslrCapabilities));
+        } catch {}
+      }
+      
+      if (savedAgentBase) {
+        setAgentBase(savedAgentBase);
+      }
+      if (savedAgentOnline === "true") {
+        setAgentOnline(true);
       }
     }
+
   }, [booth.slug]);
+
+  // ── Save DSLR state to sessionStorage ───────────────────────────────────────
+  useEffect(() => {
+    if (typeof sessionStorage === "undefined") return;
+    
+    sessionStorage.setItem("booth_camera_source", captureSource);
+    sessionStorage.setItem("booth_camera_mirror", String(mirror));
+    sessionStorage.setItem("booth_dslr_cameras", JSON.stringify(dslrCameras));
+    sessionStorage.setItem("booth_dslr_capabilities", JSON.stringify(dslrCapabilities));
+    sessionStorage.setItem("booth_dslr_available", String(dslrCameras.length > 0));
+    sessionStorage.setItem("booth_dslr_model", dslrCameras[0]?.model ?? "Canon DSLR");
+    sessionStorage.setItem("booth_dslr_supports_capture", String(dslrCapabilities?.supportsCapture !== false));
+    sessionStorage.setItem("booth_dslr_supports_live_view", String(dslrCapabilities?.supportsLiveView !== false));
+    if (agentBase) {
+      sessionStorage.setItem("booth_agent_base", agentBase);
+    }
+    if (agentOnline !== null) {
+      sessionStorage.setItem("booth_agent_online", String(agentOnline));
+    }
+  }, [captureSource, mirror, dslrCameras, dslrCapabilities, agentBase, agentOnline]);
 
   // ── Enumerate cameras ──────────────────────────────────────────────────────
   const startCamera = useCallback(async (targetDeviceId?: string | null) => {
@@ -159,6 +239,10 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
   // Initial camera start
   useEffect(() => {
+    if (captureSource === "dslr") {
+      setCamLoading(false);
+      return;
+    }
     startCamera(deviceId);
     return () => { stream?.getTracks().forEach(t => t.stop()); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -179,72 +263,310 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     startCamera(id);
   };
 
+  const stopCameraPreview = useCallback(() => {
+    stream?.getTracks().forEach(t => t.stop());
+    setStream(null);
+    if (previewEl) previewEl.srcObject = null;
+    setCamLoading(false);
+  }, [previewEl, stream]);
+
+  const releaseDslrPreviewStream = useCallback(async () => {
+    setDslrPreviewActive(false);
+    setDslrPreviewError(null);
+    setDslrPreviewFrameSrc(null);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + 1600));
+    }
+    if (dslrPreviewImgRef.current) {
+      dslrPreviewImgRef.current.removeAttribute("src");
+      dslrPreviewImgRef.current.src = "";
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1400));
+  }, []);
+
+  useEffect(() => {
+    if (captureSource === "dslr") {
+      stopCameraPreview();
+    }
+  }, [captureSource, stopCameraPreview]);
+
+  useEffect(() => {
+    if (
+      captureSource !== "dslr" ||
+      !dslrPreviewActive ||
+      typeof window === "undefined" ||
+      !window.fremioBooth?.agentPreview
+    ) {
+      setDslrPreviewFrameSrc(null);
+      return;
+    }
+
+    let cancelled = false;
+    let rafId: number | null = null;
+    let hasFrame = false;
+    let lastFetchTime = 0;
+    const targetInterval = 1000 / 90; // 90 FPS target for optimal Canon performance
+
+    const fetchAndSchedule = async () => {
+      if (cancelled) return;
+
+      const now = performance.now();
+      if (now - lastFetchTime >= targetInterval) {
+        try {
+          const res = await window.fremioBooth?.agentPreview();
+          if (!cancelled && res?.ok && res.base64) {
+            hasFrame = true;
+            setDslrPreviewFrameSrc(`data:${res.mimeType || "image/jpeg"};base64,${res.base64}`);
+            setDslrPreviewError(null);
+          } else if (!cancelled && !hasFrame) {
+            setDslrPreviewError(res?.error || "Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
+          }
+        } catch (error) {
+          if (!cancelled && !hasFrame) {
+            setDslrPreviewError(error instanceof Error ? error.message : "Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
+          }
+        }
+        lastFetchTime = now;
+      }
+
+      rafId = requestAnimationFrame(fetchAndSchedule);
+    };
+
+    rafId = requestAnimationFrame(fetchAndSchedule);
+    return () => {
+      cancelled = true;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [captureSource, dslrPreviewActive, dslrPreviewKey]);
+
   // ── Check Local Agent & get printers ──────────────────────────────────────
   // Coba endpoint secara BERURUTAN agar tidak membanjiri local agent.
   // Pada halaman HTTPS, gunakan endpoint HTTPS saja untuk menghindari mixed-content block.
+  type AgentStatusPayload = {
+    camera?: {
+      available?: boolean;
+      count?: number;
+      cameras?: { model: string; port: string }[];
+      devices?: { model: string; port: string }[];
+      type?: string;
+      error?: string;
+      capabilities?: {
+        supportsCapture?: boolean;
+        supportsLiveView?: boolean;
+        mode?: string;
+      };
+    };
+    printers?: string[];
+    printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
+  };
+
+  type BridgeStatusPayload = {
+    ok?: boolean;
+    running?: boolean;
+    cameraAvailable?: boolean;
+    cameraCount?: number;
+    cameraType?: string;
+    cameraDevices?: { model?: string; port?: string }[];
+    cameraError?: string;
+    printers?: string[];
+    raw?: AgentStatusPayload;
+  };
+
+  const hasDslrCamera = (value: AgentStatusPayload | null) => {
+    const cameraList = value?.camera?.cameras ?? value?.camera?.devices ?? [];
+    return cameraList.length > 0 || Boolean(value?.camera?.available) || (value?.camera?.count ?? 0) > 0;
+  };
+
+  const buildCanonFallbackStatus = (base?: AgentStatusPayload | null): AgentStatusPayload => ({
+    ...(base ?? {}),
+    camera: {
+      ...(base?.camera ?? {}),
+      available: true,
+      count: Math.max(base?.camera?.count ?? 0, 1),
+      cameras: base?.camera?.cameras?.length ? base.camera.cameras : [{ model: "Canon DSLR", port: "edsdk:0" }],
+      devices: base?.camera?.devices?.length ? base.camera.devices : [{ model: "Canon DSLR", port: "edsdk:0" }],
+      type: "dslr",
+      capabilities: {
+        supportsCapture: true,
+        supportsLiveView: true,
+        mode: "live-view",
+        ...(base?.camera?.capabilities ?? {}),
+      },
+    },
+  });
+
   const checkAgent = useCallback(async () => {
     if (!canUseLocalAgent()) { setAgentOnline(false); return; }
+
+    if (agentCheckInFlightRef.current) return;
+
     setAgentChecking(true);
-    try {
-      const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
-      const candidates = isHttps
-        ? [
-            "https://localhost:7432",
-            "https://127.0.0.1:7432",
-            "https://localhost:3002",
-            "https://127.0.0.1:3002",
-            "http://localhost:7432",
-            "http://127.0.0.1:7432",
-            "http://localhost:3002",
-            "http://127.0.0.1:3002",
-          ]
-        : [
-            "http://localhost:7432",
-            "http://127.0.0.1:7432",
-            "https://localhost:7432",
-            "https://127.0.0.1:7432",
-            "http://localhost:3002",
-            "http://127.0.0.1:3002",
-            "https://localhost:3002",
-            "https://127.0.0.1:3002",
-          ];
 
-      let status: {
-        camera?: {
-          available?: boolean;
-          cameras?: { model: string; port: string }[];
-          capabilities?: {
-            supportsCapture?: boolean;
-            supportsLiveView?: boolean;
-            mode?: string;
-          };
-        };
-        printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
-      } | null = null;
-      let connectedBase: string | null = null;
-
+    const run = async () => {
+      let status: AgentStatusPayload | null = null;
       let lastError: unknown = null;
-      for (const base of candidates) {
-        try {
-          const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(8000) });
-          if (!res.ok) throw new Error(`status ${res.status}`);
-          status = await res.json() as {
-            camera?: {
-              available?: boolean;
-              cameras?: { model: string; port: string }[];
-              capabilities?: {
-                supportsCapture?: boolean;
-                supportsLiveView?: boolean;
-                mode?: string;
-              };
-            };
-            printer?: { printers?: { name: string; isDefault?: boolean }[]; defaultPrinter?: string | null };
+
+      // ── 1. Coba IPC Electron (booth-windows-app) ──
+      if (typeof window !== "undefined" && window.fremioBooth?.getBridgeStatus) {
+        const bridgeRes = await new Promise<BridgeStatusPayload | null>((resolve) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            resolve(null);
+          }, 12000);
+
+          window.fremioBooth?.getBridgeStatus?.()
+            .then((value) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              resolve(value as BridgeStatusPayload);
+            })
+            .catch((error) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              lastError = error;
+              resolve(null);
+            });
+        });
+
+        if (bridgeRes && (bridgeRes.ok || bridgeRes.running)) {
+          const raw = bridgeRes.raw ?? {};
+          const bridgeDevices = Array.isArray(bridgeRes.cameraDevices)
+            ? bridgeRes.cameraDevices.map((cam, index) => ({
+                model: String(cam?.model || `Canon DSLR ${index + 1}`),
+                port: String(cam?.port || `edsdk:${index}`),
+              }))
+            : [];
+          const rawDevices = raw.camera?.cameras ?? raw.camera?.devices ?? [];
+          const devices = bridgeDevices.length > 0 ? bridgeDevices : rawDevices;
+          const count = bridgeRes.cameraCount ?? raw.camera?.count ?? devices.length;
+          const available = Boolean(bridgeRes.cameraAvailable ?? raw.camera?.available ?? count > 0);
+          status = {
+            ...raw,
+            printers: bridgeRes.printers ?? raw.printers,
+            camera: {
+              ...(raw.camera ?? {}),
+              available,
+              count,
+              cameras: devices,
+              devices,
+              type: bridgeRes.cameraType ?? raw.camera?.type,
+              error: bridgeRes.cameraError ?? raw.camera?.error,
+              capabilities: raw.camera?.capabilities ?? (available ? {
+                supportsCapture: true,
+                supportsLiveView: true,
+                mode: "live-view",
+              } : undefined),
+            },
           };
-          connectedBase = base;
-          break;
-        } catch (error) {
-          lastError = error;
+          setAgentBase("http://127.0.0.1:7432");
         }
+      }
+
+      if (typeof window !== "undefined" && window.fremioBooth?.agentStatus) {
+        const ipcRes = await new Promise<{ ok: boolean; payload?: unknown; error?: string }>((resolve) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            resolve({ ok: false, error: "Agent status IPC timeout" });
+          }, 12000);
+
+          window.fremioBooth?.agentStatus()
+            .then((value) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              resolve(value);
+            })
+            .catch((error) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              lastError = error;
+              resolve({ ok: false, error: error instanceof Error ? error.message : String(error) });
+            });
+        });
+
+        if (!status && ipcRes.ok && ipcRes.payload) {
+          status = ipcRes.payload as AgentStatusPayload;
+          setAgentBase("http://127.0.0.1:7432");
+        } else if (!ipcRes.ok) {
+          lastError = new Error(ipcRes.error || "Agent status IPC gagal");
+        }
+      }
+
+      // ── 2. Fallback: direct HTTP fetch ──
+      if (!status) {
+        const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+        const candidates = isHttps
+          ? [
+              "https://localhost:7432",
+              "https://127.0.0.1:7432",
+              "http://localhost:7432",
+              "http://127.0.0.1:7432",
+            ]
+          : [
+              "http://localhost:7432",
+              "http://127.0.0.1:7432",
+              "https://localhost:7432",
+              "https://127.0.0.1:7432",
+            ];
+
+        for (const base of candidates) {
+          try {
+            const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(9000) });
+            if (!res.ok) throw new Error(`status ${res.status}`);
+            status = await res.json() as AgentStatusPayload;
+            setAgentBase(base);
+            break;
+          } catch (error) {
+            lastError = error;
+          }
+        }
+      }
+
+      if ((!status || !hasDslrCamera(status)) && typeof window !== "undefined" && window.fremioBooth?.agentPreview) {
+        const previewRes = await new Promise<{ ok: boolean; base64?: string }>((resolve) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            resolve({ ok: false });
+          }, 9000);
+
+          window.fremioBooth?.agentPreview()
+            .then((value) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              resolve({ ok: Boolean(value?.ok), base64: value?.base64 });
+            })
+            .catch((error) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              lastError = error;
+              resolve({ ok: false });
+            });
+        });
+
+        if (previewRes.ok && previewRes.base64) {
+          status = buildCanonFallbackStatus(status);
+          setAgentBase("http://127.0.0.1:7432");
+        }
+      }
+
+      if (status && !hasDslrCamera(status) && typeof window !== "undefined" && window.fremioBooth) {
+        status = buildCanonFallbackStatus(status);
+      }
+
+      if (!status && typeof window !== "undefined" && window.fremioBooth) {
+        status = buildCanonFallbackStatus(null);
+        setAgentBase("http://127.0.0.1:7432");
       }
 
       if (!status) {
@@ -252,11 +574,19 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       }
 
       setAgentOnline(true);
-      const cams = status.camera?.cameras ?? [];
+      const cameraList = status.camera?.cameras ?? status.camera?.devices ?? [];
+      const cams = cameraList.length > 0
+        ? cameraList.map((cam, index) => ({
+            model: cam?.model || `Canon DSLR ${index + 1}`,
+            port: cam?.port || `edsdk:${index}`,
+          }))
+        : (status.camera?.available || (status.camera?.count ?? 0) > 0)
+          ? [{ model: "Canon DSLR", port: "edsdk:0" }]
+          : [];
       setDslrCameras(cams);
       setDslrCapabilities(status.camera?.capabilities ?? null);
 
-      const printerList = status.printer?.printers?.map((p) => p.name) ?? [];
+      const printerList = status.printer?.printers?.map((p: { name: string }) => p.name) ?? status.printers ?? [];
       setPrinters(printerList);
 
       if (!printerName) {
@@ -265,15 +595,26 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         setPrinterName(nextPrinter);
         if (nextPrinter) setManualPrinter(nextPrinter);
       }
+    };
+
+    const promise = run();
+    agentCheckInFlightRef.current = promise;
+
+    const hardTimeout = setTimeout(() => {
+      agentCheckInFlightRef.current = null;
+      setAgentChecking(false);
+    }, 15000);
+
+    try {
+      await promise;
     } catch {
       setAgentOnline(false);
-      setDslrCameras([]);
-      setDslrCapabilities(null);
+      // Jangan reset dslrCameras / agentBase / captureSource — biarkan persistence tetap ada
+      // agar user tetap bisa lihat live view dan kamera list meski verify gagal sementara
       setPrinters([]);
-      if (captureSource === "dslr") {
-        setCaptureSource("auto");
-      }
     } finally {
+      clearTimeout(hardTimeout);
+      agentCheckInFlightRef.current = null;
       setAgentChecking(false);
     }
   }, [captureSource, printerName]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -292,8 +633,13 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   }, [agentOnline, checkAgent, dslrCameras.length, isTabletMode]);
 
   // ── Done ──────────────────────────────────────────────────────────────────
-  const handleDone = () => {
+  const handleDone = async () => {
+    if (startingBooth) return;
+    setStartingBooth(true);
     stream?.getTracks().forEach(t => t.stop());
+    if (captureSource === "dslr") {
+      await releaseDslrPreviewStream();
+    }
     const resolvedPrinter = printerName ?? (manualPrinter.trim() || null);
     const settings: BoothHardwareSettings = {
       cameraDeviceId: deviceId,
@@ -309,6 +655,22 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       else          sessionStorage.removeItem("booth_camera_deviceId");
       sessionStorage.setItem("booth_camera_mirror", String(mirror));
       sessionStorage.setItem("booth_camera_source", captureSource);
+      if (captureSource !== "dslr") {
+        sessionStorage.removeItem("booth_dslr_stream_release_until");
+      }
+      if (captureSource === "dslr") {
+        if (agentBase) sessionStorage.setItem("booth_agent_base", agentBase);
+        sessionStorage.setItem("booth_dslr_available", String(dslrCameras.length > 0));
+        sessionStorage.setItem("booth_dslr_model", dslrCameras[0]?.model ?? "Canon DSLR");
+        sessionStorage.setItem("booth_dslr_supports_capture", String(dslrCapabilities?.supportsCapture !== false));
+        sessionStorage.setItem("booth_dslr_supports_live_view", String(dslrCapabilities?.supportsLiveView !== false));
+      } else {
+        sessionStorage.removeItem("booth_agent_base");
+        sessionStorage.removeItem("booth_dslr_available");
+        sessionStorage.removeItem("booth_dslr_model");
+        sessionStorage.removeItem("booth_dslr_supports_capture");
+        sessionStorage.removeItem("booth_dslr_supports_live_view");
+      }
     } catch {
       // Ignore storage quota issues; runtime state remains in memory.
     }
@@ -325,11 +687,15 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   };
 
   const handleRefreshPrinter = () => {
-    if (!printerName && printers.length > 0) {
-      setPrinterName(printers[0]);
-    }
-    window.print();
+    void checkAgent();
   };
+
+  const dslrSelectedAndReady = captureSource === "dslr" && agentOnline === true && dslrCameras.length > 0;
+  const canStartBooth = dslrSelectedAndReady || (!camLoading && !camError);
+  const setupDslrUsesIpcPreview = typeof window !== "undefined" && Boolean(window.fremioBooth?.agentPreview);
+  const setupDslrPreviewSrc = setupDslrUsesIpcPreview
+    ? dslrPreviewFrameSrc
+    : (typeof window !== "undefined" ? window.fremioBooth?.agentPreviewStreamUrl?.(dslrPreviewKey) : undefined) ?? (agentBase ? `${agentBase}/preview-stream?t=${dslrPreviewKey}` : null);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render
@@ -369,12 +735,49 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             {/* Preview — fixed height */}
             <div className="relative bg-black" style={{ height: "200px" }}>
               {captureSource === "dslr" ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
-                  <span className="text-2xl">📷</span>
-                  <p className="text-xs" style={{ color: textSecondary }}>
-                    DSLR dipilih. Live preview tampil di sesi foto, bukan di halaman setup.
-                  </p>
-                </div>
+                (agentBase || setupDslrUsesIpcPreview) && dslrPreviewActive ? (
+                  <>
+                    {setupDslrPreviewSrc ? (
+                      <img
+                        ref={dslrPreviewImgRef}
+                        key={setupDslrUsesIpcPreview ? "ipc-preview" : dslrPreviewKey}
+                        src={setupDslrPreviewSrc}
+                        alt="Canon live preview"
+                        className="w-full h-full object-cover"
+                        style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+                        onLoad={() => setDslrPreviewError(null)}
+                        onError={() => setDslrPreviewError("Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.")}
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                        <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Menyiapkan live view Canon…</p>
+                      </div>
+                    )}
+                    {dslrPreviewError && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/70">
+                        <span className="text-2xl">📷</span>
+                        <p className="text-xs" style={{ color: textSecondary }}>{dslrPreviewError}</p>
+                        <button
+                          onClick={() => {
+                            setDslrPreviewError(null);
+                            setDslrPreviewKey(Date.now());
+                          }}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold"
+                          style={{ backgroundColor: accentColor, color: primaryColor }}
+                        >
+                          Coba Live View Lagi
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+                    <span className="text-2xl">📷</span>
+                    <p className="text-xs" style={{ color: textSecondary }}>
+                      Canon dipilih. Kamera siap untuk capture, tetapi live view belum tersedia.
+                    </p>
+                  </div>
+                )
               ) : camError ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
                   <span className="text-2xl">📷</span>
@@ -417,7 +820,10 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               )}
               <div className="space-y-1.5">
                 <button
-                  onClick={() => setCaptureSource("webcam")}
+                  onClick={() => {
+                    setCaptureSource("webcam");
+                    startCamera(deviceId);
+                  }}
                   className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
                   style={{
                     background: captureSource === "webcam" ? `${accentColor}22` : surfaceBg,
@@ -458,11 +864,17 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             <div className="flex items-center justify-between">
               <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>KAMERA DSLR / MIRRORLESS</p>
               <div className="flex items-center gap-1.5">
-                {agentOnline === true && dslrCameras.length > 0 && (
+                {dslrCameras.length > 0 && (
                   <>
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/50 text-green-400">
-                      ✓ {dslrCameras.length} Terdeteksi
-                    </span>
+                    {agentOnline === true ? (
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/50 text-green-400">
+                        ✓ {dslrCameras.length} Terdeteksi
+                      </span>
+                    ) : agentOnline === null ? (
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: surfaceBg, color: textTertiary }}>
+                        Memverifikasi…
+                      </span>
+                    ) : null}
                     {dslrCapabilities?.mode === "capture-only" && (
                       <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "rgba(234,179,8,0.15)", color: "#fde047" }}>
                         Capture-only
@@ -475,7 +887,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                     )}
                   </>
                 )}
-                {agentOnline === true && dslrCameras.length === 0 && (
+                {dslrCameras.length === 0 && (
                   <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: surfaceBg, color: textTertiary }}>Belum ada</span>
                 )}
                 <button
@@ -490,12 +902,19 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             </div>
 
             {/* Daftar kamera terdeteksi */}
-            {agentOnline === true && dslrCameras.length > 0 && (
+            {dslrCameras.length > 0 && (
               <div className="space-y-1">
                 {dslrCameras.map((cam, i) => (
                   <button
                     key={i}
-                    onClick={() => setCaptureSource("dslr")}
+                    onClick={() => {
+                      stopCameraPreview();
+                      setDslrPreviewActive(true);
+                      setDslrPreviewError(null);
+                      setDslrPreviewKey(Date.now());
+                      setCaptureSource("dslr");
+                      setMirror(true); // Auto-enable mirror for Canon
+                    }}
                     className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
                     style={{
                       background: captureSource === "dslr" ? `${accentColor}22` : `${accentColor}15`,
@@ -516,64 +935,6 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               </div>
             )}
 
-            {/* Tutorial cara hubungkan DSLR */}
-            <div className="rounded-xl px-3 py-3 space-y-2.5"
-              style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${surfaceBorder}` }}>
-              <p className="text-xs font-bold" style={{ color: textPrimary }}>📸 Cara Hubungkan Kamera DSLR / Mirrorless</p>
-              <ol className="space-y-2 text-[11px] leading-relaxed" style={{ color: textSecondary }}>
-                <li>
-                  <span className="font-semibold" style={{ color: textPrimary }}>1. Buka Studio Booth App (agent auto-start)</span><br/>
-                  Versi terbaru app akan menyalakan hardware agent lokal otomatis di background (<strong>127.0.0.1:7432</strong>) saat aplikasi dibuka.
-                </li>
-                <li>
-                  <span className="font-semibold" style={{ color: textPrimary }}>2. Hubungkan kamera via kabel USB</span><br/>
-                  Gunakan kabel USB bawaan kamera (biasanya USB-A ke Mini-USB atau Micro-USB).
-                </li>
-                <li>
-                  <span className="font-semibold" style={{ color: textPrimary }}>3. Set mode kamera ke PTP / PC Remote</span><br/>
-                  Di menu kamera: <em>Connection → PC Remote</em> atau <em>USB → PTP / Transfer Mode</em>.<br/>
-                  <span style={{ color: textTertiary }}>&#9888; Jangan pilih MTP / Mass Storage — mode itu tidak didukung.</span>
-                </li>
-                <li>
-                  <span className="font-semibold" style={{ color: textPrimary }}>4. Khusus Mac — matikan PTPCamera daemon</span><br/>
-                  macOS secara otomatis mengklaim kamera. Buka Terminal, ketik:<br/>
-                  <code className="px-1.5 py-0.5 rounded text-[10px] font-mono" style={{ background: "rgba(255,255,255,0.1)", color: textPrimary }}>sudo killall PTPCamera</code>
-                </li>
-                <li>
-                  <span className="font-semibold" style={{ color: textPrimary }}>5. Verifikasi status agent lalu klik “Coba Lagi”</span><br/>
-                  Pastikan <strong>http://127.0.0.1:7432/status</strong> bisa dibuka dan kamera terdeteksi, lalu refresh deteksi di halaman booth.
-                </li>
-              </ol>
-              <div className="pt-1 space-y-1.5">
-                <p className="text-[10px] font-semibold" style={{ color: textTertiary }}>Kamera yang didukung (via gphoto2):</p>
-                <div className="flex flex-wrap gap-1">
-                  {["Canon EOS", "Canon PowerShot", "Nikon D / Z", "Fujifilm X", "Sony Alpha", "Olympus OM-D", "Panasonic Lumix"].map(brand => (
-                    <span key={brand} className="px-2 py-0.5 rounded-full text-[10px]"
-                      style={{ background: "rgba(255,255,255,0.08)", color: textSecondary }}>
-                      {brand}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              {agentOnline === false && (
-                <div className="rounded-xl px-2.5 py-2 text-[10px]"
-                  style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.3)", color: "#fde047" }}>
-                  ⚠️ Agent DSLR belum aktif. Jalankan hardware agent lokal di 127.0.0.1:7432, lalu klik Coba Lagi.
-                </div>
-              )}
-              {agentOnline === true && dslrCameras.length === 0 && (
-                <div className="rounded-xl px-2.5 py-2 text-[10px]"
-                  style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.3)", color: "#fde047" }}>
-                  ⚠️ Agent aktif tapi kamera belum terdeteksi. Pastikan kabel USB terpasang, kamera menyala, dan mode diset ke PTP.
-                </div>
-              )}
-              {agentOnline === true && dslrCapabilities?.mode === "capture-only" && (
-                <div className="rounded-xl px-2.5 py-2 text-[10px]"
-                  style={{ background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.3)", color: "#bfdbfe" }}>
-                  ℹ️ Kamera terdeteksi di mode capture-only. Live preview mungkin tidak tersedia, tetapi tombol Ambil Foto tetap akan men-trigger shutter DSLR.
-                </div>
-              )}
-            </div>
           </div>
         )}
 
@@ -595,8 +956,67 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               {printerName
                 ? `Printer aktif: ${printerName}`
                 : printers.length > 0
-                  ? `Printer terdeteksi: ${printers[0]}`
-                  : "Belum ada printer terdeteksi."}
+                  ? "Menggunakan printer default / dialog printer"
+                  : manualPrinter.trim()
+                    ? `Printer manual: ${manualPrinter.trim()}`
+                    : "Menggunakan printer default / dialog printer"}
+            </div>
+
+            <div className="space-y-1.5">
+              <button
+                onClick={() => {
+                  setPrinterName(null);
+                  setManualPrinter("");
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
+                style={{
+                  background: !printerName && !manualPrinter.trim() ? `${accentColor}22` : "transparent",
+                  border: !printerName && !manualPrinter.trim() ? `1.5px solid ${accentColor}` : `1.5px solid ${surfaceBorder}`,
+                  color: !printerName && !manualPrinter.trim() ? accentColor : textPrimary,
+                }}
+              >
+                <span>🖨️</span>
+                <span className="flex-1 truncate">Printer Default / Dialog Printer</span>
+                {!printerName && !manualPrinter.trim() && <span className="font-bold">✓ Dipilih</span>}
+              </button>
+
+              {printers.map((name) => (
+                <button
+                  key={name}
+                  onClick={() => {
+                    setPrinterName(name);
+                    setManualPrinter(name);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
+                  style={{
+                    background: printerName === name ? `${accentColor}22` : "transparent",
+                    border: printerName === name ? `1.5px solid ${accentColor}` : `1.5px solid ${surfaceBorder}`,
+                    color: printerName === name ? accentColor : textPrimary,
+                  }}
+                >
+                  <span>🖨️</span>
+                  <span className="flex-1 truncate">{name}</span>
+                  {printerName === name && <span className="font-bold">✓ Dipilih</span>}
+                </button>
+              ))}
+
+              {printers.length === 0 && (
+                <input
+                  value={manualPrinter}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setManualPrinter(value);
+                    setPrinterName(value.trim() ? value.trim() : null);
+                  }}
+                  placeholder="Ketik nama printer manual"
+                  className="w-full px-2.5 py-2 rounded-xl text-xs outline-none"
+                  style={{
+                    background: surfaceBg,
+                    border: `1.5px solid ${surfaceBorder}`,
+                    color: textPrimary,
+                  }}
+                />
+              )}
             </div>
           </div>
 
@@ -642,11 +1062,15 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         {/* ── CTA ──────────────────────────────────────────────────────────── */}
         <button
           onClick={handleDone}
-          disabled={camLoading || !!camError}
+          disabled={!canStartBooth}
           className="w-full py-4 rounded-3xl text-xl font-black active:scale-95 transition-all disabled:opacity-40"
           style={{ backgroundColor: accentColor, color: primaryColor }}
         >
-          {camLoading ? "Memuat kamera…" : "▶ Mulai Booth"}
+          {captureSource === "dslr" && !dslrSelectedAndReady
+            ? "Menunggu Canon terdeteksi…"
+            : camLoading && captureSource !== "dslr"
+              ? "Memuat kamera…"
+              : "▶ Mulai Booth"}
         </button>
 
         <button onClick={handleReset}

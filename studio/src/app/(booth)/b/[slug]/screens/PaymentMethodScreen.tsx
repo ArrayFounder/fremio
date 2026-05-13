@@ -18,6 +18,7 @@ function useIsPortrait() {
 interface PaymentMethodScreenProps {
   booth:           BoothConfigData;
   onSelect:        (method: PaymentMethod) => void;
+  onBack?:         () => void;
   prefsOverride?:  WelcomeScreenPrefs | null;
 }
 
@@ -175,7 +176,7 @@ function CardsBold({ methods, onSelect, isPortrait }: {
   );
 }
 
-export function PaymentMethodScreen({ booth, onSelect, prefsOverride }: PaymentMethodScreenProps) {
+export function PaymentMethodScreen({ booth, onSelect, onBack, prefsOverride }: PaymentMethodScreenProps) {
   const prefs = getEffectivePrefs(booth, prefsOverride);
   const { accentColor } = booth;
   const isPortrait = useIsPortrait();
@@ -196,6 +197,22 @@ export function PaymentMethodScreen({ booth, onSelect, prefsOverride }: PaymentM
 
   return (
     <div className="flex flex-col h-full px-8 py-10 select-none" style={{ backgroundColor: bgColor }}>
+      {/* Back button */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="self-start rounded-full p-3 active:scale-95 transition-transform shadow-lg mb-4"
+          style={{
+            backgroundColor: light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.2)",
+            color: textPrimary,
+          }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+      )}
+      
       {/* Header */}
       <div className={`text-center ${isPortrait ? "mb-6" : "mb-10"}`}>
         <h2 className={`font-black ${isPortrait ? "text-3xl" : "text-4xl"}`} style={{ color: textPrimary }}>

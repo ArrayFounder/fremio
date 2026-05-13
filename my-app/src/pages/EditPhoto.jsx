@@ -1877,10 +1877,20 @@ export default function EditPhoto() {
           console.log("   frameConfig from localStorage:", !!config, config?.id);
         }
 
+        if (!activeDraftId && config?.__draftId) {
+          activeDraftId = config.__draftId;
+          console.log("🔄 Recovered activeDraftId from frameConfig.__draftId:", activeDraftId);
+          try {
+            userStorage.setItem("activeDraftId", activeDraftId);
+          } catch {
+            // ignore storage write failures
+          }
+        }
+
         // PRIORITY 2.5: If config is a lightweight ref (__draftId set but no designer.elements),
         // load the full config from IndexedDB right now so overlay elements are not lost.
         // This fires when activateDraftFrame stored only a lightweight ref to avoid QuotaExceededError.
-        if (config?.__draftId && !config.designer?.elements?.length && activeDraftId) {
+        if (config?.__draftId && !config.designer?.elements?.length) {
           console.log("🔄 [EditPhoto] Lightweight ref detected — loading full config from IndexedDB...");
           try {
             const draft = await loadDraftForRecovery();
@@ -2613,21 +2623,12 @@ export default function EditPhoto() {
             const totalSlots = photoElements.length;
             const totalPhotos = resolvedPhotos.length;
             
-<<<<<<< HEAD
             // NEW: If slot has explicit photoIndex within range, use it directly.
             // This is the frame-driven duplicate system: photoIndex encodes which unique
             // captured photo (by capture order / slot number) belongs in each slot.
             // Both left and right column slots that share a slotNumber share the same
             // photoIndex, so the same photo renders in both positions.
             if (typeof photoEl.data?.photoIndex === 'number' && totalPhotos > 0 && photoIndex < totalPhotos) {
-=======
-            // SEQUENTIAL when: (a) user explicitly disabled duplicate mode, OR
-            //                  (b) enough unique photos were taken for every slot.
-            if (userExplicitlyDisabledDuplicate || (totalPhotos > 0 && totalPhotos >= totalSlots)) {
-              effectivePhotoIndex = idx;
-              console.log(`📋 Slot ${idx}: sequential mapping (${totalPhotos} photos ≥ ${totalSlots} slots) → photoIndex ${idx}`);
-            } else if (typeof photoEl.data?.photoIndex === 'number' && totalPhotos > 0 && photoIndex < totalPhotos) {
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
               effectivePhotoIndex = photoIndex;
               console.log(`🎯 Slot ${idx}: using explicit photoIndex ${effectivePhotoIndex}`);
             } else if (totalPhotos > 0 && totalSlots > totalPhotos) {

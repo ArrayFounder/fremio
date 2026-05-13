@@ -19,10 +19,7 @@ import FrameBuilder from "./pages/FrameBuilder.jsx";
 import Create from "./pages/Create.jsx";
 import CreateHub from "./pages/CreateHub.jsx";
 import Shares from "./pages/Shares.jsx";
-<<<<<<< HEAD
-=======
 import Event from "./pages/Event.jsx";
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 import SharedFrame from "./pages/SharedFrame.jsx";
 import SharedGroup from "./pages/SharedGroup.jsx";
 import NotFound from "./pages/NotFound.jsx";
@@ -66,13 +63,9 @@ import AdminSubscribers from "./pages/admin/AdminSubscribers.jsx";
 import AdminDesignerSubmissions from "./pages/admin/AdminDesignerSubmissions.jsx";
 import AdminDesignerWallet from "./pages/admin/AdminDesignerWallet.jsx";
 import AdminShareLinks from "./pages/admin/AdminShareLinks.jsx";
-<<<<<<< HEAD
 import AdminStudioBoothControl from "./pages/admin/AdminStudioBoothControl.jsx";
-=======
 import AdminEventSubmissions from "./pages/admin/AdminEventSubmissions.jsx";
-import AdminStudioBoothControl from "./pages/admin/AdminStudioBoothControl.jsx";
 import AdminStudioOwners from "./pages/admin/AdminStudioOwners.jsx";
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
 // Designer Pages
 import DesignerLanding from "./pages/designer/DesignerLanding.jsx";
@@ -181,10 +174,7 @@ export default function App() {
             <Route path="photobooth" element={<PhotoboxOnline />} />
             <Route path="frames" element={<Frames />} />
             <Route path="shares" element={<Shares />} />
-<<<<<<< HEAD
-=======
             <Route path="event" element={<Event />} />
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
             {/* Certificate verification — public, no auth required */}
             <Route path="verify/:certId" element={<VerifyCertificate />} />
@@ -291,13 +281,10 @@ export default function App() {
             <Route path="designer-submissions" element={<AdminDesignerSubmissions />} />
             <Route path="designer-wallets" element={<AdminDesignerWallet />} />
             <Route path="share-links" element={<AdminShareLinks />} />
-<<<<<<< HEAD
-=======
-            <Route path="event-submissions" element={<AdminEventSubmissions />} />
-            <Route path="studio-owners" element={<AdminStudioOwners />} />
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
             <Route path="studio-booths" element={<AdminStudioBoothControl />} />
             <Route path="studio-booths/editor" element={<AdminFrameCreator studioBoothMode />} />
+            <Route path="studio-owners" element={<AdminStudioOwners />} />
+            <Route path="event-submissions" element={<AdminEventSubmissions />} />
             <Route path="settings" element={<AdminSettings />} />
           </Route>
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeImportedSlots } from "@/lib/fremioSlots";
 
 const FREMIO_API = "https://fremio.id/api";
 const SLOT_DUPLICATE_TOLERANCE = 0.5;
@@ -17,6 +18,31 @@ function toAbsoluteFremioUrl(input: string | null | undefined): string {
 function toFiniteNumber(value: unknown, fallback = 0): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function normalizeSlotMetric(value: unknown, canvasSize: number): number {
+  const numeric = toFiniteNumber(value, 0);
+  if (numeric <= 0) return 0;
+  // Legacy format sering menyimpan slot dalam pixel (basis canvas).
+  // Format baru menyimpan normalized unit (0-1).
+  const normalized = numeric > 1 ? numeric / Math.max(canvasSize, 1) : numeric;
+  return clampUnit(normalized);
+}
+
+function resolveSlotPhotoIndex(slot: Record<string, unknown>, fallbackIndex: number): number {
+  const candidates = [slot.photoIndex, slot.slotIndex, slot.index];
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallbackIndex;
 }
 
 function areClose(left: unknown, right: unknown, tolerance = SLOT_DUPLICATE_TOLERANCE): boolean {
@@ -176,32 +202,98 @@ export async function GET(
           .map((slot, index) => {
             if (!slot || typeof slot !== "object") return null;
 
-            const normalizedWidth = toFiniteNumber((slot as Record<string, unknown>).width, 0);
-            const normalizedHeight = toFiniteNumber((slot as Record<string, unknown>).height, 0);
+            const slotObject = slot as Record<string, unknown>;
+            const slotData = (slotObject.data as Record<string, unknown>) ?? {};
+            const normalizedWidth = normalizeSlotMetric(slotObject.width ?? slotObject.w ?? slotData.width ?? slotData.w, canvasWidth);
+            const normalizedHeight = normalizeSlotMetric(slotObject.height ?? slotObject.h ?? slotData.height ?? slotData.h, canvasHeight);
 
             if (normalizedWidth <= 0 || normalizedHeight <= 0) {
               return null;
             }
 
             return {
-              top: toFiniteNumber((slot as Record<string, unknown>).top, 0),
-              left: toFiniteNumber((slot as Record<string, unknown>).left, 0),
+              top: normalizeSlotMetric(slotObject.top ?? slotObject.y ?? slotData.top ?? slotData.y, canvasHeight),
+              left: normalizeSlotMetric(slotObject.left ?? slotObject.x ?? slotData.left ?? slotData.x, canvasWidth),
               width: normalizedWidth,
               height: normalizedHeight,
-              photoIndex: Number.isFinite((slot as Record<string, unknown>).photoIndex)
-                ? Number((slot as Record<string, unknown>).photoIndex)
-                : index,
-              borderRadius: toFiniteNumber((slot as Record<string, unknown>).borderRadius, 0),
-              rotation: toFiniteNumber((slot as Record<string, unknown>).rotation, 0),
-              zIndex: toFiniteNumber((slot as Record<string, unknown>).zIndex, 0),
+              photoIndex: resolveSlotPhotoIndex(slotObject, index),
+              borderRadius: toFiniteNumber(slotObject.borderRadius ?? slotData.borderRadius, 0),
+              rotation: toFiniteNumber(slotObject.rotation ?? slotData.rotation, 0),
+              zIndex: toFiniteNumber(slotObject.zIndex ?? slotData.zIndex, 0),
             } satisfies NormalizedSlot;
           })
           .filter((slot): slot is NormalizedSlot => Boolean(slot))
       : [];
 
+    const normalizedSlotsFromLayout = normalizeImportedSlots(
+      (frameData as {
+        slots?: unknown;
+        photoSlots?: unknown;
+        photoAreas?: unknown;
+        data?: { slots?: unknown; photoSlots?: unknown; photoAreas?: unknown } | null;
+      }).slots
+      ?? (frameData as {
+        slots?: unknown;
+        photoSlots?: unknown;
+        photoAreas?: unknown;
+        data?: { slots?: unknown; photoSlots?: unknown; photoAreas?: unknown } | null;
+      }).photoSlots
+      ?? (frameData as {
+        slots?: unknown;
+        photoSlots?: unknown;
+        photoAreas?: unknown;
+        data?: { slots?: unknown; photoSlots?: unknown; photoAreas?: unknown } | null;
+      }).photoAreas
+      ?? (frameData as {
+        slots?: unknown;
+        photoSlots?: unknown;
+        photoAreas?: unknown;
+        data?: { slots?: unknown; photoSlots?: unknown; photoAreas?: unknown } | null;
+      }).data?.slots
+      ?? (frameData as {
+        slots?: unknown;
+        photoSlots?: unknown;
+        photoAreas?: unknown;
+        data?: { slots?: unknown; photoSlots?: unknown; photoAreas?: unknown } | null;
+      }).data?.photoSlots
+      ?? (frameData as {
+        slots?: unknown;
+        photoSlots?: unknown;
+        photoAreas?: unknown;
+        data?: { slots?: unknown; photoSlots?: unknown; photoAreas?: unknown } | null;
+      }).data?.photoAreas
+      ?? null,
+      Math.max(
+        1,
+        toFiniteNumber(
+          (draft as { maxCaptures?: unknown } | null)?.maxCaptures
+          ?? (frameData as { maxCaptures?: unknown } | null)?.maxCaptures,
+          1,
+        ),
+      ),
+      {
+        canvasWidth,
+        canvasHeight,
+        layout: frameData,
+      }
+    );
+
     // Extract photo slots (type === "photo"), sorted top-to-bottom then left-to-right
     const photoEls = dedupePhotoElements(
-      elements.filter((el) => el?.type === "photo")
+      elements.filter((el) => {
+        const type = String(el?.type ?? "").toLowerCase();
+        const dataObj = (el?.data as Record<string, unknown>) ?? {};
+        const hasPhotoIndex = Number.isFinite(Number(dataObj.photoIndex));
+        const hasSlotMarker = dataObj.slotNumber !== undefined || dataObj.isPhotoSlot === true || dataObj.isPhotoArea === true;
+        const rawImage =
+          (typeof dataObj.image === "string" ? dataObj.image : "") ||
+          (typeof el?.src === "string" ? String(el.src) : "");
+        const hasSourceImage = rawImage.trim().length > 0;
+
+        if (type === "photo" || type === "photo-slot" || type === "photo_area") return true;
+        if (type === "background-photo" && (hasPhotoIndex || hasSlotMarker || !hasSourceImage)) return true;
+        return false;
+      })
     )
       .sort((a, b) => {
         const dy = (Number(a.y) || 0) - (Number(b.y) || 0);
@@ -209,10 +301,10 @@ export async function GET(
       });
 
     const derivedSlots = photoEls.map((el, i) => ({
-      top:         (Number(el.y)      || 0) / canvasHeight,
-      left:        (Number(el.x)      || 0) / canvasWidth,
-      width:       (Number(el.width)  || 200) / canvasWidth,
-      height:      (Number(el.height) || 200) / canvasHeight,
+      top:         normalizeSlotMetric(el.y ?? el.top, canvasHeight),
+      left:        normalizeSlotMetric(el.x ?? el.left, canvasWidth),
+      width:       normalizeSlotMetric(el.width ?? el.w ?? 200, canvasWidth),
+      height:      normalizeSlotMetric(el.height ?? el.h ?? 200, canvasHeight),
       photoIndex:  (el.data as Record<string, unknown>)?.photoIndex !== undefined
                      ? Number((el.data as Record<string, unknown>).photoIndex)
                      : i,
@@ -225,7 +317,9 @@ export async function GET(
     } satisfies NormalizedSlot));
 
     const slots = dedupeNormalizedSlots(
-      explicitSlots.length > 0 ? explicitSlots : derivedSlots
+      normalizedSlotsFromLayout.length > 0
+        ? normalizedSlotsFromLayout
+        : (explicitSlots.length > 0 ? explicitSlots : derivedSlots)
     ).sort((a, b) => {
       if (a.photoIndex !== b.photoIndex) return a.photoIndex - b.photoIndex;
       const dy = a.top - b.top;
@@ -240,6 +334,14 @@ export async function GET(
       .map((el) => {
         const type = String(el.type ?? "upload") as "background-photo" | "upload" | "text" | "shape";
         const dataObj = (el.data as Record<string, unknown>) ?? {};
+        const textValue =
+          typeof dataObj.text === "string" ? dataObj.text :
+          typeof el.text === "string" ? el.text :
+          typeof dataObj.content === "string" ? dataObj.content :
+          typeof el.content === "string" ? el.content :
+          typeof dataObj.value === "string" ? dataObj.value :
+          typeof el.value === "string" ? el.value :
+          undefined;
         const rawImage =
           (typeof dataObj.image === "string" ? dataObj.image : "") ||
           (typeof el.src === "string" ? (el.src as string) : "");
@@ -265,17 +367,31 @@ export async function GET(
               : type === "background-photo"
                 ? "fill"
                 : "contain",
-          text: typeof dataObj.text === "string" ? dataObj.text : undefined,
+          text: textValue,
           align:
             dataObj.align === "left" || dataObj.align === "right" || dataObj.align === "center"
               ? dataObj.align
-              : "center",
-          color: typeof dataObj.color === "string" ? dataObj.color : undefined,
-          fontSize: Number(dataObj.fontSize || 0) / canvasHeight,
-          fontFamily: typeof dataObj.fontFamily === "string" ? dataObj.fontFamily : undefined,
+              : el.align === "left" || el.align === "right" || el.align === "center"
+                ? el.align
+                : dataObj.textAlign === "left" || dataObj.textAlign === "right" || dataObj.textAlign === "center"
+                  ? dataObj.textAlign
+                  : el.textAlign === "left" || el.textAlign === "right" || el.textAlign === "center"
+                    ? el.textAlign
+                    : "center",
+          color:
+            typeof dataObj.color === "string" ? dataObj.color :
+            typeof el.color === "string" ? el.color :
+            undefined,
+          fontSize: Number(dataObj.fontSize ?? el.fontSize ?? 0) / canvasHeight,
+          fontFamily:
+            typeof dataObj.fontFamily === "string" ? dataObj.fontFamily :
+            typeof el.fontFamily === "string" ? el.fontFamily :
+            undefined,
           fontWeight:
             typeof dataObj.fontWeight === "number" || typeof dataObj.fontWeight === "string"
               ? dataObj.fontWeight
+              : typeof el.fontWeight === "number" || typeof el.fontWeight === "string"
+                ? el.fontWeight
               : undefined,
           fill: typeof dataObj.fill === "string" ? dataObj.fill : undefined,
           stroke: typeof dataObj.stroke === "string" ? dataObj.stroke : null,

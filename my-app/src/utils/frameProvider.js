@@ -29,46 +29,17 @@ const isCustomFrameId = (frameName) => {
   return frameName.startsWith(CUSTOM_FRAME_PREFIX) || isUUID(frameName);
 };
 
-<<<<<<< HEAD
 const normalizeSlotsWithMaps = (slots) => {
   const sourceSlots = Array.isArray(slots) ? slots : [];
   const { slotNumberMap, photoIndexMap, mode } = buildSlotMaps(sourceSlots);
-=======
-const normalizeSlotsWithMaps = (slots, options = {}) => {
-  const sourceSlots = Array.isArray(slots) ? slots : [];
-  const { slotNumberMap, photoIndexMap, mode } = buildSlotMaps(sourceSlots);
-  const explicitDuplicatePhotos =
-    typeof options.duplicatePhotos === "boolean" ? options.duplicatePhotos : null;
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 
   return {
     slots: sourceSlots.map((slot, index) => ({
       ...slot,
-<<<<<<< HEAD
       slotNumber: slotNumberMap[index] ?? index + 1,
       photoIndex: photoIndexMap[index] ?? index,
     })),
     duplicatePhotos: mode === "duplicate",
-=======
-      slotNumber:
-        // Only preserve stored slotNumber for explicit duplicate frames.
-        // For sequential frames the stored values may be mirror-mapped (from geometry detection).
-        explicitDuplicatePhotos === true
-          ? (Number.isFinite(slot?.slotNumber) ? slot.slotNumber : slotNumberMap[index] ?? index + 1)
-          : index + 1,
-      photoIndex:
-        // Only preserve stored photoIndex for EXPLICIT duplicate frames.
-        // The studio booth sync may have written mirror-mapped [0,1,1,0] values.
-        // When duplicatePhotos is not explicitly true, always use sequential [0,1,2,...].
-        explicitDuplicatePhotos === true
-          ? (Number.isFinite(slot?.photoIndex) ? slot.photoIndex : photoIndexMap[index] ?? index)
-          : index,
-    })),
-    duplicatePhotos:
-      explicitDuplicatePhotos !== null
-        ? explicitDuplicatePhotos
-        : mode === "duplicate",
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
   };
 };
 
@@ -132,13 +103,7 @@ export class FrameDataProvider {
       }
 
       if (hasSlots) {
-<<<<<<< HEAD
         const normalized = normalizeSlotsWithMaps(frameData.slots);
-=======
-        const normalized = normalizeSlotsWithMaps(frameData.slots, {
-          duplicatePhotos: frameData.duplicatePhotos,
-        });
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         frameData = {
           ...frameData,
           slots: normalized.slots,
@@ -785,7 +750,15 @@ export class FrameDataProvider {
       let configSaved = false;
 
       if (isCustomFrame) {
-        const linkedDraftId = config?.metadata?.draftId || userStorage.getItem("activeDraftId");
+        const metadataDraftId = config?.metadata?.draftId;
+        const storedActiveDraftId = userStorage.getItem("activeDraftId");
+        const canUseStoredDraftFallback =
+          !metadataDraftId &&
+          !config?.designer?.elements?.length &&
+          Boolean(storedActiveDraftId);
+        const linkedDraftId =
+          metadataDraftId ||
+          (canUseStoredDraftFallback ? storedActiveDraftId : null);
 
         if (linkedDraftId) {
           // Lightweight reference only — full data lives in IndexedDB

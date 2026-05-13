@@ -4,6 +4,40 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { getAdaptiveColors } from "../colorUtils";
 import type { BoothConfigData, FrameData } from "../types";
 
+const RAW_SHARE_ID_RE = /^[a-zA-Z0-9_-]{4,64}$/;
+
+function parseShareIdFromInput(rawValue: string): string | null {
+  const value = String(rawValue || "").trim();
+  if (!value) return null;
+
+  const directMatch = value.match(/(?:^|[?&])share=([a-zA-Z0-9_-]{4,64})(?:$|&)/i);
+  if (directMatch?.[1]) return directMatch[1];
+
+  try {
+    const decoded = decodeURIComponent(value);
+    const decodedMatch = decoded.match(/(?:^|[?&])share=([a-zA-Z0-9_-]{4,64})(?:$|&)/i);
+    if (decodedMatch?.[1]) return decodedMatch[1];
+  } catch {
+    // ignore invalid URI encoding
+  }
+
+  const normalized = value.includes("://") ? value : `https://fremio.id/${value.replace(/^\/+/, "")}`;
+  try {
+    const url = new URL(normalized);
+    const fromParam = url.searchParams.get("share");
+    if (fromParam && RAW_SHARE_ID_RE.test(fromParam)) return fromParam;
+
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const lastSegment = pathSegments[pathSegments.length - 1] || "";
+    if (RAW_SHARE_ID_RE.test(lastSegment)) return lastSegment;
+  } catch {
+    // ignore invalid URL, fallback below
+  }
+
+  if (RAW_SHARE_ID_RE.test(value)) return value;
+  return null;
+}
+
 function useIsPortrait() {
   const [portrait, setPortrait] = useState(false);
   useEffect(() => {
@@ -19,6 +53,7 @@ interface FrameSelectScreenProps {
   booth:    BoothConfigData;
   frames:   FrameData[];
   onSelect: (frame: FrameData) => void;
+  onBack?:  () => void;
 }
 
 /**
@@ -26,7 +61,7 @@ interface FrameSelectScreenProps {
  * Tap untuk preview, tap lagi atau tekan "Pilih" untuk konfirmasi.
  * Hanya menampilkan frame dengan assetUrl nyata (id fremio_ atau assetUrl valid).
  */
-export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreenProps) {
+export function FrameSelectScreen({ booth, frames, onSelect, onBack }: FrameSelectScreenProps) {
   const { primaryColor, accentColor } = booth;
   const bgColor    = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.frameSelectBgColor as string | undefined ?? primaryColor;
   const panelColor  = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.frameSelectPanelColor as string | undefined;
@@ -96,9 +131,8 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
     stopScanner();
     setScanStatus("loading");
     try {
-      const url = new URL(qrValue);
-      const shareId = url.searchParams.get("share");
-      if (!shareId) throw new Error("no share param");
+      const shareId = parseShareIdFromInput(qrValue);
+      if (!shareId) throw new Error("invalid share format");
 
       const res = await fetch(`/api/booth/frame-by-share/${encodeURIComponent(shareId)}`);
       if (!res.ok) throw new Error("frame not found");
@@ -204,6 +238,23 @@ export function FrameSelectScreen({ booth, frames, onSelect }: FrameSelectScreen
         padding: 12,
       }}
     >
+      {/* Back button */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="absolute rounded-full p-3 active:scale-95 transition-transform shadow-lg z-50"
+          style={{
+            left: "2%",
+            top: "2%",
+            backgroundColor: "rgba(0,0,0,0.2)",
+            color: textPrimary,
+          }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+      )}
       {/* ─── PORTRAIT: Kategori horizontal scroll strip ─── */}
       {isPortrait && (
         <div className="shrink-0 flex gap-2 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: "touch" }}>

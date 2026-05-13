@@ -87,9 +87,11 @@ export function buildGifKey(sessionId: string): string {
 
 /**
  * Generate storage key untuk video Live Mode sesi.
- * Format: sessions/{sessionId}/live-{timestamp}.{ext}
+ * Format: sessions/{sessionId}/live-{timestamp}.webm
+ *
+ * Browser MediaRecorder menghasilkan WebM container (VP8/VP9/H.264).
+ * Pakai .webm agar file valid dan nginx serve dengan content-type video/webm.
  */
-export function buildVideoKey(sessionId: string, mimeType = "video/webm"): string {
-  const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  return `sessions/${sessionId}/live-${Date.now()}.${ext}`;
+export function buildVideoKey(sessionId: string): string {
+  return `sessions/${sessionId}/live-${Date.now()}.webm`;
 }

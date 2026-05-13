@@ -6,6 +6,11 @@ import validate from "../middleware/validator.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import pg from "pg";
+import { randomBytes } from "crypto";
+import {
+  isPasswordResetEmailConfigured,
+  sendPasswordResetEmail,
+} from "../services/passwordResetEmailService.js";
 
 const router = express.Router();
 
@@ -770,6 +775,147 @@ router.post("/google", async (req, res) => {
       error: "Login Google gagal. Coba lagi.",
     });
   }
+});
+
+async function handleResetPasswordRequest(req, res) {
+  try {
+    const { email } = req.body || {};
+    if (!email || typeof email !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Email diperlukan",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const userResult = await pool.query(
+      "SELECT id, email FROM users WHERE email = $1 AND is_active = true",
+      [normalizedEmail]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.json({
+        success: true,
+        message: "Jika email terdaftar, instruksi reset password akan dikirim",
+      });
+    }
+
+    const user = userResult.rows[0];
+    const resetToken = randomBytes(32).toString("hex");
+    const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
+
+    await pool.query(
+      "UPDATE users SET reset_token = $1, reset_token_expiry = $2, updated_at = NOW() WHERE id = $3",
+      [resetToken, resetTokenExpiry, user.id]
+    );
+
+    const resetLink = `${req.protocol}://${req.get("host")}/reset-password?token=${resetToken}`;
+    console.log(`🔑 Password reset token for ${user.email}: ${resetToken}`);
+    console.log(`🔗 Reset link: ${resetLink}`);
+
+    if (!isPasswordResetEmailConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Layanan email reset belum dikonfigurasi di server. Hubungi admin.",
+      });
+    }
+
+    const sendResult = await sendPasswordResetEmail({
+      toEmail: user.email,
+      displayName: user.display_name || user.email,
+      resetLink,
+    });
+
+    if (!sendResult.success) {
+      console.error("❌ Failed sending reset password email:", sendResult.error);
+      return res.status(502).json({
+        success: false,
+        message:
+          "Gagal mengirim email reset password. Silakan coba lagi sebentar.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Instruksi reset password telah dikirim ke email Anda",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal memproses permintaan reset password",
+    });
+  }
+}
+
+async function handleResetPasswordConfirm(req, res) {
+  try {
+    const { token, password, newPassword } = req.body || {};
+    const finalPassword = password || newPassword;
+
+    if (!token || !finalPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Token dan password baru diperlukan",
+      });
+    }
+
+    if (String(finalPassword).length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password minimal 6 karakter",
+      });
+    }
+
+    const userResult = await pool.query(
+      "SELECT id, email, reset_token_expiry FROM users WHERE reset_token = $1 AND is_active = true",
+      [token]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Token reset tidak valid atau sudah kadaluarsa",
+      });
+    }
+
+    const user = userResult.rows[0];
+    if (!user.reset_token_expiry || new Date() > new Date(user.reset_token_expiry)) {
+      return res.status(400).json({
+        success: false,
+        message: "Token reset sudah kadaluarsa",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(String(finalPassword), 12);
+    await pool.query(
+      "UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expiry = NULL, updated_at = NOW() WHERE id = $2",
+      [passwordHash, user.id]
+    );
+
+    console.log(`✅ Password reset completed for user: ${user.email}`);
+    return res.json({
+      success: true,
+      message: "Password berhasil direset. Silakan login dengan password baru.",
+    });
+  } catch (error) {
+    console.error("Confirm reset error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mereset password",
+    });
+  }
+}
+
+router.post("/forgot-password", handleResetPasswordRequest);
+router.post("/confirm-reset", handleResetPasswordConfirm);
+router.post("/reset-password", async (req, res) => {
+  const { email, token, password, newPassword } = req.body || {};
+  if (email && !token && !password && !newPassword) {
+    return handleResetPasswordRequest(req, res);
+  }
+  return handleResetPasswordConfirm(req, res);
 });
 
 export default router;

@@ -203,6 +203,19 @@ const AdminFrames = () => {
   const [togglingFlowId, setTogglingFlowId] = useState(null);
   const [movingSourceId, setMovingSourceId] = useState(null);
 
+  const fetchFrames = React.useCallback(async (source = activeSource) => {
+    const data = await unifiedFrameService.getAllFrames({
+      includeHidden: true,
+      throwOnError: true,
+      source,
+    });
+    const sortedData = [...data].sort(
+      (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
+    );
+    setFrames(sortedData);
+    return sortedData;
+  }, [activeSource]);
+
   const getFlowType = (frame) => {
     const raw = frame?.flowType ?? frame?.flow_type;
     const normalized = String(raw || "fixed").toLowerCase().trim();
@@ -214,13 +227,8 @@ const AdminFrames = () => {
       console.log("AdminFrames loading...");
       console.log(`📡 Backend mode: ${unifiedFrameService.isVPSMode() ? 'VPS' : 'Firebase'}`);
       try {
-        const data = await unifiedFrameService.getAllFrames({ includeHidden: true, throwOnError: true });
+        const data = await fetchFrames(activeSource);
         console.log("Frames loaded:", data);
-        // Sort by displayOrder initially
-        const sortedData = [...data].sort(
-          (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-        );
-        setFrames(sortedData);
       } catch (err) {
         console.error("Error:", err);
         alert("Gagal memuat frames dari server. Coba reload halaman / cek koneksi.");
@@ -228,7 +236,7 @@ const AdminFrames = () => {
       setLoading(false);
     };
     loadFrames();
-  }, []);
+  }, [activeSource, fetchFrames]);
 
   const sizeFilteredFrames = React.useMemo(() => {
     const show4R = activeCanvasCategory === "4r";
@@ -496,10 +504,7 @@ const AdminFrames = () => {
       // Reload frames from server to ensure sync.
       // IMPORTANT: do not wipe the UI if the reload fails (network/auth hiccup).
       try {
-        const freshData = await unifiedFrameService.getAllFrames({ includeHidden: true, throwOnError: true });
-        const sortedData = [...freshData].sort(
-          (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-        );
+        const sortedData = await fetchFrames(activeSource);
         if (sortedData.length > 0) {
           setFrames(sortedData);
         }
@@ -522,11 +527,7 @@ const AdminFrames = () => {
         const result = await unifiedFrameService.deleteFrame(frameId);
         if (result.success !== false) {
           // Reload frames from server instead of just filtering
-          const freshData = await unifiedFrameService.getAllFrames({ includeHidden: true });
-          const sortedData = [...freshData].sort(
-            (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-          );
-          setFrames(sortedData);
+          await fetchFrames(activeSource);
           alert("Frame berhasil dihapus!");
         } else {
           alert("Gagal menghapus: " + result.message);
@@ -550,11 +551,7 @@ const AdminFrames = () => {
       }
 
       // Reload frames from server to ensure sync
-      const freshData = await unifiedFrameService.getAllFrames({ includeHidden: true });
-      const sortedData = [...freshData].sort(
-        (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-      );
-      setFrames(sortedData);
+      await fetchFrames(activeSource);
     } catch (err) {
       alert("Gagal mengubah status: " + (err?.message || String(err)));
     } finally {
@@ -575,11 +572,7 @@ const AdminFrames = () => {
       }
 
       // Reload frames from server to ensure sync
-      const freshData = await unifiedFrameService.getAllFrames({ includeHidden: true });
-      const sortedData = [...freshData].sort(
-        (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-      );
-      setFrames(sortedData);
+      await fetchFrames(activeSource);
     } catch (err) {
       alert("Gagal mengubah visibilitas: " + (err?.message || String(err)));
     } finally {
@@ -615,11 +608,7 @@ const AdminFrames = () => {
         throw new Error(result?.message || "Gagal mengubah flow type");
       }
 
-      const freshData = await unifiedFrameService.getAllFrames({ includeHidden: true, throwOnError: true });
-      const sortedData = [...freshData].sort(
-        (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-      );
-      setFrames(sortedData);
+      const sortedData = await fetchFrames(activeSource);
 
       // Verify server actually persisted the change.
       const updated = sortedData.find((f) => f?.id === frame.id);
@@ -651,8 +640,6 @@ const AdminFrames = () => {
   const handleMoveSource = async (frame) => {
     const currentSource = frame.source || 'fremio';
     const newSource = currentSource === 'fremio' ? 'designer' : 'fremio';
-    const label = newSource === 'designer' ? 'By Designer' : 'By Fremio';
-    if (!window.confirm(`Pindahkan frame "${frame.name}" ke ${label}?\n\n${newSource === 'designer' ? 'Frame akan menjadi template — saat digunakan user akan membuka editor/create.' : 'Frame akan menjadi frame siap pakai — saat digunakan user langsung ke take-moment.'}`)) return;
 
     try {
       setMovingSourceId(frame.id);
@@ -661,10 +648,10 @@ const AdminFrames = () => {
         is_template: newSource === 'designer',
         flow_type: newSource === 'designer' ? 'personalized' : 'fixed',
       });
-      if (result?.success === false) throw new Error(result?.message || 'Gagal memindahkan frame');
-      const freshData = await unifiedFrameService.getAllFrames({ includeHidden: true });
-      const sortedData = [...freshData].sort((a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999));
-      setFrames(sortedData);
+      if (result?.success === false) {
+        throw new Error(result?.message || 'Gagal memindahkan frame');
+      }
+      await fetchFrames(activeSource);
     } catch (err) {
       alert('Gagal memindahkan frame: ' + (err?.message || String(err)));
     } finally {
@@ -1168,11 +1155,7 @@ const AdminFrames = () => {
           onClick={async () => {
             setLoading(true);
             try {
-              const freshData = await unifiedFrameService.getAllFrames({ includeHidden: true, throwOnError: true });
-              const sortedData = [...freshData].sort(
-                (a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999)
-              );
-              setFrames(sortedData);
+              await fetchFrames(activeSource);
               alert("✅ Data berhasil dimuat ulang!");
             } catch (err) {
               alert("Gagal memuat ulang: " + err.message);

@@ -69,18 +69,18 @@ export default function PricingPage() {
           </Link>
         </header>
 
-        <section className="mt-10">
+        <section className="mt-10 text-center">
           <p className="inline-flex rounded-full border border-black/20 bg-[#DEB6A9]/40 px-4 py-1 text-xs font-bold uppercase tracking-[0.14em] text-black/80">
             Pricing
           </p>
           <h1 className="mt-4 text-3xl font-black md:text-4xl">Paket Fremio Studio</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-black/70 md:text-base">
+          <p className="mt-3 max-w-2xl mx-auto text-sm leading-relaxed text-black/70 md:text-base">
             Beli kredit untuk mengaktifkan booth tanpa watermark trial. 1 kredit = 1 booth.
           </p>
         </section>
 
-        <section className="mt-8">
-          <article className="max-w-md rounded-3xl border border-black/10 bg-[#DEB6A9] p-6 shadow-sm">
+        <section className="mt-8 flex justify-center">
+          <article className="w-full max-w-md rounded-3xl border border-black/10 bg-[#DEB6A9] p-6 shadow-sm">
             <p className="text-xs font-bold uppercase tracking-[0.12em] text-black/70">Kredit Booth</p>
             <p className="mt-2 text-4xl font-black">{formatRupiah(PRICE_PER_CREDIT)}</p>
             <p className="mt-1 text-sm font-semibold text-black/70">per 1 kredit = 1 booth tanpa watermark</p>
@@ -134,6 +134,27 @@ export default function PricingPage() {
             >
               {loading ? "Memuat..." : `Bayar ${formatRupiah(total)}`}
             </button>
+          </article>
+        </section>
+
+        <section className="mt-8 flex justify-center">
+          <article className="w-full max-w-md rounded-3xl border border-black/10 bg-[#F5F5F5] p-6 shadow-sm">
+            <p className="text-lg font-bold text-black">
+              Photobox seperti apa yang kamu inginkan? Mari bicara
+            </p>
+            <a
+              href="https://instagram.com/fremio.id"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-purple-600 via-pink-600 to-orange-500 px-5 py-2.5 text-sm font-bold text-white transition hover:opacity-90"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+                <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+              </svg>
+              <span>DM @fremio.id</span>
+            </a>
           </article>
         </section>
       </div>

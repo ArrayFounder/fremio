@@ -314,4 +314,117 @@ router.post('/google', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/auth/reset-password
+ * Request password reset email
+ */
+router.post('/reset-password', [
+  body('email').isEmail().normalizeEmail().withMessage('Email tidak valid')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Email tidak valid' });
+    }
+
+    const { email } = req.body;
+    const normalizedEmail = email.toLowerCase();
+
+    // Check if user exists
+    const userResult = await db.query(
+      'SELECT id, email, display_name FROM users WHERE email = $1 AND is_active = true',
+      [normalizedEmail]
+    );
+
+    if (userResult.rows.length === 0) {
+      // Don't reveal if email exists or not for security
+      return res.json({
+        message: 'Jika email terdaftar, instruksi reset password akan dikirim'
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // Generate reset token (valid for 1 hour)
+    const crypto = require('crypto');
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Save reset token to database
+    await db.query(
+      'UPDATE users SET reset_token = $1, reset_token_expiry = $2, updated_at = NOW() WHERE id = $3',
+      [resetToken, resetTokenExpiry, user.id]
+    );
+
+    // TODO: Send email with reset link
+    // For now, just log the token (in production, implement email service)
+    console.log(`🔑 Password reset token for ${user.email}: ${resetToken}`);
+    console.log(`🔗 Reset link: ${req.protocol}://${req.get('host')}/reset-password?token=${resetToken}`);
+
+    res.json({
+      message: 'Instruksi reset password telah dikirim ke email Anda',
+      // Include token in development for testing
+      ...(process.env.NODE_ENV === 'development' && { resetToken })
+    });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Gagal memproses permintaan reset password' });
+  }
+});
+
+/**
+ * POST /api/auth/confirm-reset
+ * Confirm password reset with token
+ */
+router.post('/confirm-reset', [
+  body('token').notEmpty().withMessage('Token diperlukan'),
+  body('password').isLength({ min: 6 }).withMessage('Password minimal 6 karakter')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Token atau password tidak valid' });
+    }
+
+    const { token, password } = req.body;
+
+    // Find user with valid reset token
+    const userResult = await db.query(
+      'SELECT id, email, reset_token_expiry FROM users WHERE reset_token = $1 AND is_active = true',
+      [token]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Token reset tidak valid atau sudah kadaluarsa' });
+    }
+
+    const user = userResult.rows[0];
+
+    // Check if token is still valid
+    if (new Date() > new Date(user.reset_token_expiry)) {
+      return res.status(400).json({ error: 'Token reset sudah kadaluarsa' });
+    }
+
+    // Hash new password
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    // Update password and clear reset token
+    await db.query(
+      'UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expiry = NULL, updated_at = NOW() WHERE id = $2',
+      [passwordHash, user.id]
+    );
+
+    console.log(`✅ Password reset completed for user: ${user.email}`);
+
+    res.json({
+      message: 'Password berhasil direset. Silakan login dengan password baru.'
+    });
+
+  } catch (error) {
+    console.error('Confirm reset error:', error);
+    res.status(500).json({ error: 'Gagal mereset password' });
+  }
+});
+
 module.exports = router;

@@ -82,6 +82,7 @@ model Operator {
   dokuClientId       String?
   /// Doku Secret Key
   dokuSecretKey      String?
+  paymentGateway     String           @default("MIDTRANS")
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -128,6 +129,8 @@ model BoothConfig {
   timerDeliverySeconds        Int      @default(150)
   /// Booth ini menggunakan 1 kredit operator (menghilangkan watermark trial)
   usesCredit             Boolean  @default(false)
+  /// Mode sesi foto: live_view (default) atau fullscreen
+  photoSessionMode       String   @default("live_view")
   isActive               Boolean  @default(true)
   /// Tanggal terakhir slug booth diubah (batasi 1 kali per hari)
   slugUpdatedAt          DateTime?

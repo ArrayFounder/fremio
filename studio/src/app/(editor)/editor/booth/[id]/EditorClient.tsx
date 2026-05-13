@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type EditTarget = "background" | "tutorial_background" | "cta" | "tutorial_header" | "tutorial_steps" | "tutorial_cta" | "tutorial_timer" | "payment_background" | "frame_select_bg" | "frame_select_panel" | "camera_bg" | "delivery_bg" | "delivery_header" | "print_count_bg" | "preview_bg" | "overlay" | null;
+type EditTarget = "background" | "logo" | "tutorial_background" | "cta" | "tutorial_header" | "tutorial_steps" | "tutorial_cta" | "tutorial_timer" | "payment_background" | "frame_select_bg" | "frame_select_panel" | "camera_bg" | "delivery_bg" | "delivery_header" | "print_count_bg" | "preview_bg" | "overlay" | null;
 type EditorScreen = "idle" | "tutorial" | "payment" | "frame_select" | "camera" | "preview" | "print_count" | "payment_qris" | "delivery";
 
 interface OverlayElement {
@@ -34,6 +34,7 @@ interface WelcomeScreenPrefs {
   logoX:               number;
   logoY:               number;
   logoWidth:           number;
+  logoImageUrl?:       string | null;  // Custom logo URL (overrides booth.logoUrl)
   tutorialStepsX:      number;
   tutorialStepsY:      number;
   tutorialStepsWidth:  number;
@@ -97,6 +98,7 @@ function buildDefaultPrefs(primaryColor: string, accentColor: string): WelcomeSc
     logoX:               50,
     logoY:               50,
     logoWidth:           40,
+    logoImageUrl:        null,
     tutorialStepsX:      50,
     tutorialStepsY:      42,
     tutorialStepsWidth:  92,
@@ -149,6 +151,7 @@ function mergePrefs(saved: Record<string, unknown> | null, primaryColor: string,
     logoX:               typeof saved.logoX === "number" ? saved.logoX : d.logoX,
     logoY:               typeof saved.logoY === "number" ? saved.logoY : d.logoY,
     logoWidth:           typeof saved.logoWidth === "number" ? saved.logoWidth : d.logoWidth,
+    logoImageUrl:        (saved.logoImageUrl as string | null | undefined) ?? d.logoImageUrl,
     tutorialStepsX:      typeof saved.tutorialStepsX === "number" ? saved.tutorialStepsX : d.tutorialStepsX,
     tutorialStepsY:      typeof saved.tutorialStepsY === "number" ? saved.tutorialStepsY : d.tutorialStepsY,
     tutorialStepsWidth:  typeof saved.tutorialStepsWidth === "number" ? saved.tutorialStepsWidth : d.tutorialStepsWidth,
@@ -329,6 +332,7 @@ function PropsPanel({
             : target === "delivery_header" ? "✏️ Judul Hasil Akhir"
             : target === "print_count_bg" ? "🖨️ Background Jml. Print"
             : target === "preview_bg" ? "🖼️ Background Hasil & Filter"
+            : target === "logo" ? "🖼️ Logo"
             : target === "cta" ? "🔲 Tombol Mulai"
             : target === "tutorial_header" ? "✏️ Judul Tutorial"
             : target === "tutorial_steps" ? "📋 Blok Langkah"
@@ -339,6 +343,38 @@ function PropsPanel({
       </div>
 
       <div className="p-4 space-y-4">
+        {target === "logo" && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block">Upload Logo</label>
+              <button onClick={() => fileRef.current?.click()}
+                className="w-full py-2 rounded-lg border-2 border-dashed border-gray-300 text-sm text-gray-500 hover:border-gray-400">
+                📁 Pilih dari file
+              </button>
+              <input ref={fileRef} type="file" accept="image/*" className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 4 * 1024 * 1024) { alert("Maks 4 MB"); return; }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    onPrefsChange({ ...prefs, logoImageUrl: reader.result as string });
+                  };
+                  reader.readAsDataURL(file);
+                }} />
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mt-2">Atau URL</label>
+              <input type="url" placeholder="https://..." value={(prefs as any).logoImageUrl ?? ""}
+                onChange={(e) => onPrefsChange({ ...prefs, logoImageUrl: e.target.value || null } as any)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+              {(prefs as any).logoImageUrl && (
+                <button onClick={() => onPrefsChange({ ...prefs, logoImageUrl: null } as any)}
+                  className="text-xs text-red-500 hover:underline">Hapus logo custom</button>
+              )}
+            </div>
+            <p className="text-xs text-gray-400">Drag logo di preview untuk pindah posisi. Drag pojok untuk resize.</p>
+          </div>
+        )}
+
         {target === "background" && (
           <>
             <div className="flex gap-2">
@@ -880,25 +916,30 @@ const CORNER_STYLES: Record<Corner, React.CSSProperties> = {
 
 function DraggableLogo({
   prefs,
+  logoUrl,
   containerRef,
   onPrefsChange,
+  isSelected,
+  onSelect,
 }: {
   prefs:          WelcomeScreenPrefs;
+  logoUrl:        string | null;
   containerRef:   React.RefObject<HTMLDivElement>;
   onPrefsChange:  (p: WelcomeScreenPrefs) => void;
+  isSelected:     boolean;
+  onSelect:       () => void;
 }) {
-  const [isSelected, setIsSelected] = useState(false);
   const wrapperRef  = useRef<HTMLDivElement>(null);
   const prefsRef    = useRef(prefs);
   prefsRef.current  = prefs;
   const dragState   = useRef({ mx: 0, my: 0, startX: 0, startY: 0, startW: 0, mode: "none" as "none"|"move"|Corner });
 
-  // Deselect when clicking outside
+  // Sync selection state with parent
   useEffect(() => {
     if (!isSelected) return;
     const onDown = (e: MouseEvent) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setIsSelected(false);
+        // Parent will handle deselection
       }
     };
     document.addEventListener("mousedown", onDown);
@@ -909,7 +950,7 @@ function DraggableLogo({
   const onBodyMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    setIsSelected(true);
+    onSelect();
     const dr = dragState.current;
     dr.mx = e.clientX; dr.my = e.clientY;
     dr.startX = prefsRef.current.logoX; dr.startY = prefsRef.current.logoY;
@@ -965,11 +1006,11 @@ function DraggableLogo({
       {/* Image — click to select, drag to move */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/logo-fremio.png"
-        alt="Fremio"
+        src={(prefs as any).logoImageUrl ?? logoUrl ?? "/fremio_studio.png"}
+        alt="Logo"
         draggable={false}
         style={{ width: "100%", height: "auto", display: "block", cursor: isSelected ? "grab" : "pointer" }}
-        onClick={() => setIsSelected(true)}
+        onClick={(e) => { e.stopPropagation(); onSelect(); }}
         onMouseDown={isSelected ? onBodyMouseDown : undefined}
       />
 
@@ -2246,11 +2287,14 @@ function BoothPreview({
       {/* Background click zone */}
       <div className="absolute inset-0 cursor-pointer" style={{ zIndex: 0 }} />
 
-      {/* Draggable Fremio logo */}
+      {/* Draggable Logo */}
       <DraggableLogo
         prefs={prefs}
+        logoUrl={booth.logoUrl}
         containerRef={containerRef}
         onPrefsChange={onPrefsChange}
+        isSelected={selected === "logo"}
+        onSelect={() => onSelect("logo")}
       />
 
       {/* Draggable CTA button */}

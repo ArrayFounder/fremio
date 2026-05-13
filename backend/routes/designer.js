@@ -661,6 +661,7 @@ router.patch(
             label: "Foto",
             borderRadius: slot.borderRadius || 0,
             photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : idx,
+            slotNumber: slot.slotNumber !== undefined ? slot.slotNumber : idx + 1,
             objectFit: "cover",
           },
         }));
@@ -961,6 +962,7 @@ router.patch(
           label: "Foto",
           borderRadius: slot.borderRadius || 0,
           photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : idx,
+          slotNumber: slot.slotNumber !== undefined ? slot.slotNumber : idx + 1,
           objectFit: "cover",
         },
       }));
@@ -1117,7 +1119,9 @@ router.post("/admin/repair-frames", verifyToken, requireAdmin, async (req, res) 
           zIndex: 0,
           rotation: slot.rotation || 0,
           data: { label: "Foto", borderRadius: slot.borderRadius || 0,
-                  photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : idx, objectFit: "cover" },
+                  photoIndex: slot.photoIndex !== undefined ? slot.photoIndex : idx,
+                  slotNumber: slot.slotNumber !== undefined ? slot.slotNumber : idx + 1,
+                  objectFit: "cover" },
         }));
 
         // CRITICAL: ALL overlay elements must have zIndex >= 100 (always above photo slots at 0)

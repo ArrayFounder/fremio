@@ -21,12 +21,19 @@ import {
   toggleDraftInGroup,
   updateDraftGroupPreferences,
 } from "../utils/draftGroupStorage.js";
+import { buildSlotMaps } from "../utils/slotSystem.js";
 import CanvasPreview from "../components/creator/CanvasPreview.jsx";
 import "./CreateHub.css";
 
 const MAX_INFO_COLUMNS = 3;
 const DEFAULT_INFO_COLUMNS_COUNT = 2;
 const DEFAULT_TITLE1_TEXT = "Nama Brand / Event Kamu";
+
+const toFinite = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
 
 const normalizeInfoColumns = (value) => {
   const source = Array.isArray(value) ? value : [];
@@ -1546,7 +1553,7 @@ export default function CreateHub() {
                     const cw = tmpl.canvas_width || 1080;
                     const ch = tmpl.canvas_height || 1920;
                     const layoutAspRatio = `${cw}:${ch}`;
-                    const isTmplPremium = !!(tmpl.is_premium);
+                                const isTmplPremium = !!(tmpl.is_premium);
                     const accessibleSet = new Set((accessibleFrameIds || []).map((id) => String(id)));
                     const isTmplLocked =
                       isTmplPremium &&
@@ -1602,11 +1609,13 @@ export default function CreateHub() {
                           width: "100%", boxSizing: "border-box",
                         }}>
                           {tmpl.image_path ? (
-                            <img
-                              src={tmpl.image_path}
-                              alt={tmpl.name}
-                              style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                            />
+                            <>
+                              <img
+                                src={tmpl.image_path}
+                                alt={tmpl.name}
+                                style={{ width: "100%", height: "100%", objectFit: "contain", position: "relative", zIndex: 2 }}
+                              />
+                            </>
                           ) : tmpl.layout ? (() => {
                             const layout = typeof tmpl.layout === "string" ? JSON.parse(tmpl.layout) : tmpl.layout;
                             const layoutElements = Array.isArray(layout?.elements) ? layout.elements : [];

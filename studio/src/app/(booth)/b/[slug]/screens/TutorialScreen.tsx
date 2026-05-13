@@ -7,6 +7,7 @@ import { getEffectivePrefs } from "./IdleScreen";
 interface TutorialScreenProps {
   booth:           BoothConfigData;
   onStart:         () => void;
+  onBack?:         () => void;
   prefsOverride?:  WelcomeScreenPrefs | null;
 }
 
@@ -171,7 +172,7 @@ function StepsBold() {
   );
 }
 
-export function TutorialScreen({ booth, onStart, prefsOverride }: TutorialScreenProps) {
+export function TutorialScreen({ booth, onStart, onBack, prefsOverride }: TutorialScreenProps) {
   const prefs = getEffectivePrefs(booth, prefsOverride);
   const { accentColor } = booth;
 
@@ -189,6 +190,25 @@ export function TutorialScreen({ booth, onStart, prefsOverride }: TutorialScreen
 
   return (
     <div className="relative h-full select-none overflow-hidden" style={bgStyle}>
+
+      {/* Back button */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="absolute rounded-full p-3 active:scale-95 transition-transform shadow-lg"
+          style={{
+            left: "2%",
+            top: "2%",
+            backgroundColor: light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.2)",
+            color: textPrimary,
+            zIndex: 20,
+          }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+      )}
 
       {/* Header teks — absolutely positioned, draggable in editor */}
       <div

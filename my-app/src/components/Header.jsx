@@ -11,10 +11,7 @@ import pricingIcon from "../assets/page-icon/pricing.png";
 import framesIcon from "../assets/page-icon/page-frames.png";
 import createIcon from "../assets/page-icon/page-create.png";
 import shareIcon from "../assets/page-icon/page-share.png";
-<<<<<<< HEAD
-=======
 import eventIcon from "../assets/page-icon/page-event.png";
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
 import profileIcon from "../assets/page-icon/page-profile.png";
 import settingsIcon from "../assets/page-icon/page-settings.png";
 import logoutIcon from "../assets/page-icon/logout.png";
@@ -209,8 +206,6 @@ export default function Header() {
               <img src={shareIcon} alt="" className="nav-icon" />
               <span>Share</span>
             </NavLink>
-<<<<<<< HEAD
-=======
             <NavLink
               to="/event"
               className={({ isActive }) =>
@@ -220,7 +215,6 @@ export default function Header() {
               <img src={eventIcon} alt="" className="nav-icon" />
               <span>Event</span>
             </NavLink>
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
           </nav>
 
           {/* Right: Action */}
@@ -499,8 +493,6 @@ export default function Header() {
             <img src={shareIcon} alt="" className="nav-icon" />
             <span>Share</span>
           </NavLink>
-<<<<<<< HEAD
-=======
           <NavLink
             to="/event"
             className={({ isActive }) =>
@@ -511,7 +503,6 @@ export default function Header() {
             <img src={eventIcon} alt="" className="nav-icon" />
             <span>Event</span>
           </NavLink>
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
         </nav>
 
         {isAuthenticated ? (

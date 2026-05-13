@@ -1072,30 +1072,32 @@ export async function uploadToR2(blob: Blob, sessionId: string): Promise<string>
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Upload video WebM Blob ke server via /api/videos (multipart form).
+ * Upload video Blob ke server via /api/videos (multipart form).
+ * Disimpan dengan ekstensi .webm karena browser MediaRecorder menghasilkan WebM container.
  *
- * @param blob      - WebM Blob dari MediaRecorder (Live Mode)
+ * @param blob      - Blob video dari MediaRecorder (Live Mode)
  * @param sessionId - ID sesi booth yang sedang aktif
  * @returns Public URL video
  */
 export async function uploadVideo(blob: Blob, sessionId: string): Promise<string> {
   const form = new FormData();
   form.append("sessionId", sessionId);
-  form.append("video", blob, "live.webm");
+  // Browser MediaRecorder menghasilkan WebM container (VP8/VP9/H.264).
+  // Gunakan .webm agar file valid dan nginx serve dengan content-type video/webm.
+  form.append("video", new File([blob], "live.webm", { type: "video/webm" }), "live.webm");
 
   const res = await fetch("/api/videos", {
     method: "POST",
-    body:   form,
+    body: form,
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Gagal mengupload video (${res.status}): ${text}`);
+    throw new Error("Upload video gagal");
   }
 
-  const body = (await res.json()) as { success: boolean; data?: { videoUrl: string }; error?: string };
+  const body = await res.json() as { success: boolean; data?: { videoUrl: string }; error?: string };
 
-  if (!body.success || !body.data?.videoUrl) {
+  if (!body.success || !body.data) {
     throw new Error(body.error ?? "Upload video gagal");
   }
 
@@ -1106,11 +1108,12 @@ export async function uploadVideo(blob: Blob, sessionId: string): Promise<string
 // composeVideoLive
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Cari mimeType WebM terbaik yang didukung browser */
+/** Cari mimeType video terbaik yang didukung browser — prioritaskan H.264 (MP4-compatible) */
 function getBestVideoMime(): string {
   for (const t of [
-    "video/mp4;codecs=avc1",
-    "video/mp4",
+    "video/webm;codecs=h264",   // Chrome/Edge — H.264 dalam container WebM, bisa di-rename ke .mp4
+    "video/mp4;codecs=avc1",    // Safari natif
+    "video/mp4",                // Safari fallback
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
@@ -1219,7 +1222,7 @@ export interface ComposeVideoOptions extends ComposeOptions {
  * @param videoBlobs    - Array Blob|null per slot (indeks sejajar capturedPhotos)
  * @param frameAssetUrl - URL frame PNG transparan
  * @param options       - Slot, canvas size, duration, fps
- * @returns WebM Blob video composite, atau null jika tidak ada satu pun video yang valid
+ * @returns Blob video composite (MP4-compatible/H.264), atau null jika tidak ada satu pun video yang valid
  */
 export async function composeVideoLive(
   videoBlobs:    (Blob | null)[],
@@ -1413,12 +1416,16 @@ export async function composeVideoLive(
   // Mulai dengan 200ms timeslice; fallback tanpa timeslice jika gagal
   try { recorder.start(200); } catch { try { recorder.start(); } catch (e) { console.warn("[liveMode] recorder.start gagal:", e); cleanup(); return null; } }
 
-  // ── 6. Draw loop via setInterval ──────────────────────────────────────────
+  // ── 6. Draw loop via requestAnimationFrame (throttled ke target fps) ─────
   const endTime = performance.now() + duration;
 
   return new Promise<Blob | null>((resolve) => {
     const mirrorVideo = options.mirror ?? false;
-    const interval = setInterval(() => {
+    let rafId = 0;
+    let lastDrawTime = 0;
+    const targetInterval = 1000 / fps;
+
+    const drawComposite = () => {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, cw, ch);
       // Background-mode frame (webp): draw before videos — dilewati jika sceneElements aktif
@@ -1447,22 +1454,32 @@ export async function composeVideoLive(
       if (options.trialWatermark) {
         drawCenteredWatermark(ctx, cw, ch, options.trialWatermarkText ?? "Trial");
       }
+    };
 
-      if (performance.now() >= endTime) {
-        clearInterval(interval);
+    const scheduleDraw = (time: number) => {
+      if (time - lastDrawTime >= targetInterval) {
+        drawComposite();
+        lastDrawTime = time;
+      }
+      if (performance.now() < endTime) {
+        rafId = requestAnimationFrame(scheduleDraw);
+      } else {
         try { recorder.requestData(); } catch { /* ignore */ }
         recorder.stop();
       }
-    }, Math.round(1000 / fps));
+    };
+
+    rafId = requestAnimationFrame(scheduleDraw);
 
     recorder.onstop = () => {
+      cancelAnimationFrame(rafId);
       cleanup();
       if (chunks.length === 0) { resolve(null); return; }
       resolve(new Blob(chunks, { type: recorder.mimeType || mimeType }));
     };
 
     recorder.onerror = () => {
-      clearInterval(interval);
+      cancelAnimationFrame(rafId);
       cleanup();
       resolve(null);
     };

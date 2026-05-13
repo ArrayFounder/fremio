@@ -1,18 +1,12 @@
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext.jsx";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "../config/firebase.js";
 import { useTranslation } from "react-i18next";
 
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-<<<<<<< HEAD
-  const { authenticateUser } = useAuth();
-=======
-  const { authenticateUser, googleLogin } = useAuth();
->>>>>>> 93a9667117c88f5d4cf4dc3546ef98bc4cda2d7d
+  const { authenticateUser, resetPassword } = useAuth();
   const { t } = useTranslation();
 
   const [formData, setFormData] = useState({
@@ -172,30 +166,22 @@ export default function Login() {
     }
 
     try {
-      // Configure action code settings to avoid spam
-      const actionCodeSettings = {
-        url: window.location.origin + "/reset-password",
-        handleCodeInApp: false,
-      };
-
-      await sendPasswordResetEmail(auth, resetEmail, actionCodeSettings);
-      setResetSuccess(t("login.reset_sent"));
-      setResetEmail("");
-      setTimeout(() => {
-        setShowForgotPassword(false);
-        setResetSuccess("");
-      }, 8000); // Extended to 8 seconds untuk user sempat baca
+      // Use VPS API for password reset
+      const result = await resetPassword(resetEmail);
+      
+      if (result.success) {
+        setResetSuccess(result.message || t("login.reset_sent"));
+        setResetEmail("");
+        setTimeout(() => {
+          setShowForgotPassword(false);
+          setResetSuccess("");
+        }, 8000); // Extended to 8 seconds untuk user sempat baca
+      } else {
+        setError(result.message || "Failed to send reset email");
+      }
     } catch (error) {
       console.error("Password reset error:", error);
-      if (error.code === "auth/user-not-found") {
-        setError("No account found with this email address");
-      } else if (error.code === "auth/invalid-email") {
-        setError("Invalid email address");
-      } else if (error.code === "auth/too-many-requests") {
-        setError("Too many requests. Please try again later.");
-      } else {
-        setError("Failed to send password reset email. Please try again.");
-      }
+      setError("Failed to send reset email. Please try again.");
     } finally {
       setResetLoading(false);
     }
