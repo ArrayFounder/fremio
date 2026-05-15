@@ -430,7 +430,7 @@ internal sealed class EdsdkSession : IDisposable
                 }
 
                 Check(Edsdk.EdsGetDirectoryItemInfo(objRef, out var itemInfo), "Gagal baca info file Canon");
-                var fileName = (itemInfo.FileName ?? string.Empty).Trim();
+                var fileName = NormalizeCameraFileName(itemInfo.FileName);
                 Console.Error.WriteLine($"[bridge] DirItem: '{fileName}' size={itemInfo.Size}");
 
                 Check(Edsdk.EdsCreateMemoryStream(0, out var streamRef), "Gagal buat stream download");
@@ -445,6 +445,7 @@ internal sealed class EdsdkSession : IDisposable
                     if (ptr == IntPtr.Zero || len <= 0 || len > int.MaxValue)
                     {
                         Console.Error.WriteLine("[bridge] Capture transfer kosong, menunggu transfer berikutnya...");
+                        CompleteCaptureTransferIfNeeded(evtId, objRef);
                         capturedData = Array.Empty<byte>();
                         capturedError = null;
                         return 0;
@@ -460,9 +461,9 @@ internal sealed class EdsdkSession : IDisposable
                         lastNonJpegFileName = fileName;
                         Console.Error.WriteLine($"[bridge] Non-JPEG detected: fileName='{fileName}', header={headerHex}, size={capturedData.Length}");
                         Console.Error.WriteLine("[bridge] Skipping non-JPEG transfer, waiting for JPEG...");
+                        CompleteCaptureTransferIfNeeded(evtId, objRef);
                         capturedData = Array.Empty<byte>();
                         capturedError = null;
-                        // Jangan panggil EdsDownloadComplete untuk non-JPEG agar kamera tetap kirim JPEG
                         return 0;
                     }
 
@@ -470,17 +471,13 @@ internal sealed class EdsdkSession : IDisposable
                     if (capturedAtUtc.HasValue && capturedAtUtc.Value.Year >= 2000 && capturedAtUtc.Value < staleCutoffUtc)
                     {
                         Console.Error.WriteLine($"[bridge] Ignoring stale JPEG transfer (cameraTime={capturedAtUtc.Value:O}, cutoff={staleCutoffUtc:O})");
+                        CompleteCaptureTransferIfNeeded(evtId, objRef);
                         capturedData = Array.Empty<byte>();
                         return 0;
                     }
 
                     Console.Error.WriteLine($"[bridge] JPEG accepted: fileName='{fileName}', size={capturedData.Length}");
-                    // Hanya finalize download setelah melewati semua check (JPEG & stale)
-                    if (evtId == Edsdk.ObjectEvent_DirItemRequestTransfer)
-                    {
-                        Check(Edsdk.EdsDownloadComplete(objRef), "Gagal finalize download capture Canon");
-                        Console.Error.WriteLine("[bridge] EdsDownloadComplete succeeded");
-                    }
+                    CompleteCaptureTransferIfNeeded(evtId, objRef);
 
                     shouldSignal = true;
                 }
@@ -555,9 +552,7 @@ internal sealed class EdsdkSession : IDisposable
             {
                 if (sawNonJpegTransfer)
                 {
-                    var transferLabel = string.IsNullOrWhiteSpace(lastNonJpegFileName)
-                        ? "file non-JPEG"
-                        : $"file '{lastNonJpegFileName}'";
+                    var transferLabel = BuildNonJpegTransferLabel(lastNonJpegFileName);
                     Console.Error.WriteLine($"[bridge] Final error: sawNonJpegTransfer=true, lastNonJpegFileName='{lastNonJpegFileName}'");
                     throw new InvalidOperationException($"Capture Canon menghasilkan {transferLabel}. Ubah Image Quality kamera ke JPEG (L/Fine) agar foto bisa diproses.");
                 }
@@ -638,16 +633,46 @@ internal sealed class EdsdkSession : IDisposable
             throw new InvalidOperationException("Kamera Canon belum terdeteksi oleh EDSDK");
         }
 
-        Check(Edsdk.EdsOpenSession(_cameraRef), "Gagal membuka sesi kamera Canon");
+        // Retry opening session with multiple attempts and delays
+        // to handle camera being busy or USB enumeration issues
+        uint lastErr = 0;
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            PumpSdkEvents(2, 100);
+            
+            var err = Edsdk.EdsOpenSession(_cameraRef);
+            if (err == 0) return;
+            
+            lastErr = err;
+            Console.Error.WriteLine($"[bridge] EdsOpenSession retry {attempt}/5: 0x{err:X8}");
+            
+            // If device busy or not ready, wait and retry
+            if (err == EdsErr_DeviceBusy || err == EdsErr_ObjectNotReady)
+            {
+                PumpSdkEvents(4, 150);
+                Thread.Sleep(300);
+                continue;
+            }
+            
+            // For other errors, also try a brief wait
+            if (attempt < 5)
+            {
+                PumpSdkEvents(3, 100);
+                Thread.Sleep(200);
+            }
+        }
+        
+        throw new InvalidOperationException($"Gagal membuka sesi kamera Canon (0x{lastErr:X8})");
     }
 
     private static IntPtr GetFirstCameraWithRetry()
     {
-        for (var attempt = 0; attempt < 6; attempt++)
+        for (var attempt = 0; attempt < 8; attempt++)
         {
+            PumpSdkEvents(2, 80);
             var cameraRef = GetFirstCamera();
             if (cameraRef != IntPtr.Zero) return cameraRef;
-            Thread.Sleep(500);
+            Thread.Sleep(400);
         }
 
         return IntPtr.Zero;
@@ -704,6 +729,38 @@ internal sealed class EdsdkSession : IDisposable
         var ext = Path.GetExtension(fileName);
         return ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
             || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildNonJpegTransferLabel(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return "file non-JPEG";
+
+        var sanitized = fileName.Trim();
+        sanitized = sanitized.Trim('\'', '"', '.', ' ');
+        if (string.IsNullOrWhiteSpace(sanitized)) return "file non-JPEG";
+
+        return $"file '{sanitized}'";
+    }
+
+    private static string NormalizeCameraFileName(string? rawFileName)
+    {
+        if (string.IsNullOrEmpty(rawFileName)) return string.Empty;
+
+        var nullTerminatorIndex = rawFileName.IndexOf('\0');
+        var sliced = nullTerminatorIndex >= 0
+            ? rawFileName[..nullTerminatorIndex]
+            : rawFileName;
+
+        var normalized = new string(sliced.Where(ch => !char.IsControl(ch)).ToArray());
+        return normalized.Trim();
+    }
+
+    private static void CompleteCaptureTransferIfNeeded(uint eventId, IntPtr objRef)
+    {
+        if (eventId != Edsdk.ObjectEvent_DirItemRequestTransfer || objRef == IntPtr.Zero) return;
+
+        Check(Edsdk.EdsDownloadComplete(objRef), "Gagal finalize download capture Canon");
+        Console.Error.WriteLine("[bridge] EdsDownloadComplete succeeded");
     }
 
     private static DateTime? TryParseCameraDateTime(uint value)
