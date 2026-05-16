@@ -94,7 +94,7 @@ export default function Login() {
           client_id: clientId,
           callback: handleGoogleCredentialResponse,
           auto_select: false,
-          redirect_uri: 'https://fremio.id/api/auth/callback/google',
+          redirect_uri: 'https://fremio.id/auth/google/callback',
           ux_mode: 'redirect',
         });
         window.google.accounts.id.renderButton(googleBtnRef.current, {
