@@ -14,7 +14,16 @@ export default function Login() {
     password: "",
     rememberMe: false,
   });
-  const [error, setError] = useState("");
+  const [error, setError] = useState(
+    (() => {
+      const params = new URLSearchParams(window.location.search);
+      const err = params.get('error');
+      if (err === 'google_auth_failed') return 'Login Google gagal. Coba lagi.';
+      if (err === 'no_credential') return 'Autentikasi Google tidak lengkap.';
+      if (err === 'callback_error') return 'Terjadi kesalahan saat login.';
+      return '';
+    })()
+  );
   const [successMessage, setSuccessMessage] = useState(
     location.state?.message || ""
   );
@@ -59,7 +68,19 @@ export default function Login() {
   // Load Google Identity Services
   useEffect(() => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    if (!clientId || !googleBtnRef.current) return;
+    if (!clientId) return;
+
+    // Handle redirect flow: check for credential in URL on page load
+    const params = new URLSearchParams(window.location.search);
+    const credential = params.get('credential');
+    if (credential) {
+      // Clean URL without reload
+      window.history.replaceState({}, '', window.location.pathname);
+      handleGoogleCredentialResponse({ credential });
+      return;
+    }
+
+    if (!googleBtnRef.current) return;
 
     const script = document.createElement("script");
     script.src = "https://accounts.google.com/gsi/client";
@@ -73,6 +94,8 @@ export default function Login() {
           client_id: clientId,
           callback: handleGoogleCredentialResponse,
           auto_select: false,
+          redirect_uri: 'https://fremio.id/api/auth/callback/google',
+          ux_mode: 'redirect',
         });
         window.google.accounts.id.renderButton(googleBtnRef.current, {
           theme: "outline",
@@ -85,7 +108,7 @@ export default function Login() {
     };
 
     return () => {
-      document.body.removeChild(script);
+      if (script.parentNode) document.body.removeChild(script);
     };
   }, []);
 

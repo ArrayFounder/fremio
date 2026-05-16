@@ -1,0 +1,5 @@
+/assets/*
+  Cross-Origin-Opener-Policy: unsafe-none
+
+/_next/static/*
+  Cross-Origin-Opener-Policy: unsafe-none
