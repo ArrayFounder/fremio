@@ -77,6 +77,7 @@ import DesignerWallet from "./pages/designer/DesignerWallet.jsx";
 import DesignerProfile from "./pages/designer/DesignerProfile.jsx";
 
 import VerifyCertificate from "./pages/VerifyCertificate.jsx";
+import GoogleCallback from "./pages/GoogleCallback.jsx";
 import { initAnalytics, trackPageView } from "./services/analyticsService.js";
 
 // Maintenance
@@ -155,6 +156,7 @@ export default function App() {
             <Route path="register" element={<Register />} />
             <Route path="reset-password" element={<ResetPassword />} />
             <Route path="set-password" element={<SetPassword />} />
+            <Route path="auth/google/callback" element={<GoogleCallback />} />
 
             {/* Footer pages */}
             <Route path="help-center" element={<HelpCenter />} />

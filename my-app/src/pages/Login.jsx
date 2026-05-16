@@ -2,6 +2,7 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useTranslation } from "react-i18next";
+import { googleLogin } from "../services/unifiedAuthService.js";
 
 export default function Login() {
   const navigate = useNavigate();
