@@ -2,7 +2,7 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useTranslation } from "react-i18next";
-import { googleLogin } from "../services/unifiedAuthService.js";
+import unifiedAuthService from "../services/unifiedAuthService.js";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -41,7 +41,7 @@ export default function Login() {
     setGoogleLoading(true);
     setError("");
     try {
-      const result = await googleLogin(response.credential);
+      const result = await unifiedAuthService.googleLogin(response.credential);
       if (result.success) {
         const storedUser = localStorage.getItem("fremio_user");
         if (storedUser) {
