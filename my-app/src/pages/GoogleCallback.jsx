@@ -11,23 +11,28 @@ export default function GoogleCallback() {
   useEffect(() => {
     const processGoogleCallback = async () => {
       try {
-        // Get credential from URL search params (redirect flow)
+        // Get code + state from URL search params (OAuth redirect flow)
         const params = new URLSearchParams(window.location.search);
-        const credential = params.get("credential");
+        const code = params.get("code");
+        const state = params.get("state");
 
-        if (!credential) {
-          setError("Autentikasi Google tidak lengkap. Kredensial tidak ditemukan.");
+        if (!code) {
+          setError("Autentikasi Google tidak lengkap. Kode otorisasi tidak ditemukan.");
           setStep("error");
           return;
         }
 
         setStep("processing");
 
-        // Send credential to backend
+        // Retrieve stored state for CSRF check
+        const storedState = sessionStorage.getItem("google_oauth_state");
+        sessionStorage.removeItem("google_oauth_state");
+
+        // Exchange code for user data
         const res = await fetch("/api/auth/google", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ credential }),
+          body: JSON.stringify({ code, state: storedState }),
         });
 
         const data = await res.json();
