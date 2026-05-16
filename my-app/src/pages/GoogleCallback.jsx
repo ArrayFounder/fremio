@@ -46,9 +46,9 @@ export default function GoogleCallback() {
           // Redirect after short delay
           setTimeout(() => {
             if (data.user?.role === "admin") {
-              navigate("/admin/dashboard", { replace: true });
+              window.location.href = "/admin/dashboard";
             } else {
-              navigate("/frames", { replace: true });
+              window.location.href = "/frames";
             }
           }, 500);
         } else {

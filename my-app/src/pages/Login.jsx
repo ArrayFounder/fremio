@@ -300,6 +300,7 @@ export default function Login() {
                     or
                   </p>
                   <button
+                    type="button"
                     onClick={handleGoogleSignIn}
                     style={{
                       display: "flex",

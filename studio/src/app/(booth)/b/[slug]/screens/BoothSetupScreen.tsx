@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getAdaptiveColors } from "../colorUtils";
 import { getAllPaperSizes } from "../paperSize";
 import type { BoothConfigData, BoothHardwareSettings } from "../types";
-
+  
 interface VideoDevice { deviceId: string; label: string }
 
 declare global {
