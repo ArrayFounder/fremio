@@ -33,10 +33,12 @@ jobs:
       - name: Set build env
         run: |
           echo "VITE_API_URL=${VITE_API_URL:-https://api.fremio.id/api}" >> $GITHUB_ENV
-          echo "VITE_BACKEND_MODE=${VITE_BACKEND_MODE:-VPS}" >> $GITHUB_ENV
+          echo "VITE_BACKEND_MODE=${VITE_BACKEND_MODE:-vps}" >> $GITHUB_ENV
+          echo "VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}" >> $GITHUB_ENV
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
           VITE_BACKEND_MODE: ${{ secrets.VITE_BACKEND_MODE }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
         
       - name: Build frontend
         working-directory: ./my-app
