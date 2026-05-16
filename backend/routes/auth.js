@@ -680,35 +680,96 @@ router.put(
 
 /**
  * POST /api/auth/google
- * Google OAuth login
+ * Google OAuth login (supports both GIS popup credential and OAuth redirect code)
  */
 router.post("/google", async (req, res) => {
   try {
-    const { credential } = req.body;
+    const { credential, code } = req.body;
 
-    if (!credential) {
+    let email, name, picture;
+
+    // Option 1: GIS popup flow — verify id_token directly
+    if (credential) {
+      const tokenResponse = await fetch(
+        `https://www.googleapis.com/oauth2/v3/tokeninfo?id_token=${credential}`
+      );
+      const payload = await tokenResponse.json();
+
+      if (!tokenResponse.ok || !payload.email) {
+        return res.status(401).json({
+          success: false,
+          error: "Token Google tidak valid",
+        });
+      }
+
+      email = payload.email.toLowerCase();
+      name = payload.name || email.split("@")[0];
+      picture = payload.picture || null;
+    }
+    // Option 2: OAuth redirect flow — exchange code for tokens
+    else if (code) {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+      if (!clientId || !clientSecret) {
+        return res.status(500).json({
+          success: false,
+          error: "Google OAuth tidak dikonfigurasi di server",
+        });
+      }
+
+      // Exchange code for tokens
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: "https://fremio.id/auth/google/callback",
+          grant_type: "authorization_code",
+        }),
+      });
+
+      if (!tokenRes.ok) {
+        const errText = await tokenRes.text();
+        console.error("Google token exchange failed:", errText);
+        return res.status(401).json({
+          success: false,
+          error: "Gagal menukar kode Google",
+        });
+      }
+
+      const tokens = await tokenRes.json();
+      const idToken = tokens.id_token;
+
+      // Decode id_token to get user info (no API call needed for decode)
+      const payloadBase64 = idToken.split(".")[1];
+      const payloadJson = Buffer.from(payloadBase64, "base64").toString("utf-8");
+      const payload = JSON.parse(payloadJson);
+
+      if (!payload.email) {
+        return res.status(401).json({
+          success: false,
+          error: "Token Google tidak valid",
+        });
+      }
+
+      email = payload.email.toLowerCase();
+      name = payload.name || payload.given_name
+        ? `${payload.given_name || ""} ${payload.family_name || ""}`.trim()
+        : email.split("@")[0];
+      picture = payload.picture || null;
+    } else {
       return res.status(400).json({
         success: false,
-        error: "Google credential diperlukan",
+        error: "Google credential atau kode diperlukan",
       });
     }
 
-    // Verify Google token with Google
-    const tokenResponse = await fetch(
-      `https://www.googleapis.com/oauth2/v3/tokeninfo?id_token=${credential}`
-    );
-    const payload = await tokenResponse.json();
-
-    if (!tokenResponse.ok || !payload.email) {
-      return res.status(401).json({
-        success: false,
-        error: "Token Google tidak valid",
-      });
-    }
-
-    const email = payload.email.toLowerCase();
-    const displayName = payload.name || email.split("@")[0];
-    const photoUrl = payload.picture || null;
+    // Normalize field names for DB
+    const displayName = name;
+    const photoUrl = picture;
 
     // Find user
     let result = await pool.query("SELECT * FROM users WHERE email = $1", [
