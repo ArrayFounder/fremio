@@ -452,7 +452,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     if (isWindowsApp) return; // Windows app selalu mulai dari BOOTH_SETUP
     const saved = loadHardwareSettings(booth.slug);
     if (saved?.setupCompleted) {
-      dispatch({ type: "SETUP_COMPLETE", payload: saved });
+      dispatch({ type: "SETUP_COMPLETE", payload: { ...DEFAULT_HW_SETTINGS, ...saved } });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2134,6 +2134,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
               onCountdownChange={setCameraCountingDown}
               livePhotoVideoEnabled={livePhotoVideoEnabled}
               mode={booth.photoSessionMode as "live_view" | "fullscreen"}
+              boothMirrorSetting={hwSettings.cameraMirror ?? true}
             />
 
             {/* PHOTO_REVIEW — overlay card di atas camera screen */}

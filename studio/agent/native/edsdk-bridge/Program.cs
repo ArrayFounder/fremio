@@ -186,6 +186,7 @@ internal sealed class EdsdkSession : IDisposable
     private const uint EdsErr_DeviceBusy = 0x00000081;
     private const uint EdsErr_TakePictureNg = 0x00008D07;
     private const uint EdsErr_ObjectNotReady = 0x0000A102;
+    private const uint EdsErr_CommPortIsAlreadyOpen = 0x000000C0;
     private const uint CameraCommand_TakePicture = 0;
 
     private IntPtr _cameraRef = IntPtr.Zero;
@@ -636,16 +637,16 @@ internal sealed class EdsdkSession : IDisposable
         // Retry opening session with multiple attempts and delays
         // to handle camera being busy or USB enumeration issues
         uint lastErr = 0;
-        for (var attempt = 1; attempt <= 5; attempt++)
+        for (var attempt = 1; attempt <= 8; attempt++)
         {
             PumpSdkEvents(2, 100);
-            
+
             var err = Edsdk.EdsOpenSession(_cameraRef);
             if (err == 0) return;
-            
+
             lastErr = err;
-            Console.Error.WriteLine($"[bridge] EdsOpenSession retry {attempt}/5: 0x{err:X8}");
-            
+            Console.Error.WriteLine($"[bridge] EdsOpenSession retry {attempt}/8: 0x{err:X8}");
+
             // If device busy or not ready, wait and retry
             if (err == EdsErr_DeviceBusy || err == EdsErr_ObjectNotReady)
             {
@@ -653,16 +654,32 @@ internal sealed class EdsdkSession : IDisposable
                 Thread.Sleep(300);
                 continue;
             }
-            
+
+            // Handle COMM_PORT_IS_ALREADY_OPEN - camera session already open somewhere else
+            // This can happen if EOS Utility or another app has the camera open
+            if (err == EdsErr_CommPortIsAlreadyOpen)
+            {
+                Console.Error.WriteLine("[bridge] Camera session already open - trying to close first...");
+                // Try to close any existing session first
+                Edsdk.EdsCloseSession(_cameraRef);
+                PumpSdkEvents(4, 200);
+                Thread.Sleep(500); // Give more time for port to be released
+                continue;
+            }
+
             // For other errors, also try a brief wait
-            if (attempt < 5)
+            if (attempt < 8)
             {
                 PumpSdkEvents(3, 100);
-                Thread.Sleep(200);
+                Thread.Sleep(250);
             }
         }
-        
-        throw new InvalidOperationException($"Gagal membuka sesi kamera Canon (0x{lastErr:X8})");
+
+        // Provide helpful error message for common issues
+        var errorHint = lastErr == EdsErr_CommPortIsAlreadyOpen
+            ? ". Pastikan EOS Utility atau aplikasi lain tidak menggunakan kamera."
+            : "";
+        throw new InvalidOperationException($"Gagal membuka sesi kamera Canon (0x{lastErr:X8}){errorHint}");
     }
 
     private static IntPtr GetFirstCameraWithRetry()

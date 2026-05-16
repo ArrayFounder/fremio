@@ -11,6 +11,7 @@ declare global {
   interface Window {
     fremioBooth?: {
       getBridgeStatus?: () => Promise<unknown>;
+      restartBridge?: () => Promise<unknown>;
       agentStatus: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
       agentCapture: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
       agentPreview: () => Promise<{ ok: boolean; base64?: string; mimeType?: string; error?: string }>;
@@ -127,6 +128,33 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   const [startingBooth, setStartingBooth] = useState(false);
   const dslrPreviewImgRef = useRef<HTMLImageElement | null>(null);
   const agentCheckInFlightRef = useRef<Promise<void> | null>(null);
+  const previewRecoveryInFlightRef = useRef(false);
+  const lastPreviewRecoveryAtRef = useRef(0);
+
+  const restartCanonPreviewBridge = useCallback(async (reason: string): Promise<boolean> => {
+    if (typeof window === "undefined") return false;
+    const restartBridge = window.fremioBooth?.restartBridge;
+    if (!restartBridge) return false;
+
+    const now = Date.now();
+    if (previewRecoveryInFlightRef.current) return false;
+    if (now - lastPreviewRecoveryAtRef.current < 6000) return false;
+
+    previewRecoveryInFlightRef.current = true;
+    lastPreviewRecoveryAtRef.current = now;
+
+    try {
+      setDslrPreviewError(`Menyambungkan ulang Canon... (${reason})`);
+      setDslrPreviewFrameSrc(null);
+      await restartBridge();
+      setDslrPreviewKey(Date.now());
+      return true;
+    } catch {
+      return false;
+    } finally {
+      previewRecoveryInFlightRef.current = false;
+    }
+  }, []);
 
   // ── Paper size state ──────────────────────────────────────────────────────
   // null = auto-detect dari canvas frame dimensions
@@ -137,7 +165,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     const saved = loadHardwareSettings(booth.slug);
     if (saved) {
       setDeviceId(saved.cameraDeviceId);
-      setMirror(saved.cameraMirror);
+      setMirror(saved.cameraMirror ?? true);
       setPrinterName(saved.printerName);
       if (saved.printerName) setManualPrinter(saved.printerName);
       setPaperSizeOverride(saved.paperSize ?? null);
@@ -291,21 +319,53 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   }, [captureSource, stopCameraPreview]);
 
   useEffect(() => {
-    if (
-      captureSource !== "dslr" ||
-      !dslrPreviewActive ||
-      typeof window === "undefined" ||
-      !window.fremioBooth?.agentPreview
-    ) {
+    if (captureSource !== "dslr" || !dslrPreviewActive || typeof window === "undefined") {
       setDslrPreviewFrameSrc(null);
+      return;
+    }
+
+    const hasIpcPreview = Boolean(window.fremioBooth?.agentPreview);
+    const getStreamPreviewUrl = (cacheKey: number): string | null => (
+      window.fremioBooth?.agentPreviewStreamUrl?.(cacheKey) ?? (agentBase ? `${agentBase}/preview-stream?t=${cacheKey}` : null)
+    );
+
+    if (!hasIpcPreview) {
+      const streamUrl = getStreamPreviewUrl(dslrPreviewKey);
+      setDslrPreviewFrameSrc(streamUrl);
+      if (!streamUrl) {
+        setDslrPreviewError("Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
+      }
       return;
     }
 
     let cancelled = false;
     let rafId: number | null = null;
     let hasFrame = false;
+    let previewStartedAt = Date.now();
+    let fallbackTimer: number | null = null;
+    let usingStreamFallback = false;
     let lastFetchTime = 0;
     const targetInterval = 1000 / 90; // 90 FPS target for optimal Canon performance
+
+    const switchToStreamFallback = () => {
+      if (cancelled || usingStreamFallback) return;
+      const streamUrl = getStreamPreviewUrl(Date.now());
+      if (!streamUrl) return;
+
+      usingStreamFallback = true;
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+      setDslrPreviewError("Menyiapkan live view Canon...");
+      setDslrPreviewFrameSrc(streamUrl);
+
+      void restartCanonPreviewBridge("fallback stream");
+    };
 
     const fetchAndSchedule = async () => {
       if (cancelled) return;
@@ -314,30 +374,55 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       if (now - lastFetchTime >= targetInterval) {
         try {
           const res = await window.fremioBooth?.agentPreview();
-          if (!cancelled && res?.ok && res.base64) {
+          if (cancelled || usingStreamFallback) return;
+          if (res?.ok && res.base64) {
             hasFrame = true;
+            if (fallbackTimer !== null) {
+              window.clearTimeout(fallbackTimer);
+              fallbackTimer = null;
+            }
             setDslrPreviewFrameSrc(`data:${res.mimeType || "image/jpeg"};base64,${res.base64}`);
             setDslrPreviewError(null);
-          } else if (!cancelled && !hasFrame) {
+          } else if (!hasFrame) {
+            if (Date.now() - previewStartedAt >= 1200) {
+              void restartCanonPreviewBridge("frame tidak masuk");
+              switchToStreamFallback();
+              return;
+            }
             setDslrPreviewError(res?.error || "Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
           }
         } catch (error) {
-          if (!cancelled && !hasFrame) {
+          if (!cancelled && !hasFrame && !usingStreamFallback) {
+            void restartCanonPreviewBridge("preview request gagal");
+            switchToStreamFallback();
+            if (usingStreamFallback) return;
             setDslrPreviewError(error instanceof Error ? error.message : "Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
           }
         }
         lastFetchTime = now;
       }
 
-      rafId = requestAnimationFrame(fetchAndSchedule);
+      if (!usingStreamFallback) {
+        rafId = requestAnimationFrame(fetchAndSchedule);
+      }
     };
 
+    setDslrPreviewFrameSrc(null);
+    setDslrPreviewError(null);
+    previewStartedAt = Date.now();
+    fallbackTimer = window.setTimeout(() => {
+      if (!cancelled && !hasFrame) {
+        void restartCanonPreviewBridge("timeout awal live view");
+        switchToStreamFallback();
+      }
+    }, 1800);
     rafId = requestAnimationFrame(fetchAndSchedule);
     return () => {
       cancelled = true;
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [captureSource, dslrPreviewActive, dslrPreviewKey]);
+  }, [agentBase, captureSource, dslrPreviewActive, dslrPreviewKey, restartCanonPreviewBridge]);
 
   // ── Check Local Agent & get printers ──────────────────────────────────────
   // Coba endpoint secara BERURUTAN agar tidak membanjiri local agent.
@@ -746,7 +831,10 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                         className="w-full h-full object-cover"
                         style={{ transform: mirror ? "scaleX(-1)" : "none" }}
                         onLoad={() => setDslrPreviewError(null)}
-                        onError={() => setDslrPreviewError("Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.")}
+                        onError={() => {
+                          setDslrPreviewError("Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
+                          void restartCanonPreviewBridge("gagal render stream");
+                        }}
                       />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center bg-black/60">
@@ -760,7 +848,10 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                         <button
                           onClick={() => {
                             setDslrPreviewError(null);
-                            setDslrPreviewKey(Date.now());
+                            setDslrPreviewFrameSrc(null);
+                            void restartCanonPreviewBridge("manual retry").then((restarted) => {
+                              if (!restarted) setDslrPreviewKey(Date.now());
+                            });
                           }}
                           className="px-3 py-1.5 rounded-xl text-xs font-bold"
                           style={{ backgroundColor: accentColor, color: primaryColor }}

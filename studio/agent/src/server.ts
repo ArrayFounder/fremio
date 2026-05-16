@@ -61,8 +61,18 @@ let lastPreviewConsumerAt = 0;
 let cameraStatusCache: CameraStatusResult | null = null;
 let cameraStatusCacheAt = 0;
 let cameraStatusInFlight: Promise<CameraStatusResult> | null = null;
+let previewStallMonitorTimer: ReturnType<typeof setTimeout> | null = null;
+let previewRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let previewRestartWindowStartedAt = 0;
+let previewRestartAttemptsInWindow = 0;
+const plannedPreviewRestarts = new Set<ReturnType<typeof spawn>>();
 
 const CAMERA_STATUS_CACHE_MS = 4000;
+const PREVIEW_STALL_TIMEOUT_MS = 3500;
+const PREVIEW_RESTART_WINDOW_MS = 30_000;
+const PREVIEW_RESTART_MAX_IN_WINDOW = 6;
+const PREVIEW_RESTART_KILL_GRACE_MS = 150; // OPTIMIZED: was 350ms
+const PREVIEW_RESTART_START_DELAY_MS = 150; // OPTIMIZED: was 650ms - faster preview recovery
 
 function isRunning(child: ReturnType<typeof spawn> | null): child is ReturnType<typeof spawn> {
   return !!child && !child.killed && child.exitCode === null;
@@ -79,6 +89,8 @@ function failPreviewFrameWaiters(error: Error) {
 function publishPreviewFrame(frame: Buffer) {
   latestPreviewFrame = Buffer.from(frame);
   latestPreviewFrameAt = Date.now();
+  previewRestartAttemptsInWindow = 0;
+  previewRestartWindowStartedAt = 0;
 
   for (const subscriber of Array.from(previewFrameSubscribers)) {
     try {
@@ -93,9 +105,21 @@ function publishPreviewFrame(frame: Buffer) {
     previewFrameWaiters.delete(waiter);
     waiter.resolve(latestPreviewFrame);
   }
+
+  armPreviewStallMonitor();
 }
 
 function stopSharedPreviewProcess() {
+  if (previewStallMonitorTimer) {
+    clearTimeout(previewStallMonitorTimer);
+    previewStallMonitorTimer = null;
+  }
+  if (previewRestartTimer) {
+    clearTimeout(previewRestartTimer);
+    previewRestartTimer = null;
+  }
+  plannedPreviewRestarts.clear();
+
   const child = sharedPreviewProcess;
   if (!isRunning(child)) {
     sharedPreviewProcess = null;
@@ -111,7 +135,7 @@ function stopSharedPreviewProcess() {
   }, 350);
 }
 
-function scheduleSharedPreviewStop(delayMs = 5000) {
+function scheduleSharedPreviewStop(delayMs = 2000) { // OPTIMIZED: was 5000ms - faster cleanup
   if (previewIdleTimer) clearTimeout(previewIdleTimer);
   previewIdleTimer = setTimeout(() => {
     previewIdleTimer = null;
@@ -130,6 +154,95 @@ function markPreviewConsumer() {
     clearTimeout(previewIdleTimer);
     previewIdleTimer = null;
   }
+  armPreviewStallMonitor();
+}
+
+function hasPreviewDemand() {
+  return (
+    previewFrameSubscribers.size > 0 ||
+    previewFrameWaiters.size > 0 ||
+    Date.now() - lastPreviewConsumerAt < 2000
+  );
+}
+
+function armPreviewStallMonitor(delayMs = PREVIEW_STALL_TIMEOUT_MS) {
+  if (previewStallMonitorTimer) clearTimeout(previewStallMonitorTimer);
+
+  previewStallMonitorTimer = setTimeout(() => {
+    previewStallMonitorTimer = null;
+    if (!isRunning(sharedPreviewProcess)) return;
+    if (!hasPreviewDemand()) return;
+
+    const staleForMs = latestPreviewFrameAt > 0
+      ? Date.now() - latestPreviewFrameAt
+      : Number.POSITIVE_INFINITY;
+
+    if (staleForMs >= PREVIEW_STALL_TIMEOUT_MS) {
+      restartSharedPreviewProcess(`frame live view macet ${Math.round(staleForMs)}ms`);
+      return;
+    }
+
+    armPreviewStallMonitor(PREVIEW_STALL_TIMEOUT_MS);
+  }, delayMs);
+}
+
+function restartSharedPreviewProcess(reason: string) {
+  if (!hasPreviewDemand()) return;
+
+  const now = Date.now();
+  if (previewRestartWindowStartedAt === 0 || now - previewRestartWindowStartedAt > PREVIEW_RESTART_WINDOW_MS) {
+    previewRestartWindowStartedAt = now;
+    previewRestartAttemptsInWindow = 0;
+  }
+
+  if (previewRestartAttemptsInWindow >= PREVIEW_RESTART_MAX_IN_WINDOW) {
+    console.error(`[agent] Preview recovery dihentikan sementara: terlalu sering restart (${previewRestartAttemptsInWindow}/${PREVIEW_RESTART_MAX_IN_WINDOW}).`);
+    armPreviewStallMonitor(PREVIEW_RESTART_WINDOW_MS);
+    return;
+  }
+
+  previewRestartAttemptsInWindow += 1;
+  console.warn(`[agent] Preview recovery #${previewRestartAttemptsInWindow}: ${reason}`);
+
+  if (previewStallMonitorTimer) {
+    clearTimeout(previewStallMonitorTimer);
+    previewStallMonitorTimer = null;
+  }
+
+  const current = sharedPreviewProcess;
+  sharedPreviewProcess = null;
+  sharedPreviewBuffer = Buffer.alloc(0);
+
+  if (isRunning(current)) {
+    plannedPreviewRestarts.add(current);
+    current.stdin?.end();
+    setTimeout(() => {
+      if (!current.killed && current.exitCode === null) {
+        current.kill();
+      }
+    }, PREVIEW_RESTART_KILL_GRACE_MS);
+  }
+
+  if (previewRestartTimer) clearTimeout(previewRestartTimer);
+  const tryStartRecoveredPreview = () => {
+    previewRestartTimer = null;
+    if (!hasPreviewDemand()) return;
+
+    if (isRunning(current)) {
+      current.kill();
+      previewRestartTimer = setTimeout(tryStartRecoveredPreview, 220);
+      return;
+    }
+
+    try {
+      startSharedPreviewProcess();
+      armPreviewStallMonitor();
+    } catch (error) {
+      console.error("[agent] Preview recovery gagal start ulang:", error);
+      armPreviewStallMonitor(1200);
+    }
+  };
+  previewRestartTimer = setTimeout(tryStartRecoveredPreview, PREVIEW_RESTART_START_DELAY_MS);
 }
 
 function updateCameraStatusCache(status: CameraStatusResult) {
@@ -212,6 +325,7 @@ function startSharedPreviewProcess() {
 
   sharedPreviewProcess = child;
   activePreviewStreams.add(child);
+  armPreviewStallMonitor();
 
   child.stdout?.on("data", (chunk: Buffer) => {
     sharedPreviewBuffer = Buffer.concat([sharedPreviewBuffer, chunk]);
@@ -239,20 +353,37 @@ function startSharedPreviewProcess() {
 
   child.on("error", (error) => {
     activePreviewStreams.delete(child);
+    const plannedRestart = plannedPreviewRestarts.has(child);
+    if (plannedRestart) plannedPreviewRestarts.delete(child);
     if (sharedPreviewProcess === child) {
       sharedPreviewProcess = null;
       sharedPreviewBuffer = Buffer.alloc(0);
     }
+    if (plannedRestart) return;
     failPreviewFrameWaiters(error instanceof Error ? error : new Error(String(error)));
+    if (hasPreviewDemand()) {
+      restartSharedPreviewProcess("preview process error");
+    }
   });
 
   child.on("exit", (code, signal) => {
     activePreviewStreams.delete(child);
+    const plannedRestart = plannedPreviewRestarts.has(child);
+    if (plannedRestart) plannedPreviewRestarts.delete(child);
     if (sharedPreviewProcess === child) {
       sharedPreviewProcess = null;
       sharedPreviewBuffer = Buffer.alloc(0);
     }
+    if (plannedRestart) {
+      if (hasPreviewDemand()) {
+        armPreviewStallMonitor(200);
+      }
+      return;
+    }
     failPreviewFrameWaiters(new Error(`Live view Canon berhenti (${signal || (code ?? "unknown")})`));
+    if (hasPreviewDemand()) {
+      restartSharedPreviewProcess(`preview process exit (${signal || (code ?? "unknown")})`);
+    }
   });
 }
 
@@ -291,6 +422,15 @@ function stopActivePreviewStreams(): Promise<boolean> {
     clearTimeout(previewIdleTimer);
     previewIdleTimer = null;
   }
+  if (previewStallMonitorTimer) {
+    clearTimeout(previewStallMonitorTimer);
+    previewStallMonitorTimer = null;
+  }
+  if (previewRestartTimer) {
+    clearTimeout(previewRestartTimer);
+    previewRestartTimer = null;
+  }
+  plannedPreviewRestarts.clear();
 
   const processes = Array.from(activePreviewStreams);
   if (processes.length === 0) return Promise.resolve(false);
@@ -301,7 +441,7 @@ function stopActivePreviewStreams(): Promise<boolean> {
       remaining -= 1;
       if (remaining <= 0) resolve(true);
     };
-    const timer = setTimeout(() => resolve(true), 500);
+    const timer = setTimeout(() => resolve(true), 300); // OPTIMIZED: was 500ms
 
     for (const child of processes) {
       if (child.killed || child.exitCode !== null) {
@@ -314,14 +454,14 @@ function stopActivePreviewStreams(): Promise<boolean> {
         done();
       });
       child.stdin?.end();
-      setTimeout(() => {
+      setTimeout(() => { // OPTIMIZED: reduced from 350ms to 150ms
         if (!child.killed && child.exitCode === null) {
           child.kill();
         }
-      }, 350);
+      }, 150);
     }
 
-    setTimeout(() => clearTimeout(timer), 600);
+    setTimeout(() => clearTimeout(timer), 400); // OPTIMIZED: was 600ms
   });
 }
 
@@ -482,7 +622,12 @@ function normalizeBridgeErrorMessage(rawMessage: string): string {
   const trimmed = rawMessage.trim();
   if (!trimmed) return "Operasi kamera Canon gagal";
 
-  const lines = trimmed
+  const normalizedNonJpegMessage = trimmed.replace(
+    /Capture Canon menghasilkan file\s*['".\s]*\.\s*Ubah Image Quality kamera ke JPEG \(L\/Fine\) agar foto bisa diproses\./i,
+    "Capture Canon menghasilkan file non-JPEG. Ubah Image Quality kamera ke JPEG (L/Fine) agar foto bisa diproses."
+  );
+
+  const lines = normalizedNonJpegMessage
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -506,6 +651,15 @@ function normalizeBridgeErrorMessage(rawMessage: string): string {
   }
 
   return lines[lines.length - 1].replace(/^\[bridge\]\s*/i, "") || "Operasi kamera Canon gagal";
+}
+
+function isRetryableCaptureFailure(rawMessage: string): boolean {
+  const message = rawMessage.toLowerCase();
+  return (
+    message.includes("gagal trigger shutter canon")
+    || message.includes("device busy")
+    || message.includes("kamera canon sedang busy")
+  );
 }
 
 async function detectCameras(): Promise<CameraStatusResult> {
@@ -826,9 +980,8 @@ app.post("/capture", async (req: Request, res: Response) => {
 
   try {
     const stoppedExistingStream = await stopActivePreviewStreams();
-    // Always give camera a moment to release session, even if no active stream was tracked
-    // (client may have just closed the connection and the bridge process is still dying)
-    const recoveryMs = stoppedExistingStream ? 800 : 500;
+    // OPTIMIZED: Reduced recovery delay - was 800/500ms, now 300/200ms for faster transition
+    const recoveryMs = stoppedExistingStream ? 300 : 200;
     await new Promise((resolve) => setTimeout(resolve, recoveryMs));
 
     const bridgePath = resolveEdsdkBridgePath();
@@ -845,10 +998,8 @@ app.post("/capture", async (req: Request, res: Response) => {
         captureError = err;
         if (fs.existsSync(tmpFile)) break;
         const message = err instanceof Error ? err.message : String(err);
-        if (message.includes("Timeout menunggu hasil capture Canon")) break;
-        if (attempt < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 900));
-        }
+        if (!isRetryableCaptureFailure(message) || attempt >= 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 900 + attempt * 400));
       }
     }
 
@@ -885,20 +1036,20 @@ app.post("/capture", async (req: Request, res: Response) => {
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
   } finally {
     if (hadPreviewSession) {
-      setTimeout(() => {
+      setTimeout(() => { // OPTIMIZED: reduced from 120ms to 50ms for faster preview resume
         try {
           startSharedPreviewProcess();
-          void getPreviewFrame(2200)
+          void getPreviewFrame(1200) // OPTIMIZED: reduced from 2200ms to 1200ms
             .then(() => {
-              scheduleSharedPreviewStop(3500);
+              scheduleSharedPreviewStop(2000); // OPTIMIZED: reduced from 3500ms to 2000ms
             })
             .catch(() => {
-              scheduleSharedPreviewStop(2000);
+              scheduleSharedPreviewStop(1000); // OPTIMIZED: reduced from 2000ms to 1000ms
             });
         } catch {
           // Ignore warm-up failures; preview route will retry on next request.
         }
-      }, 120);
+      }, 50);
     }
 
     if (fs.existsSync(tmpFile)) {

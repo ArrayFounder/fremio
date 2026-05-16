@@ -69,10 +69,59 @@ function getBestRecordingMime(): string {
   return "video/webm";
 }
 
+async function mirrorCapturedPhotoDataUrl(sourceDataUrl: string): Promise<string> {
+  const quality = 0.95;
+
+  if (typeof createImageBitmap === "function") {
+    try {
+      const response = await fetch(sourceDataUrl);
+      const blob = await response.blob();
+      const bitmap = await createImageBitmap(blob);
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Gagal membuat context canvas mirror");
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(bitmap, 0, 0);
+        return canvas.toDataURL("image/jpeg", quality);
+      } finally {
+        bitmap.close();
+      }
+    } catch {
+      // Fallback ke HTMLImageElement di bawah.
+    }
+  }
+
+  return await new Promise<string>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Gagal membuat context canvas mirror");
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    img.onerror = () => reject(new Error("Gagal memuat foto untuk proses mirror"));
+    img.src = sourceDataUrl;
+  });
+}
+
 declare global {
   interface Window {
     fremioBooth?: {
       getBridgeStatus?: () => Promise<unknown>;
+      restartBridge?: () => Promise<unknown>;
       agentStatus: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
       agentCapture: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
       agentPreview: () => Promise<{ ok: boolean; base64?: string; mimeType?: string; error?: string }>;
@@ -97,6 +146,7 @@ interface CameraScreenProps {
   onCountdownChange?: (isCounting: boolean) => void; // fullscreen UX: sembunyikan overlay saat countdown
   livePhotoVideoEnabled?: boolean;
   mode?:           "live_view" | "fullscreen"; // mode sesi foto
+  boothMirrorSetting?: boolean;
 }
 
 type CountdownState = "READY" | "COUNTING" | "FLASH" | "CAPTURING" | "DONE";
@@ -504,6 +554,7 @@ interface LivePreviewCanvasProps {
   dslrImageRef?:   React.RefObject<HTMLImageElement | null>;
   dslrPosterSrc?:  string | null;
   dslrPosterActive?: boolean;
+  dslrPosterMirror?: boolean;
   mirror:          boolean;
   frame:           FrameData;
   slots:           PhotoSlot[];
@@ -513,7 +564,7 @@ interface LivePreviewCanvasProps {
   activeSlotIndex: number;
 }
 
-function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex }: LivePreviewCanvasProps) {
+function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex }: LivePreviewCanvasProps) {
   const canvasRef           = useRef<HTMLCanvasElement>(null);
   const hiddenVidRef        = useRef<HTMLVideoElement>(null);
   const frameBaseImgRef     = useRef<HTMLImageElement | null>(null);
@@ -524,6 +575,8 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   const sceneImgsRef        = useRef<Map<string, HTMLImageElement>>(new Map());
   const capturedPhotosRef   = useRef<string[]>(capturedPhotos);
   const activeSlotRef       = useRef<number>(activeSlotIndex);
+  const dslrPosterActiveRef = useRef<boolean>(dslrPosterActive ?? false);
+  const dslrPosterMirrorRef = useRef<boolean>(dslrPosterMirror);
   const rafRef              = useRef<number>(0);
 
   const cw = frame.canvasWidth  || 1080;
@@ -556,6 +609,8 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   // Keep refs fresh so the RAF loop always reads the latest values without restarting
   useEffect(() => { capturedPhotosRef.current = capturedPhotos; }, [capturedPhotos]);
   useEffect(() => { activeSlotRef.current = activeSlotIndex; }, [activeSlotIndex]);
+  useEffect(() => { dslrPosterActiveRef.current = Boolean(dslrPosterActive); }, [dslrPosterActive]);
+  useEffect(() => { dslrPosterMirrorRef.current = dslrPosterMirror; }, [dslrPosterMirror]);
 
   // Attach stream to hidden video + explicitly play (autoPlay can be blocked for invisible elements)
   useEffect(() => {
@@ -709,14 +764,7 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
           // Tampilkan foto yang sudah diambil (non-empty URL)
           const img = photoImgsRef.current.get(captureIdx);
           if (img?.complete && img.naturalWidth) {
-            if (mirror) {
-              ctx.save();
-              ctx.scale(-1, 1);
-              drawCoverToCanvas(ctx, img, -w / 2, -h / 2, w, h);
-              ctx.restore();
-            } else {
-              drawCoverToCanvas(ctx, img, -w / 2, -h / 2, w, h);
-            }
+            drawCoverToCanvas(ctx, img, -w / 2, -h / 2, w, h);
           }
         } else if (!allPhotosDone && captureIdx === activeSlotRef.current) {
           // Tampilkan live stream untuk slot aktif (capture normal maupun retake).
@@ -724,15 +772,17 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
           const dslrPosterImg = dslrPosterImgRef.current;
           const vid = hiddenVidRef.current;
           const posterSource = dslrPosterImg && dslrPosterImg.complete && dslrPosterImg.naturalWidth > 0 ? dslrPosterImg : null;
-          const liveSource = dslrPosterActive && posterSource
+          const usingPosterSource = Boolean(dslrPosterActiveRef.current && posterSource);
+          const liveSource = usingPosterSource
             ? posterSource
             : dslrImg && dslrImg.naturalWidth > 0
             ? dslrImg
             : posterSource
             ? posterSource
             : vid && vid.readyState >= 2 && vid.videoWidth > 0 ? vid : null;
+          const shouldMirrorLiveSource = usingPosterSource ? dslrPosterMirrorRef.current : mirror;
           if (liveSource) {
-            if (mirror) {
+            if (shouldMirrorLiveSource) {
               ctx.save();
               ctx.scale(-1, 1);
               drawCoverToCanvas(ctx, liveSource, -w / 2, -h / 2, w, h);
@@ -791,7 +841,7 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   );
 }
 
-export function CameraScreen({ booth, frame, photoIndex, capturedCount, capturedPhotos, allPhotosDone, retakeSlotIndex, onCapture, onVideoReady, onProceed, onRetakeSlot, onCountdownChange, livePhotoVideoEnabled = true, mode = "live_view" }: CameraScreenProps) {
+export function CameraScreen({ booth, frame, photoIndex, capturedCount, capturedPhotos, allPhotosDone, retakeSlotIndex, onCapture, onVideoReady, onProceed, onRetakeSlot, onCountdownChange, livePhotoVideoEnabled = true, mode = "live_view", boothMirrorSetting }: CameraScreenProps) {
   const { primaryColor, accentColor } = booth;
   const bgColor = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.cameraBgColor as string | undefined ?? primaryColor;
   const { textPrimary, textSecondary, textTertiary } = getAdaptiveColors(bgColor);
@@ -817,9 +867,33 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   });
   const dslrMode = captureSource === "dslr";
   const [mirror, setMirror] = useState(() => {
+    if (typeof boothMirrorSetting === "boolean") return boothMirrorSetting;
     if (typeof sessionStorage === "undefined") return true;
     return sessionStorage.getItem("booth_camera_mirror") !== "false";
   });
+  const mirrorRef = useRef(mirror);
+  const boothMirrorSettingRef = useRef(boothMirrorSetting);
+  boothMirrorSettingRef.current = boothMirrorSetting;
+  useEffect(() => {
+    mirrorRef.current = mirror;
+  }, [mirror]);
+  useEffect(() => {
+    if (typeof boothMirrorSetting !== "boolean") return;
+    mirrorRef.current = boothMirrorSetting;
+    setMirror((prev) => (prev === boothMirrorSetting ? prev : boothMirrorSetting));
+    try {
+      sessionStorage.setItem("booth_camera_mirror", String(boothMirrorSetting));
+    } catch {
+      // Ignore storage quota issues; runtime state already synced.
+    }
+  }, [boothMirrorSetting]);
+
+  // Sync dslrPosterMirror with mirror state when mirror changes
+  // This ensures the last saved preview (poster) mirrors correctly when booth mirror setting changes
+  useEffect(() => {
+    setDslrPosterMirror(mirror);
+  }, [mirror]);
+
   const [showSettings, setShowSettings] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
 
@@ -840,22 +914,58 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [dslrSupportsLiveView, setDslrSupportsLiveView] = useState<boolean | null>(() => (
     cachedDslrLiveView === "true" ? true : cachedDslrLiveView === "false" ? false : null
   ));
+  const [dslrPreviewKey, setDslrPreviewKey] = useState(() => Date.now());
   const [dslrPreviewUrl, setDslrPreviewUrl] = useState<string | null>(null);
   const [dslrPreviewError, setDslrPreviewError] = useState<string | null>(null);
   const [dslrPreviewPaused, setDslrPreviewPaused] = useState(false);
   const [dslrPreviewReady, setDslrPreviewReady] = useState(false);
   const [dslrPosterSrc, setDslrPosterSrc] = useState<string | null>(null);
   const [dslrPosterActive, setDslrPosterActive] = useState(false);
-  const DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS = 1200;
-  const DSLR_PREVIEW_RESUME_DELAY_MS = 240;
-  const DSLR_PREVIEW_ERROR_GRACE_MS = 1800;
+  const [dslrPosterMirror, setDslrPosterMirror] = useState<boolean>(mirror);
+  const DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS = 300; // OPTIMIZED: was 600ms
+  const DSLR_PREVIEW_RESUME_DELAY_MS = 80; // OPTIMIZED: was 150ms
+  const DSLR_PREVIEW_ERROR_GRACE_MS = 1200; // OPTIMIZED: was 1800ms
   const dslrPreviewImgRef = useRef<HTMLImageElement | null>(null);
   const dslrRecordingPosterImgRef = useRef<HTMLImageElement | null>(null);
   const agentBaseRef = useRef<string | null>(cachedAgentBase);
   const useIpcAgentRef = useRef<boolean>(false);
+  const previewRecoveryInFlightRef = useRef(false);
+  const lastPreviewRecoveryAtRef = useRef(0);
   useEffect(() => {
     agentBaseRef.current = agentBase;
   }, [agentBase]);
+
+  const restartCanonPreviewBridge = useCallback(async (reason: string): Promise<boolean> => {
+    if (typeof window === "undefined") return false;
+    const restartBridge = window.fremioBooth?.restartBridge;
+
+    const now = Date.now();
+    if (previewRecoveryInFlightRef.current) return false;
+    if (now - lastPreviewRecoveryAtRef.current < 6000) return false;
+
+    lastPreviewRecoveryAtRef.current = now;
+
+    setDslrPreviewReady(false);
+    setDslrPreviewError(`Menyambungkan ulang Canon... (${reason})`);
+    setDslrPreviewUrl(null);
+
+    if (!restartBridge) {
+      setDslrPreviewKey(Date.now());
+      return true;
+    }
+
+    previewRecoveryInFlightRef.current = true;
+    try {
+      await restartBridge();
+      setDslrPreviewKey(Date.now());
+      return true;
+    } catch {
+      setDslrPreviewKey(Date.now());
+      return false;
+    } finally {
+      previewRecoveryInFlightRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -976,6 +1086,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       setDslrPreviewReady(false);
       setDslrPosterSrc(null);
       setDslrPosterActive(false);
+      setDslrPosterMirror(mirrorRef.current);
       return;
     }
 
@@ -992,10 +1103,21 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       return;
     }
 
+    // When paused, we still want to keep the preview recovery running in background
+    // but with a longer delay so it doesn't interfere with capture flow
     if (dslrPreviewPaused) {
-      setDslrPreviewUrl(null);
-      setDslrPreviewError(null);
-      setDslrPreviewReady(false);
+      // Check if we should start recovery based on sessionStorage timing
+      const releaseUntil = typeof window === "undefined"
+        ? 0
+        : Number(sessionStorage.getItem("booth_dslr_stream_release_until") || 0);
+      const delayMs = Math.max(0, releaseUntil - Date.now());
+      
+      if (delayMs <= 0) {
+        // Recovery is due - start preview but don't block capture flow
+        setTimeout(() => {
+          setDslrPreviewPaused(false);
+        }, 50);
+      }
       return;
     }
 
@@ -1011,10 +1133,39 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     let cancelled = false;
     let hasFrame = false;
     let previewPollingStartedAt = 0;
+    let ipcFallbackTimer: number | null = null;
 
     let rafId: number | null = null;
     let lastFetchTime = 0;
     const targetInterval = 1000 / 90; // 90 FPS target for optimal Canon performance
+
+    const getStreamPreviewUrl = (cacheKey: number): string | null => {
+      if (typeof window === "undefined") return null;
+      return window.fremioBooth?.agentPreviewStreamUrl?.(cacheKey) ?? (base ? `${base}/preview-stream?t=${cacheKey}` : null);
+    };
+
+    let usingStreamFallback = false;
+    const switchToStreamFallback = () => {
+      if (cancelled || usingStreamFallback) return;
+      const streamUrl = getStreamPreviewUrl(Date.now());
+      if (!streamUrl) return;
+
+      usingStreamFallback = true;
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (ipcFallbackTimer !== null) {
+        window.clearTimeout(ipcFallbackTimer);
+        ipcFallbackTimer = null;
+      }
+
+      setDslrPreviewReady(false);
+      setDslrPreviewError("Menyiapkan live preview Canon…");
+      setDslrPreviewUrl(streamUrl);
+
+      void restartCanonPreviewBridge("fallback stream");
+    };
 
     const pollPreview = async () => {
       if (cancelled) return;
@@ -1023,14 +1174,23 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (now - lastFetchTime >= targetInterval) {
         try {
           const res = await window.fremioBooth?.agentPreview();
-          if (cancelled) return;
+          if (cancelled || usingStreamFallback) return;
           if (res?.ok && res.base64) {
             hasFrame = true;
+            if (ipcFallbackTimer !== null) {
+              window.clearTimeout(ipcFallbackTimer);
+              ipcFallbackTimer = null;
+            }
             setDslrPreviewUrl(`data:${res.mimeType || "image/jpeg"};base64,${res.base64}`);
             setDslrPreviewError(null);
             setDslrPreviewReady(true);
             setDslrPosterActive(false);
           } else if (!hasFrame) {
+            if (Date.now() - previewPollingStartedAt >= 1200) {
+              void restartCanonPreviewBridge("frame tidak masuk");
+              switchToStreamFallback();
+              return;
+            }
             setDslrPreviewReady(false);
             if (Date.now() - previewPollingStartedAt < DSLR_PREVIEW_ERROR_GRACE_MS) {
               setDslrPreviewError("Menyiapkan live preview Canon…");
@@ -1039,7 +1199,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             }
           }
         } catch (error) {
-          if (!cancelled && !hasFrame) {
+          if (!cancelled && !hasFrame && !usingStreamFallback) {
+            void restartCanonPreviewBridge("preview request gagal");
+            switchToStreamFallback();
+            if (usingStreamFallback) return;
             setDslrPreviewReady(false);
             if (Date.now() - previewPollingStartedAt < DSLR_PREVIEW_ERROR_GRACE_MS) {
               setDslrPreviewError("Menyiapkan live preview Canon…");
@@ -1051,7 +1214,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         lastFetchTime = now;
       }
 
-      rafId = requestAnimationFrame(pollPreview);
+      if (!usingStreamFallback) {
+        rafId = requestAnimationFrame(pollPreview);
+      }
     };
 
     const startPreview = () => {
@@ -1059,14 +1224,26 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         sessionStorage.removeItem("booth_dslr_stream_release_until");
       }
       setDslrPreviewReady(false);
-      const cacheKey = Date.now();
+      const cacheKey = dslrPreviewKey;
       previewPollingStartedAt = Date.now();
       setDslrPreviewError(null);
       if (hasIpcPreview) {
         setDslrPreviewUrl(null);
+        if (ipcFallbackTimer !== null) {
+          window.clearTimeout(ipcFallbackTimer);
+        }
+        ipcFallbackTimer = window.setTimeout(() => {
+          if (!cancelled && !hasFrame) {
+            void restartCanonPreviewBridge("timeout awal live view");
+            switchToStreamFallback();
+          }
+        }, 1800);
         timer = window.setTimeout(pollPreview, 0);
       } else if (base) {
-        setDslrPreviewUrl(window.fremioBooth?.agentPreviewStreamUrl?.(cacheKey) ?? `${base}/preview-stream?t=${cacheKey}`);
+        const streamUrl = getStreamPreviewUrl(cacheKey);
+        if (streamUrl) {
+          setDslrPreviewUrl(streamUrl);
+        }
       }
     };
 
@@ -1080,13 +1257,15 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     return () => {
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
+      if (ipcFallbackTimer !== null) window.clearTimeout(ipcFallbackTimer);
       if (rafId !== null) cancelAnimationFrame(rafId);
       setDslrPreviewUrl(null);
       setDslrPreviewReady(false);
     };
-  }, [agentBase, dslrMode, dslrSupportsLiveView, dslrPreviewPaused]);
+  }, [agentBase, dslrMode, dslrPreviewKey, dslrSupportsLiveView, dslrPreviewPaused, restartCanonPreviewBridge]);
 
-  const freezeDslrPreview = useCallback(() => {
+  const freezeDslrPreview = useCallback((mirrorEnabled = mirrorRef.current) => {
+    setDslrPosterMirror(mirrorEnabled);
     const img = dslrPreviewImgRef.current;
     if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
       try {
@@ -1095,11 +1274,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         canvas.height = img.naturalHeight;
         const ctx = canvas.getContext("2d");
         if (ctx) {
-          // Apply mirror transform if enabled
-          if (mirror) {
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
-          }
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           setDslrPosterSrc(canvas.toDataURL("image/jpeg", 0.9));
         }
@@ -1107,15 +1281,20 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     }
     setDslrPosterActive(true);
     setDslrPreviewPaused(true);
-  }, [mirror]);
+  }, []);
 
-  const captureFromAgent = useCallback(async (): Promise<string> => {
+  const captureFromAgent = useCallback(async (captureMirror = mirrorRef.current): Promise<string> => {
     const base = agentBaseRef.current;
     if (!base && !(useIpcAgentRef.current && window.fremioBooth?.agentCapture)) {
       throw new Error("Agent lokal tidak terdeteksi. Pastikan Fremio Studio sudah dibuka.");
     }
 
-    freezeDslrPreview();
+    // Only freeze if there's no existing frozen poster (to avoid double-freeze issue)
+    // The frozen poster from countdown is already being used in runCapture
+    const existingPoster = dslrPosterSrc;
+    if (!existingPoster) {
+      freezeDslrPreview(captureMirror);
+    }
 
     try {
       let data: { ok: boolean; error?: string; image?: { base64: string; mimeType: string } } | undefined;
@@ -1131,7 +1310,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
-          signal: AbortSignal.timeout(65000),
+          signal: AbortSignal.timeout(15000), // Canon typically captures in 3-8 seconds
         });
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({})) as { error?: string };
@@ -1147,46 +1326,27 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         throw new Error("Capture gagal: agent tidak mengembalikan gambar.");
       }
       
-      // Apply mirror transform to captured photo if needed
       let photoDataUrl = `data:${data.image.mimeType};base64,${data.image.base64}`;
-      if (mirror) {
-        try {
-          const img = new Image();
-          await new Promise<void>((resolve, reject) => {
-            img.onload = () => resolve();
-            img.onerror = () => reject(new Error("Failed to load captured image"));
-            img.src = photoDataUrl;
-          });
-          
-          const canvas = document.createElement("canvas");
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(img, 0, 0);
-            photoDataUrl = canvas.toDataURL("image/jpeg", 0.95);
-          }
-        } catch (err) {
-          console.error("Failed to apply mirror to captured photo:", err);
-          // Fallback to original photo if mirror fails
-        }
+      if (captureMirror) {
+        photoDataUrl = await mirrorCapturedPhotoDataUrl(photoDataUrl);
       }
       
       return photoDataUrl;
     } catch (err) {
+      // Clear poster on error so user doesn't see stuck frozen preview
+      setDslrPosterSrc(null);
       throw err instanceof Error ? err : new Error(String(err));
     } finally {
+      // Resume live preview immediately (faster recovery)
       if (typeof window !== "undefined") {
         sessionStorage.setItem(
           "booth_dslr_stream_release_until",
-          String(Date.now() + DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS)
+          String(Date.now() + 100) // OPTIMIZED: reduced from 200ms to 100ms
         );
       }
-      setTimeout(() => setDslrPreviewPaused(false), DSLR_PREVIEW_RESUME_DELAY_MS);
+      setTimeout(() => setDslrPreviewPaused(false), 50); // OPTIMIZED: was 100ms
     }
-  }, [DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS, DSLR_PREVIEW_RESUME_DELAY_MS, freezeDslrPreview, mirror]);
+  }, [DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS, DSLR_PREVIEW_RESUME_DELAY_MS, freezeDslrPreview, dslrPosterSrc]);
 
   const { videoRef, stream, isReady, permissionError, devices, start, stop, capture, startRecording, stopRecording } = useCamera({
     canvasWidth:  1920,
@@ -1399,6 +1559,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   useEffect(() => {
     if (dslrPreviewPauseTimerRef.current) clearTimeout(dslrPreviewPauseTimerRef.current);
     setDslrPosterActive(false);
+    setDslrPosterSrc(null); // Clear frozen poster for clean state
     setCdState("READY");
     setCountdown(null);
   }, [photoIndex, retakeSlotIndex, capturedCount]);
@@ -1444,12 +1605,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   };
 
   const toggleMirror = () => {
+    if (typeof boothMirrorSetting === "boolean") return;
     const next = !mirror;
     try {
       sessionStorage.setItem("booth_camera_mirror", String(next));
     } catch {
       // Ignore storage quota issues; keep runtime state in memory.
     }
+    mirrorRef.current = next;
     setMirror(next);
   };
 
@@ -1458,7 +1621,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     if (dslrPreviewPauseTimerRef.current) clearTimeout(dslrPreviewPauseTimerRef.current);
     setCaptureError(null);
     setCdState("COUNTING");
-    setCountdown(3);
+    setCountdown(5);
     const currentCaptureIndex = retakeSlotIndex !== null ? retakeSlotIndex : capturedCount;
 
     // ── Live Mode: mulai rekam saat countdown dimulai (jika diaktifkan) ────
@@ -1469,14 +1632,28 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     }
 
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
-    const runCapture = async () => {
+    
+    // Store the frozen poster at start of countdown to use for immediate display
+    let frozenPosterAtStart: string | null = null;
+    const captureAndDisplay = async () => {
+      const bs = boothMirrorSettingRef.current;
+      const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
+      console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
       setCountdown(null);
       setCdState("CAPTURING");
+      
+      // For DSLR: Show frozen preview IMMEDIATELY to avoid long wait perception
+      if (dslrMode && frozenPosterAtStart) {
+        console.log("[CameraScreen] DSLR: showing frozen preview immediately");
+        onCapture(frozenPosterAtStart);
+      }
+      
       // Ambil foto sesuai sumber yang dipilih operator di setup.
       let dataUrl: string | null = null;
       if (captureSource === "dslr") {
         try {
-          dataUrl = await captureFromAgent();
+          dataUrl = await captureFromAgent(captureMirrorSnapshot);
+          console.log("[CameraScreen] DSLR captured, mirror applied:", captureMirrorSnapshot);
         } catch (err) {
           setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
           if (livePhotoVideoEnabled && !dslrMode) stopRecording().catch(() => {});
@@ -1486,7 +1663,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         }
       } else if (captureSource === "auto" && dslrAvailable) {
         try {
-          dataUrl = await captureFromAgent();
+          dataUrl = await captureFromAgent(captureMirrorSnapshot);
+          console.log("[CameraScreen] auto DSLR captured, mirror applied:", captureMirrorSnapshot);
         } catch {
           /* fallback ke webcam below */
         }
@@ -1503,8 +1681,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         if (livePhotoVideoEnabled && dslrMode) stopDslrLiveRecording().catch(() => {});
         return;
       }
-      // Tampilkan foto review segera — jangan tunggu video
-      onCapture(dataUrl);
+      // For non-DSLR: show captured photo immediately
+      // For DSLR: replace frozen preview with actual captured photo if different
+      if (!dslrMode) {
+        onCapture(dataUrl);
+      } else if (dataUrl !== frozenPosterAtStart) {
+        onCapture(dataUrl);
+      }
       if (livePhotoVideoEnabled && !dslrMode) {
         // Proses video di background (~800ms setelah shutter)
         void (async () => {
@@ -1523,33 +1706,42 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
 
-    let count = 3;
+    let count = 5;
     const tick = () => {
       count -= 1;
       if (count > 0) {
         setCountdown(count);
         if (willUseAgentCapture && count === 1) {
-          freezeDslrPreview();
+          const bs = boothMirrorSettingRef.current;
+          const freezeMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
+          freezeDslrPreview(freezeMirror);
+          // Store frozen poster BEFORE capture runs
+          frozenPosterAtStart = dslrPosterSrc;
+          // Trigger capture at the START of "1" second (user sees "1" displayed for full 1 second)
+          // This gives camera ~1 second to capture before countdown would reach 0
           countdownTimerRef.current = setTimeout(() => {
             setCountdown(null);
-            runCapture();
-          }, 120);
-          return;
+            captureAndDisplay();
+          }, 50); // Small delay to ensure poster is ready, but within the "1" second window
+          return; // Don't schedule another tick - capture is the final action
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
       } else {
+        // count === 0 - This code is NOT reached for DSLR capture (we captured at count=1)
+        // This block only handles non-DSLR webcam capture
         if (willUseAgentCapture) {
           setCountdown(null);
-          countdownTimerRef.current = setTimeout(runCapture, 50);
+          // Fallback: should not happen for DSLR, but keep for safety
+          countdownTimerRef.current = setTimeout(captureAndDisplay, 0);
         } else {
           setCountdown(null);
           setCdState("FLASH");
-          countdownTimerRef.current = setTimeout(runCapture, 300);
+          countdownTimerRef.current = setTimeout(captureAndDisplay, 0);
         }
       }
     };
     countdownTimerRef.current = setTimeout(tick, 1000);
-  }, [captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, freezeDslrPreview, livePhotoVideoEnabled, onCapture, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
+  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, freezeDslrPreview, livePhotoVideoEnabled, onCapture, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
 
   // Viewfinder — landscape 16:9 di landscape, 4:3 di portrait
   const aspectStyle = isPortrait
@@ -1603,6 +1795,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 onError={() => {
                   setDslrPreviewReady(false);
                   setDslrPreviewError("Live preview Canon belum tersedia. Pastikan Live View aktif di kamera.");
+                  setDslrPreviewUrl(null);
+                  void restartCanonPreviewBridge("gagal render stream");
                 }}
               />
             ) : dslrPosterSrc ? (
@@ -1610,7 +1804,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 src={dslrPosterSrc}
                 alt="Preview terakhir Canon"
                 className="w-full h-full object-cover"
-                style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+                style={{ transform: dslrPosterMirror ? "scaleX(-1)" : "none" }}
               />
             ) : (
               <div className="absolute inset-0 bg-black" />
@@ -1627,8 +1821,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           )
         }
 
-        {/* DSLR loading overlay */}
-        {dslrMode && !dslrPreviewReady && dslrSupportsLiveView !== false && dslrAvailable && !dslrPreviewPaused && (
+        {/* DSLR loading overlay - Only show in live_view mode, NOT in fullscreen */}
+        {/* In fullscreen mode, the loading state is shown by disabled capture button */}
+        {mode !== "fullscreen" && dslrMode && !dslrPreviewReady && dslrSupportsLiveView !== false && dslrAvailable && !dslrPreviewPaused && (
           <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/80 backdrop-blur-sm">
             <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
             <p className="text-white font-bold text-lg">Menyiapkan kamera Canon…</p>
@@ -1638,9 +1833,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
         {/* DSLR error overlay */}
         {dslrMode && dslrPreviewError && dslrPreviewError !== "Menyiapkan live preview Canon…" && (
-          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm px-6">
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/80 backdrop-blur-sm px-6">
             <div className="text-5xl">📷</div>
             <p className="text-white font-bold text-center">{dslrPreviewError}</p>
+            <button
+              onClick={() => restartCanonPreviewBridge("manual retry dari CameraScreen")}
+              className="px-6 py-3 rounded-2xl font-bold text-base bg-white/20 hover:bg-white/30 transition-colors"
+              style={{ color: "white" }}
+            >
+              🔄 Coba Lagi
+            </button>
           </div>
         )}
 
@@ -1708,7 +1910,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                     return photo ? (
                       <div key={i} className="relative w-16 h-16 shrink-0 rounded-lg overflow-hidden shadow-lg">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" style={{ transform: mirror ? "scaleX(-1)" : "none" }} />
+                        <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
                         <div className="absolute top-0.5 left-0.5 px-1 py-0.5 rounded-full text-[8px] font-bold"
                             style={{ background: accentColor + "cc", color: primaryColor }}>
                           {i + 1}
@@ -1779,7 +1981,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                   photo ? (
                     <div key={i} className="relative w-16 h-16 shrink-0 rounded-lg overflow-hidden shadow-lg">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" style={{ transform: mirror ? "scaleX(-1)" : "none" }} />
+                      <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
                       <div className="absolute top-0.5 left-0.5 px-1 py-0.5 rounded-full text-[8px] font-bold"
                           style={{ background: accentColor + "cc", color: primaryColor }}>
                         {i + 1}
@@ -1878,6 +2080,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 onError={() => {
                   setDslrPreviewReady(false);
                   setDslrPreviewError("Live preview Canon belum tersedia. Pastikan Live View aktif di kamera.");
+                  setDslrPreviewUrl(null);
+                  void restartCanonPreviewBridge("gagal render stream");
                 }}
               />
             ) : dslrPosterSrc ? (
@@ -1885,7 +2089,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 src={dslrPosterSrc}
                 alt="Preview terakhir Canon"
                 className="w-full h-full object-cover"
-                style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+                style={{ transform: dslrPosterMirror ? "scaleX(-1)" : "none" }}
               />
             ) : (
               <div className="absolute inset-0 bg-black" />
@@ -1938,10 +2142,17 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             {/* Mirror toggle */}
             <button
               onClick={toggleMirror}
-              title={mirror ? "Mirror aktif" : "Mirror nonaktif"}
+              disabled={typeof boothMirrorSetting === "boolean"}
+              title={typeof boothMirrorSetting === "boolean"
+                ? (mirror ? "Mirror mengikuti pengaturan booth (aktif)" : "Mirror mengikuti pengaturan booth (nonaktif)")
+                : (mirror ? "Mirror aktif" : "Mirror nonaktif")}
               className="w-9 h-9 rounded-full flex items-center justify-center text-lg
                          transition-opacity backdrop-blur-sm"
-              style={{ background: "rgba(0,0,0,0.45)", opacity: mirror ? 1 : 0.5 }}
+              style={{
+                background: "rgba(0,0,0,0.45)",
+                opacity: mirror ? 1 : 0.5,
+                cursor: typeof boothMirrorSetting === "boolean" ? "not-allowed" : "pointer",
+              }}
             >
               ↔
             </button>
@@ -2156,7 +2367,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                   {photo ? (
                     <>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" style={{ transform: mirror ? "scaleX(-1)" : "none" }} />
+                      <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
                       {allPhotosDone && (
                         <button
                           className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold shadow-lg"
@@ -2194,6 +2405,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 dslrImageRef={dslrMode ? dslrPreviewImgRef : undefined}
                 dslrPosterSrc={dslrMode ? dslrPosterSrc : null}
                 dslrPosterActive={dslrMode ? dslrPosterActive : false}
+                dslrPosterMirror={dslrMode ? dslrPosterMirror : false}
                 mirror={mirror}
                 frame={frame}
                 slots={effectiveSlots}

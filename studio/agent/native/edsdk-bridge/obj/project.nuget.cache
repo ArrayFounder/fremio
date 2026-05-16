@@ -1,15 +1,13 @@
 {
   "version": 2,
-  "dgSpecHash": "Q7bV/X3/VZw=",
+  "dgSpecHash": "KaY81AQPsfQ=",
   "success": true,
-  "projectFilePath": "/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/CanonEdsdkBridge.csproj",
+  "projectFilePath": "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
   "expectedPackageFiles": [
-    "/Users/salwa/.nuget/packages/microsoft.net.illink.tasks/8.0.26/microsoft.net.illink.tasks.8.0.26.nupkg.sha512",
-    "/Users/salwa/.nuget/packages/microsoft.netcore.app.ref/8.0.26/microsoft.netcore.app.ref.8.0.26.nupkg.sha512",
-    "/Users/salwa/.nuget/packages/microsoft.netcore.app.runtime.win-x64/8.0.26/microsoft.netcore.app.runtime.win-x64.8.0.26.nupkg.sha512",
-    "/Users/salwa/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.26/microsoft.aspnetcore.app.ref.8.0.26.nupkg.sha512",
-    "/Users/salwa/.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/8.0.26/microsoft.aspnetcore.app.runtime.win-x64.8.0.26.nupkg.sha512",
-    "/Users/salwa/.nuget/packages/microsoft.netcore.app.host.win-x64/8.0.26/microsoft.netcore.app.host.win-x64.8.0.26.nupkg.sha512"
+    "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.27\\microsoft.net.illink.tasks.8.0.27.nupkg.sha512",
+    "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.27\\microsoft.netcore.app.runtime.win-x64.8.0.27.nupkg.sha512",
+    "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.27\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.27.nupkg.sha512",
+    "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.27\\microsoft.aspnetcore.app.runtime.win-x64.8.0.27.nupkg.sha512"
   ],
   "logs": []
 }
