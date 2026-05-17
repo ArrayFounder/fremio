@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "fremio-vps": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/mcp-vps/server.js"],
+      "description": "SSH access to Fremio VPS (root@76.13.192.32)"
+    }
+  }
+}
