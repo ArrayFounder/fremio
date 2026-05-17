@@ -52,7 +52,7 @@ const WIN_STEPS = [
   { icon: "🌐", title: "Mulai booth", desc: "Kalau status sudah siap, simpan slug booth lalu mulai sesi foto langsung dari app." },
 ];
 
-const WINDOWS_SETUP_FILE = "fremio-booth-windows-setup-v1.0.29.exe";
+const WINDOWS_SETUP_FILE = "fremio-agent-win.exe";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -92,7 +92,7 @@ export default function AgentPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-xl font-bold text-white">Fremio Studio</h1>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide bg-white/10 text-white/70 border border-white/10">
-                  v1.0.0
+                  v1.0.30
                 </span>
               </div>
               <p className="text-sm text-white/60 mt-1 leading-relaxed">
@@ -180,8 +180,8 @@ export default function AgentPage() {
               {/* Download button */}
               <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-100">
                 <div>
-                  <p className="font-semibold text-gray-900 text-sm">Fremio Studio — Windows</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Installer one-click</p>
+                  <p className="font-semibold text-gray-900 text-sm">Fremio Studio — Windows <span className="text-xs font-normal text-gray-400">v1.0.30</span></p>
+                  <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Agent bridge lokal · Canon USB fix sudah termasuk</p>
                 </div>
                 <a
                   href={`/downloads/${WINDOWS_SETUP_FILE}`}
@@ -199,11 +199,11 @@ export default function AgentPage() {
               <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-amber-50 border border-amber-100">
                 <div>
                   <p className="font-semibold text-amber-900 text-sm">Agent Windows Bundle (Canon EDSDK)</p>
-                  <p className="text-xs text-amber-700 mt-0.5">Jika launcher installer belum mendeteksi Canon, gunakan bundle ini (sudah termasuk bridge + EDSDK DLL).</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Versi agent lengkap beserta Canon EDSDK bridge DLL. Ekstrak ke folder yang sama, jalankan <code className="font-mono bg-amber-100 px-0.5 rounded">fremio-agent-win.exe</code> dari dalam folder bundle.</p>
                 </div>
                 <a
-                  href="/downloads/fremio-agent-win-bundle.zip"
-                  download="fremio-agent-win-bundle.zip"
+                  href="/downloads/fremio-agent-win-bundle/fremio-agent-win.exe"
+                  download="fremio-agent-win.exe"
                   className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
                   style={{ background: "linear-gradient(135deg, #d97706, #b45309)" }}
                 >
@@ -256,10 +256,10 @@ export default function AgentPage() {
               <div className="rounded-xl bg-rose-50 border border-rose-100 px-4 py-3 flex gap-3">
                 <span className="text-lg shrink-0">📷</span>
                 <div className="space-y-0.5">
-                  <p className="text-xs font-semibold text-rose-800">Canon di Windows</p>
+                  <p className="text-xs font-semibold text-rose-800">Canon di Windows — sudah diperbaiki di v1.0.30</p>
                   <p className="text-xs text-rose-700 leading-relaxed">
-                    Jika kamera belum muncul, lihat status di setup screen. App akan memberi tahu apakah bridge aktif,
-                    kamera belum tersambung, atau printer belum siap.
+                    Error <code className="font-mono bg-rose-100 px-0.5 rounded">ECONNRESET</code> dan <code className="font-mono bg-rose-100 px-0.5 rounded">0x000000C0</code> saat capture foto Canon sudah diperbaiki.
+                    Pastikan kamu menggunakan installer v1.0.30 di atas.
                   </p>
                 </div>
               </div>
@@ -404,7 +404,7 @@ export default function AgentPage() {
         </div>
 
         {/* Footer note */}
-        <p className="text-xs text-gray-300 text-center">Fremio Studio v1.0.0 · fremio.id</p>
+        <p className="text-xs text-gray-300 text-center">Fremio Studio v1.0.30 · fremio.id</p>
       </div>
     </div>
   );

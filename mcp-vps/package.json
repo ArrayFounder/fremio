@@ -1,0 +1,11 @@
+{
+  "name": "mcp-vps",
+  "version": "1.0.0",
+  "description": "MCP server for SSH access to Fremio VPS",
+  "type": "module",
+  "main": "server.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "ssh2": "^1.16.0"
+  }
+}

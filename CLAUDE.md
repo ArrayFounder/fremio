@@ -112,8 +112,35 @@ npm start                # Start agent (port 7432)
 | studio/prisma/schema.prisma | PostgreSQL database schema |
 | studio/src/lib/frameEngine.ts | Photo frame compositing (63KB) |
 | studio/src/store/useCreatorStore.js | Frame editor state (42KB) |
+| studio/src/app/(dashboard)/agent/page.tsx | Agent download page at /agent |
+| studio/src/app/(booth)/b/[slug]/screens/BoothSetupScreen.tsx | Hardware setup before booth session |
+| studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx | Booth camera + countdown UI |
+| agent/src/camera.js | Camera abstraction — USB mutex + Canon capture logic |
+| agent/src/index.js | Agent Express server (port 7432) |
 | backend/routes/payment.js | Payment processing (45KB) |
 | backend/routes/designer.js | Designer portal (66KB) |
+
+---
+
+## Canon DSLR Camera Notes
+
+### Known Errors (fixed in agent v1.0.30)
+- `read ECONNRESET` — happens on first capture after live preview; fixed by USB mutex + `captureInFlight` guard in `camera.js`
+- `0x000000C0` (GP_ERROR_IO_USB_FIND) — USB session conflict; fixed by `previewQueue` serialization
+- "Live preview Canon belum tersedia" — timing too short; fixed by increasing grace periods in `BoothSetupScreen.tsx` and `CameraScreen.tsx`
+
+### How Canon capture works
+1. Booth starts live preview (`GET /preview`) via gphoto2 capture-image-and-download loop
+2. When countdown finishes, `POST /capture` is called
+3. `captureInFlight = true` is set **before** killing live preview (to block preview queue from re-entering)
+4. `killActivePreviewAndWait()` terminates live preview process
+5. `triggerShutter()` fires the Canon shutter
+6. Photo downloaded, `captureInFlight = false`, preview resumes
+
+### Timing Requirements
+- gphoto2 needs up to 2200ms after USB release before re-open
+- `BoothSetupScreen.tsx`: wait 3000ms after releasing preview before capture
+- `CameraScreen.tsx`: grace periods 3500ms / 4000ms between operations
 
 ---
 
@@ -127,9 +154,60 @@ Backend: PORT, DB_HOST, JWT_SECRET, MIDTRANS_KEYS, FRONTEND_URL
 
 ## Deployment
 
-- Frontend (my-app): Cloudflare Pages via GitHub Actions
-- Backend: VPS via SSH + pm2 (GitHub Actions)
-- Studio: Custom server deployment with Socket.io
+### Production Environment
+- **VPS**: `root@76.13.192.32`
+- **Studio path on VPS**: `/root/fremio-studio`
+- **pm2 process name**: `fremio-studio`
+- **Frontend URL**: `https://studio.fremio.id`
+- **Agent page URL**: `https://studio.fremio.id/agent`
+
+### Deployment Methods
+
+#### Method 1: Python Direct Deploy (Preferred — reliable)
+```bash
+python deploy-studio.py
+```
+Build runs **locally**, then SCP uploads to VPS, then pm2 restarts.
+- Uses `~/.ssh/fremio_deploy` SSH key OR `github-actions-key` in repo root (ed25519)
+- Requires Node.js locally to run `npm run build` in studio/
+- No VPS build needed — faster than GitHub Actions
+
+#### Method 2: GitHub Actions (Auto-trigger on push)
+- Triggers automatically on any push to `studio/**`
+- Workflow: `.github/workflows/deploy-studio.yml`
+- Builds on VPS (slower, requires npm install on VPS)
+- Manual trigger: `.github/workflows/patch-canon-fix.yml` (for TSX patch + deploy)
+
+### SSH Key
+- File: `github-actions-key` (ed25519 private key, repo root)
+- Usage: `ssh -i github-actions-key root@76.13.192.32`
+
+---
+
+## Agent Downloads (studio/public/downloads/)
+
+Files committed to git and served at `https://studio.fremio.id/downloads/`:
+
+| File | Description |
+|------|-------------|
+| `fremio-agent-win.exe` | Windows agent binary (39MB, standalone) |
+| `fremio-agent-win-bundle/fremio-agent-win.exe` | Windows agent + Canon EDSDK DLLs |
+| `fremio-agent-win-bundle/bin/` | Canon EDSDK DLL files |
+| `fremio-agent-mac-arm64` | macOS agent — Apple Silicon |
+| `fremio-agent-mac-x64` | macOS agent — Intel |
+| `fremio-studio-launcher.exe` | Lite Windows launcher (31KB) |
+| `fremio-studio-windows-launcher.hta` | HTA-based launcher |
+
+**IMPORTANT — Versioning:**
+- Filenames have NO version suffix. Use `fremio-agent-win.exe`, NOT `fremio-agent-win-v1.0.30.exe`
+- Version number is only shown as a badge in the `/agent` page UI (`v1.0.30`)
+- Do NOT reference versioned filenames like `fremio-booth-windows-setup-v1.0.XX.exe` — these never existed
+
+**Agent architecture:**
+- The agent runs on the **operator's local machine** (booth computer), NOT on the VPS
+- Exposes HTTP on port 7432 for the booth browser to talk to
+- Commands: `cd agent && npm start`
+- GitHub deploys do NOT update the local agent — operators must update manually
 
 ---
 
