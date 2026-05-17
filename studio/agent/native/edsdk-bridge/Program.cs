@@ -595,16 +595,39 @@ internal sealed class EdsdkSession : IDisposable
 
         if (_cameraRef != IntPtr.Zero)
         {
-            // Disable EVF before closing session so the next bridge (capture) finds
-            // the camera in normal mode and doesn't need to wait as long.
-            TryDisableEvf();
-            PumpSdkEvents(2, 80);
+            // When shutting down via stdin EOF (_shutdownRequested), use a fast single-attempt
+            // EVF disable so EdsCloseSession always runs within ~100ms.
+            // Normal dispose (e.g. after capture) gets the full retry path.
+            if (_shutdownRequested)
+            {
+                TryDisableEvfFast();
+                // No PumpSdkEvents — we need to release the session immediately.
+            }
+            else
+            {
+                TryDisableEvf();
+                PumpSdkEvents(2, 80);
+            }
             Edsdk.EdsCloseSession(_cameraRef);
             Edsdk.EdsRelease(_cameraRef);
             _cameraRef = IntPtr.Zero;
         }
 
         Edsdk.EdsTerminateSDK();
+    }
+
+    /// <summary>
+    /// Single-attempt EVF disable — no retries, no pumping.
+    /// Used during graceful shutdown to ensure EdsCloseSession runs immediately.
+    /// </summary>
+    private void TryDisableEvfFast()
+    {
+        if (_cameraRef == IntPtr.Zero) return;
+        var outputDevice = EvfOutputDevice_None;
+        Edsdk.EdsSetPropertyData(_cameraRef, PropID_Evf_OutputDevice, 0, Marshal.SizeOf<uint>(), ref outputDevice);
+        var mode = 0U;
+        Edsdk.EdsSetPropertyData(_cameraRef, PropID_Evf_Mode, 0, Marshal.SizeOf<uint>(), ref mode);
+        Console.Error.WriteLine("[bridge] TryDisableEvfFast completed (graceful shutdown)");
     }
 
     private static string ReadCameraModel(IntPtr cameraRef)

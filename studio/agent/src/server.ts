@@ -328,6 +328,14 @@ function startSharedPreviewProcess() {
   activePreviewStreams.add(child);
   armPreviewStallMonitor();
 
+  child.stdout?.on("error", (err) => {
+    // Suppress ECONNRESET/EPIPE that occurs when process is force-killed mid-stream.
+    console.error("[agent] Preview stdout pipe error (suppressed):", err.message);
+  });
+  child.stdin?.on("error", () => {
+    // Suppress EPIPE when writing to stdin of an already-dead process.
+  });
+
   child.stdout?.on("data", (chunk: Buffer) => {
     sharedPreviewBuffer = Buffer.concat([sharedPreviewBuffer, chunk]);
 
@@ -663,6 +671,7 @@ function isRetryableCaptureFailure(rawMessage: string): boolean {
     message.includes("gagal trigger shutter canon")
     || message.includes("device busy")
     || message.includes("kamera canon sedang busy")
+    || message.includes("000000c0") // CommPortIsAlreadyOpen — session not yet released
   );
 }
 
@@ -1128,6 +1137,13 @@ app.get("/preview-stream", async (_req: Request, res: Response) => {
       clearInterval(keepAlive);
       previewFrameSubscribers.delete(sendFrame);
       scheduleSharedPreviewStop();
+    });
+
+    res.on("error", () => {
+      // Suppress ECONNRESET when browser disconnects (e.g., navigating away during capture).
+      closed = true;
+      clearInterval(keepAlive);
+      previewFrameSubscribers.delete(sendFrame);
     });
   } catch (err: any) {
     console.error("[agent] Preview stream error:", err);
