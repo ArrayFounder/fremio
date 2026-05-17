@@ -48,7 +48,7 @@ internal static class Program
                 ok = true,
                 backend = "edsdk",
                 cameras = cameras.Select(c => new { model = c.Model, port = c.Port }).ToArray(),
-                capabilities = new { supportsCapture = true, supportsLiveView = cameras.Count > 0, mode = cameras.Count > 0 ? "live-view" : "capture-only" },
+                capabilities = new { supportsCapture = true, supportsLiveView = true, mode = cameras.Count > 0 ? "live-view" : "capture-only" },
                 error = cameras.Count == 0 ? "Canon EDSDK aktif, kamera belum terdeteksi (cek mode kamera / pastikan model didukung EDSDK)" : (string?)null
             };
 
@@ -333,7 +333,7 @@ internal sealed class EdsdkSession : IDisposable
                         PumpSdkEvents(4, 120);
                     }
 
-                    if (consecutiveFails >= 160)
+                    if (consecutiveFails >= 40)
                     {
                         throw new InvalidOperationException($"EVF gagal berkepanjangan (0x{dlErr:X8})");
                     }
@@ -408,9 +408,50 @@ internal sealed class EdsdkSession : IDisposable
     {
         EnsureCameraReady();
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
-        Console.Error.WriteLine("[bridge] Capture: session ready, registering object event handler");
+        Console.Error.WriteLine("[bridge] Capture: session ready");
         var captureStartedAtUtc = DateTime.UtcNow;
         var staleCutoffUtc = captureStartedAtUtc.AddSeconds(-2);
+
+        // Disable EVF FIRST — before setting SaveTo or any property.
+        // Some Canon models ignore SaveTo_Host while still in EVF/live-view mode,
+        // causing the camera to save to SD card and never fire DirItemRequestTransfer.
+        // If the preview bridge already shut down EVF (via prepare-capture), skip the long pump.
+        if (IsEvfCurrentlyEnabled())
+        {
+            Console.Error.WriteLine("[bridge] EVF active, disabling before capture");
+            TryDisableEvf();
+            PumpSdkEvents(6, 100); // 600ms — give camera time to fully exit EVF mode
+        }
+        else
+        {
+            Console.Error.WriteLine("[bridge] EVF already inactive, skipping disable pump");
+            PumpSdkEvents(1, 80); // 80ms minimal pump
+        }
+
+        // Configure camera to save to PC so we receive download events
+        var saveTo = SaveTo_Host;
+        var saveToErr = Edsdk.EdsSetPropertyData(_cameraRef, PropID_SaveTo, 0, Marshal.SizeOf<uint>(), ref saveTo);
+        Console.Error.WriteLine($"[bridge] SaveTo_Host result: 0x{saveToErr:X8}");
+        if (saveToErr != 0)
+        {
+            // Retry after a brief pump if first attempt fails
+            PumpSdkEvents(3, 80);
+            saveTo = SaveTo_Host;
+            saveToErr = Edsdk.EdsSetPropertyData(_cameraRef, PropID_SaveTo, 0, Marshal.SizeOf<uint>(), ref saveTo);
+            Console.Error.WriteLine($"[bridge] SaveTo_Host retry result: 0x{saveToErr:X8}");
+        }
+
+        var capacity = new Edsdk.EdsCapacity
+        {
+            NumberOfFreeClusters = int.MaxValue,
+            BytesPerSector = 0x1000,
+            Reset = 1,
+        };
+        var capacityErr = Edsdk.EdsSetCapacity(_cameraRef, capacity);
+        Console.Error.WriteLine($"[bridge] SetCapacity result: 0x{capacityErr:X8}");
+
+        // Let camera apply SaveTo + capacity settings before we send shutter
+        PumpSdkEvents(3, 80); // 240ms
 
         var downloadDone = new ManualResetEventSlim(false);
         var capturedData = Array.Empty<byte>();
@@ -521,36 +562,11 @@ internal sealed class EdsdkSession : IDisposable
             return 0;
         };
 
-        // Configure camera to save to PC so we receive download events
-        var saveTo = SaveTo_Host;
-        Edsdk.EdsSetPropertyData(_cameraRef, PropID_SaveTo, 0, Marshal.SizeOf<uint>(), ref saveTo);
-        Console.Error.WriteLine("[bridge] SaveTo set to Host");
-
-        var capacity = new Edsdk.EdsCapacity
-        {
-            NumberOfFreeClusters = int.MaxValue,
-            BytesPerSector = 0x1000,
-            Reset = 1,
-        };
-        var capacityErr = Edsdk.EdsSetCapacity(_cameraRef, capacity);
-        if (capacityErr == 0)
-        {
-            Console.Error.WriteLine("[bridge] Host capacity set");
-        }
-        else
-        {
-            Console.Error.WriteLine($"[bridge] Host capacity warning (0x{capacityErr:X8})");
-        }
-
         Check(Edsdk.EdsSetObjectEventHandler(_cameraRef, Edsdk.ObjectEvent_All, _captureObjectHandler, IntPtr.Zero), "Gagal pasang event capture Canon");
         Console.Error.WriteLine("[bridge] Event handler registered, sending TakePicture command");
 
         try
         {
-            TryDisableEvf();
-            // Reduced from PumpSdkEvents(6, 150) = 900ms. With graceful preview shutdown
-            // (stdin EOF), EVF is already disabled so less pumping is needed.
-            PumpSdkEvents(4, 100);
             SendTakePictureWithRetry();
             Console.Error.WriteLine("[bridge] TakePicture command sent, waiting for download event...");
             var deadline = DateTime.UtcNow.AddSeconds(45);
@@ -817,7 +833,10 @@ internal sealed class EdsdkSession : IDisposable
 
     private static void CompleteCaptureTransferIfNeeded(uint eventId, IntPtr objRef)
     {
-        if (eventId != Edsdk.ObjectEvent_DirItemRequestTransfer || objRef == IntPtr.Zero) return;
+        // EdsDownloadComplete must be called after EdsDownload for both
+        // DirItemRequestTransfer and DirItemCreated events.
+        if (objRef == IntPtr.Zero) return;
+        if (eventId != Edsdk.ObjectEvent_DirItemRequestTransfer && eventId != Edsdk.ObjectEvent_DirItemCreated) return;
 
         Check(Edsdk.EdsDownloadComplete(objRef), "Gagal finalize download capture Canon");
         Console.Error.WriteLine("[bridge] EdsDownloadComplete succeeded");
@@ -858,6 +877,15 @@ internal sealed class EdsdkSession : IDisposable
         }
 
         Check(lastErr, "Gagal trigger shutter Canon");
+    }
+
+    private bool IsEvfCurrentlyEnabled()
+    {
+        if (_cameraRef == IntPtr.Zero) return false;
+        var buf = new byte[Marshal.SizeOf<uint>()];
+        var err = Edsdk.EdsGetPropertyData(_cameraRef, PropID_Evf_OutputDevice, 0, buf.Length, buf);
+        if (err != 0) return false; // assume not enabled on error
+        return BitConverter.ToUInt32(buf, 0) != EvfOutputDevice_None;
     }
 
     private void TryDisableEvf()

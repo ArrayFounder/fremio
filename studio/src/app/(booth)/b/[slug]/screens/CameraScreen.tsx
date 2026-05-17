@@ -922,8 +922,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [dslrPosterSrc, setDslrPosterSrc] = useState<string | null>(null);
   const [dslrPosterActive, setDslrPosterActive] = useState(false);
   const [dslrPosterMirror, setDslrPosterMirror] = useState<boolean>(mirror);
-  const DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS = 300; // OPTIMIZED: was 600ms
-  const DSLR_PREVIEW_RESUME_DELAY_MS = 80; // OPTIMIZED: was 150ms
+  const DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS = 1500; // Give camera time to settle before preview resumes
+  const DSLR_PREVIEW_RESUME_DELAY_MS = 1000; // Delay before re-enabling live view after capture
   const DSLR_PREVIEW_ERROR_GRACE_MS = 7000; // Grace period for USB release + queue wait. Canon needs up to 2200ms to release USB + 2200ms recovery = 4400ms; 7s handles worst-case with margin.
   const dslrPreviewImgRef = useRef<HTMLImageElement | null>(null);
   const dslrRecordingPosterImgRef = useRef<HTMLImageElement | null>(null);
@@ -1337,14 +1337,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       setDslrPosterSrc(null);
       throw err instanceof Error ? err : new Error(String(err));
     } finally {
-      // Resume live preview immediately (faster recovery)
+      // Resume live preview after camera has settled post-capture
       if (typeof window !== "undefined") {
         sessionStorage.setItem(
           "booth_dslr_stream_release_until",
-          String(Date.now() + 100) // OPTIMIZED: reduced from 200ms to 100ms
+          String(Date.now() + DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS)
         );
       }
-      setTimeout(() => setDslrPreviewPaused(false), 50); // OPTIMIZED: was 100ms
+      setTimeout(() => setDslrPreviewPaused(false), DSLR_PREVIEW_RESUME_DELAY_MS);
     }
   }, [DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS, DSLR_PREVIEW_RESUME_DELAY_MS, freezeDslrPreview, dslrPosterSrc]);
 
