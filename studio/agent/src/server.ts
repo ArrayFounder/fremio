@@ -66,6 +66,7 @@ let previewRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let previewRestartWindowStartedAt = 0;
 let previewRestartAttemptsInWindow = 0;
 const plannedPreviewRestarts = new Set<ReturnType<typeof spawn>>();
+let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped preview
 
 const CAMERA_STATUS_CACHE_MS = 4000;
 const PREVIEW_STALL_TIMEOUT_MS = 3500;
@@ -417,7 +418,7 @@ function getPreviewFrame(timeoutMs = 10000): Promise<Buffer> {
   });
 }
 
-function stopActivePreviewStreams(): Promise<boolean> {
+function stopActivePreviewStreams(killDelayMs = 150): Promise<boolean> {
   if (previewIdleTimer) {
     clearTimeout(previewIdleTimer);
     previewIdleTimer = null;
@@ -441,7 +442,8 @@ function stopActivePreviewStreams(): Promise<boolean> {
       remaining -= 1;
       if (remaining <= 0) resolve(true);
     };
-    const timer = setTimeout(() => resolve(true), 300); // OPTIMIZED: was 500ms
+    const maxWait = killDelayMs + 200;
+    const timer = setTimeout(() => resolve(true), maxWait);
 
     for (const child of processes) {
       if (child.killed || child.exitCode !== null) {
@@ -453,15 +455,17 @@ function stopActivePreviewStreams(): Promise<boolean> {
         activePreviewStreams.delete(child);
         done();
       });
+      // Soft kill via stdin EOF — C# bridge monitors stdin and exits gracefully,
+      // calling TryDisableEvf() before closing the session.
       child.stdin?.end();
-      setTimeout(() => { // OPTIMIZED: reduced from 350ms to 150ms
+      setTimeout(() => {
         if (!child.killed && child.exitCode === null) {
           child.kill();
         }
-      }, 150);
+      }, killDelayMs);
     }
 
-    setTimeout(() => clearTimeout(timer), 400); // OPTIMIZED: was 600ms
+    setTimeout(() => clearTimeout(timer), maxWait + 100);
   });
 }
 
@@ -972,6 +976,15 @@ app.get("/printers", async (_req: Request, res: Response) => {
   res.json({ ok: true, printers });
 });
 
+app.post("/prepare-capture", async (_req: Request, res: Response) => {
+  // Pre-stop the live preview before countdown reaches 1. This gives the C# bridge
+  // time to exit gracefully (TryDisableEvf + EdsCloseSession), so /capture won't hit
+  // CommPortIsAlreadyOpen delays. Called by CameraScreen at countdown=2.
+  const stopped = await stopActivePreviewStreams(400); // 400ms grace for graceful EVF disable
+  previewPreStoppedAt = Date.now();
+  res.json({ ok: true, stopped });
+});
+
 app.post("/capture", async (req: Request, res: Response) => {
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
@@ -980,9 +993,12 @@ app.post("/capture", async (req: Request, res: Response) => {
 
   try {
     const stoppedExistingStream = await stopActivePreviewStreams();
-    // OPTIMIZED: Reduced recovery delay - was 800/500ms, now 300/200ms for faster transition
-    const recoveryMs = stoppedExistingStream ? 300 : 200;
-    await new Promise((resolve) => setTimeout(resolve, recoveryMs));
+    // If /prepare-capture was called during countdown, subtract elapsed time from recovery wait.
+    const preStopElapsedMs = previewPreStoppedAt > 0 ? Date.now() - previewPreStoppedAt : 0;
+    const baseRecoveryMs = stoppedExistingStream ? 300 : 200;
+    const recoveryMs = Math.max(0, baseRecoveryMs - preStopElapsedMs);
+    previewPreStoppedAt = 0;
+    if (recoveryMs > 0) await new Promise((resolve) => setTimeout(resolve, recoveryMs));
 
     const bridgePath = resolveEdsdkBridgePath();
     const captureArgs = parseBridgeArgs(process.env.EDSDK_BRIDGE_CAPTURE_ARGS, "capture --output {output}")

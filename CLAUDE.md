@@ -24,12 +24,22 @@ fremio/
 │   ├── services/        # Backend services (midtrans, storage, payments)
 │   └── server.js       # Main Express server
 │
-├── agent/               # Local hardware bridge (Node.js)
+├── agent/               # ⚠️ LEGACY — gphoto2 agent (TIDAK DIGUNAKAN lagi)
 │   ├── src/
-│   │   ├── index.js     # Agent server (port 7432)
-│   │   ├── camera.js    # gphoto2 DSLR integration
+│   │   ├── index.js     # Agent server (port 7432) — LEGACY
+│   │   ├── camera.js    # gphoto2 integration — LEGACY, sudah tidak aktif
 │   │   └── printer.js   # CUPS/PowerShell printing
-│   └── README.md        # Full agent documentation
+│   └── README.md        # Agent documentation (outdated)
+│
+│   ⚠️ Agent AKTIF ada di studio/agent/ bukan di sini!
+│
+├── studio/agent/        # ✅ AKTIF — TypeScript/EDSDK agent (yang dipakai Electron)
+│   ├── src/
+│   │   ├── server.ts    # HTTP server + MJPEG stream (port 7432)
+│   │   └── ...
+│   └── native/
+│       └── edsdk-bridge/  # C# .NET 8 wrapper untuk Canon EDSDK SDK
+│           └── Program.cs # EnsureCameraReady, LiveView, Capture logic
 │
 ├── my-app/              # Legacy Firebase frontend
 └── deploy/              # Deployment scripts
@@ -48,7 +58,8 @@ fremio/
 | Payment | Midtrans (QRIS + VA), Xendit, Doku support |
 | Storage | Cloudflare R2 (photos) |
 | Realtime | Socket.io |
-| Local Agent | Node.js + gphoto2 (DSLR) + CUPS/PowerShell |
+| Local Agent | TypeScript + Canon EDSDK (DSLR) + CUPS/PowerShell printing |
+| EDSDK Bridge | C# .NET 8 (`studio/agent/native/edsdk-bridge/`) — wraps Canon EDSDK SDK |
 
 ---
 
@@ -115,8 +126,10 @@ npm start                # Start agent (port 7432)
 | studio/src/app/(dashboard)/agent/page.tsx | Agent download page at /agent |
 | studio/src/app/(booth)/b/[slug]/screens/BoothSetupScreen.tsx | Hardware setup before booth session |
 | studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx | Booth camera + countdown UI |
-| agent/src/camera.js | Camera abstraction — USB mutex + Canon capture logic |
-| agent/src/index.js | Agent Express server (port 7432) |
+| studio/agent/src/server.ts | ✅ AKTIF — Agent TypeScript/EDSDK (port 7432), MJPEG `/preview-stream` |
+| studio/agent/native/edsdk-bridge/Program.cs | C# wrapper Canon EDSDK — `EnsureCameraReady()`, retry logic |
+| agent/src/camera.js | ⚠️ LEGACY gphoto2 — TIDAK DIGUNAKAN, jangan edit |
+| agent/src/index.js | ⚠️ LEGACY agent Express — TIDAK DIGUNAKAN |
 | backend/routes/payment.js | Payment processing (45KB) |
 | backend/routes/designer.js | Designer portal (66KB) |
 
@@ -124,23 +137,75 @@ npm start                # Start agent (port 7432)
 
 ## Canon DSLR Camera Notes
 
-### Known Errors (fixed in agent v1.0.30)
-- `read ECONNRESET` — happens on first capture after live preview; fixed by USB mutex + `captureInFlight` guard in `camera.js`
-- `0x000000C0` (GP_ERROR_IO_USB_FIND) — USB session conflict; fixed by `previewQueue` serialization
-- "Live preview Canon belum tersedia" — timing too short; fixed by increasing grace periods in `BoothSetupScreen.tsx` and `CameraScreen.tsx`
+> ⚠️ **KRITIS**: Sistem menggunakan **Canon EDSDK resmi** (via C# bridge), **BUKAN gphoto2**!
+> Referensi gphoto2 di code lama sudah usang. Agent aktif: `studio/agent/`, bukan `agent/`.
 
-### How Canon capture works
-1. Booth starts live preview (`GET /preview`) via gphoto2 capture-image-and-download loop
-2. When countdown finishes, `POST /capture` is called
-3. `captureInFlight = true` is set **before** killing live preview (to block preview queue from re-entering)
-4. `killActivePreviewAndWait()` terminates live preview process
-5. `triggerShutter()` fires the Canon shutter
-6. Photo downloaded, `captureInFlight = false`, preview resumes
+### Dua Agent Codebase (JANGAN SAMPAI TERTUKAR)
 
-### Timing Requirements
-- gphoto2 needs up to 2200ms after USB release before re-open
-- `BoothSetupScreen.tsx`: wait 3000ms after releasing preview before capture
-- `CameraScreen.tsx`: grace periods 3500ms / 4000ms between operations
+| Path | Status | Teknologi |
+|------|--------|-----------|
+| `agent/` (root) | ⚠️ LEGACY | Node.js + gphoto2 — **tidak dipakai** |
+| `studio/agent/` | ✅ AKTIF | TypeScript + Canon EDSDK — **yang dipakai Electron** |
+
+Agent aktif dikompilasi menjadi `fremio-agent-win.exe` (TypeScript + C# EDSDK bridge).
+
+### Arsitektur EDSDK
+
+```
+Electron App
+  └── studio/booth-windows-app/main.js
+        ├── Spawn: studio/agent/ (TypeScript server, port 7432)
+        │     └── spawn: studio/agent/native/edsdk-bridge/Program.cs (C# .NET 8)
+        │           └── Canon EDSDK SDK (DLL) → Camera via USB
+        └── Protocol: fremio-agent://local/* → http://127.0.0.1:7432/*
+```
+
+### Key Agent Files
+
+- `studio/agent/src/server.ts` — HTTP server, `/preview-stream` MJPEG endpoint
+- `studio/agent/native/edsdk-bridge/Program.cs` — C# Canon EDSDK wrapper
+- `studio/booth-windows-app/main.js` — Electron: spawn agent, register protocol
+
+### How Canon EDSDK capture works
+
+1. BoothSetupScreen starts live preview → `GET /preview-stream` → agent spawns EDSDK bridge
+2. Bridge calls `EnsureCameraReady()` → `StartLiveView()` → MJPEG stream keluar
+3. Saat sesi foto dimulai, `releaseDslrPreviewStream()` dipanggil (sets `booth_dslr_stream_release_until = T+3000ms`)
+4. Bridge idle → `scheduleSharedPreviewStop(5000ms)` → bridge tutup setelah 5 detik tanpa consumer
+5. CameraScreen mulai polling `/preview-stream` setelah delay → bridge re-start jika sudah mati
+6. Capture: `POST /capture` → bridge `TriggerShutter()` → foto di-download
+
+### Root Cause: Race Condition Live Preview (sudah fixed)
+
+**Masalah**: Bridge mati sebelum CameraScreen mulai polling  
+- `scheduleSharedPreviewStop(2000ms)` → bridge mati di T+2000ms  
+- `booth_dslr_stream_release_until = T+3000ms` → CameraScreen mulai polling T+3000ms  
+- Gap 1033ms: bridge mati → cold EDSDK start (2–10 detik) → error "belum tersedia" muncul di 7s grace
+
+**Fix (commit `146d2a6`, branch `agents/fix-canon-camera-capture-errors`)**:
+- `studio/agent/src/server.ts` line 138: `scheduleSharedPreviewStop(delayMs = 5000)` (was 2000)
+- `CameraScreen.tsx`: hapus guard `if (hasIpcPreview) return;` yang salah blokir MJPEG fallback
+
+### EDSDK Startup Timing
+
+- `EnsureCameraReady()`: up to 8 retry × ~500–1300ms ≈ hingga 10 detik jika `CommPortIsAlreadyOpen (0x000000C0)`
+- `PumpSdkEvents(8, 200)` = 1600ms minimum startup
+- Fix idle timeout ke 5000ms memastikan bridge tetap hidup saat CameraScreen mulai polling
+
+### Error Codes EDSDK
+
+| Code | Arti | Fix |
+|------|------|-----|
+| `0x000000C0` | `CommPortIsAlreadyOpen` — USB session conflict | Retry otomatis di `EnsureCameraReady()` |
+| `0x00000021` | `DeviceBusy` | Tunggu, retry |
+| "Live preview Canon belum tersedia" | Bridge mati sebelum CameraScreen polling | Fixed: idle timeout 5000ms |
+
+### Known Working Parameters
+
+- Agent port: `AGENT_PORT = BRIDGE_PORT = 7432`
+- `/preview-stream` → valid MJPEG stream
+- Grace period error: `DSLR_PREVIEW_ERROR_GRACE_MS = 7000ms` (di `CameraScreen.tsx`)
+- IPC fallback timer: `ipcFallbackTimer = 10000ms`
 
 ---
 
@@ -166,50 +231,38 @@ Backend: PORT, DB_HOST, JWT_SECRET, MIDTRANS_KEYS, FRONTEND_URL
 > Kalau upload file (source code, public assets, dll) harus ke path `/root/fremio-studio/studio/`, bukan satu level di atasnya.
 > `deploy-studio.py` juga mengekstrak tar ke path yang salah — selalu verifikasi dengan `pm2 show fremio-studio | grep cwd`.
 
-### Deployment Methods
+### Cara Deploy ke VPS (RECOMMENDED: SSH Langsung)
 
-#### Method 1: Manual SCP Deploy (Paling Reliable)
+> ✅ **PREFERRED**: Deploy via SSH terminal langsung ke VPS.  
+> ❌ **JANGAN**: Deploy via GitHub Actions untuk perubahan code — lambat dan tidak reliable.  
+> GitHub push: boleh untuk backup/history, tapi deploy harus via SSH.
+
+#### Deploy via SSH (Posh-SSH dari PowerShell)
+
 ```powershell
-# 1. Build lokal
-cd studio && npm run build
+Import-Module Posh-SSH
+$pass = ConvertTo-SecureString 'PASSWORD' -AsPlainText -Force
+$cred = New-Object System.Management.Automation.PSCredential('root', $pass)
+$session = New-SSHSession -ComputerName '76.13.192.32' -Credential $cred -AcceptKey -Force
 
-# 2. Buat tar (exclude node_modules, .next/cache, downloads besar)
-tar -czf deploy.tar.gz --exclude="./node_modules" --exclude="./.next/cache" --exclude="./public/downloads/*.exe" --exclude="./public/downloads/*.zip" .
+# 1. Pull kode terbaru di VPS (jika sudah push ke GitHub)
+Invoke-SSHCommand -SessionId $session.SessionId -Command "cd /root/fremio-studio/studio && git pull" -TimeOut 60
 
-# 3. Upload tar ke VPS
-scp -i ~/.ssh/github-actions-key deploy.tar.gz root@76.13.192.32:/tmp/
+# 2. Build Next.js di VPS (3-5 menit)
+Invoke-SSHCommand -SessionId $session.SessionId -Command "cd /root/fremio-studio/studio && npm run build" -TimeOut 600
 
-# 4. Extract ke path YANG BENAR
-ssh -i ~/.ssh/github-actions-key root@76.13.192.32 "tar -xzf /tmp/deploy.tar.gz -C /root/fremio-studio/studio && rm /tmp/deploy.tar.gz"
-
-# 5. Upload file download besar secara terpisah
-scp -i ~/.ssh/github-actions-key public/downloads/fremio-booth-windows-setup.exe root@76.13.192.32:/root/fremio-studio/studio/public/downloads/
-scp -i ~/.ssh/github-actions-key public/downloads/fremio-agent-win.exe root@76.13.192.32:/root/fremio-studio/studio/public/downloads/
-
-# 6. Sync ke nginx folder & restart
-ssh -i ~/.ssh/github-actions-key root@76.13.192.32 "cp -f /root/fremio-studio/studio/public/downloads/*.exe /var/www/fremio/downloads/ && pm2 restart fremio-studio"
+# 3. Restart PM2
+Invoke-SSHCommand -SessionId $session.SessionId -Command "pm2 restart fremio-studio" -TimeOut 30
 ```
 
-#### Method 2: Python Direct Deploy
-```bash
-python deploy-studio.py
-```
-> ⚠️ Script ini mengekstrak ke `/root/fremio-studio/` (salah). Perlu diperbaiki agar target ke `/root/fremio-studio/studio/`.
+#### VPS Password
+- `#Salwaputri111103` (gunakan hanya di Posh-SSH, jangan commit ke code)
 
-#### Method 3: GitHub Actions (Auto-trigger on push)
-- Triggers automatically on any push to `studio/**`
-- Workflow: `.github/workflows/deploy-studio.yml`
-- Builds on VPS (slower, requires npm install on VPS)
-
-### SSH Key
+#### SSH Key (alternatif jika password tidak mau)
 - File: `~/.ssh/github-actions-key` (ed25519, yang berfungsi)
 - File: `~/.ssh/fremio_deploy` — **TIDAK ADA**, jangan digunakan
-- Usage: `ssh -i ~/.ssh/github-actions-key root@76.13.192.32`
 
-### Rebuild di VPS (jika perlu)
-```bash
-ssh -i ~/.ssh/github-actions-key root@76.13.192.32 "cd /root/fremio-studio/studio && npm run build && pm2 restart fremio-studio"
-```
+
 
 ---
 
@@ -257,10 +310,11 @@ Setelah edit: `nginx -t && nginx -s reload`
 - Jika ada nama file baru (e.g. `fremio_studio_20260426.png`), buat alias saja di public/
 - `studio/public/` hampir kosong di git (`.gitignore` exclude `*.exe`, `*.zip`) — file harus diupload manual ke VPS
 
-**Agent architecture:**
+**Agent architecture (EDSDK):**
 - The agent runs on the **operator's local machine** (booth computer), NOT on the VPS
-- Exposes HTTP on port 7432 for the booth browser to talk to
-- Commands: `cd agent && npm start`
+- Active agent: `studio/agent/` (TypeScript) — dikompilasi jadi `fremio-agent-win.exe`
+- Legacy agent: `agent/` (gphoto2) — TIDAK dipakai, jangan diedit
+- Exposes HTTP on port 7432, protocol handler: `fremio-agent://local/*` → `http://127.0.0.1:7432/*`
 - GitHub deploys do NOT update the local agent — operators must update manually
 
 ---
@@ -336,7 +390,7 @@ ERROR: Cannot create symbolic link : A required privilege is not held by the cli
 ## Key Architecture Decisions
 
 1. No-installation booth: Browser-only operation via webcam
-2. Local agent optional: gphoto2/CUPS for DSLR + printing
+2. Local agent: **Canon EDSDK** (C# bridge) for DSLR + CUPS/PowerShell printing
 3. QR code delivery: Customer scans QR to download softfile
 4. Subscription tiers: Credits system for watermark-free
 5. Multi-gateway: Midtrans primary, Xendit/Doku fallbacks

@@ -1711,6 +1711,15 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       count -= 1;
       if (count > 0) {
         setCountdown(count);
+        if (willUseAgentCapture && count === 2) {
+          // Pre-stop live preview 1 second before capture. This lets the C# bridge
+          // exit gracefully (TryDisableEvf + EdsCloseSession), so when /capture fires
+          // at count=1, CommPortIsAlreadyOpen is avoided and cold-start delay is eliminated.
+          const base = agentBaseRef.current;
+          if (base) {
+            fetch(`${base}/prepare-capture`, { method: "POST" }).catch(() => {});
+          }
+        }
         if (willUseAgentCapture && count === 1) {
           const bs = boothMirrorSettingRef.current;
           const freezeMirror = typeof bs === "boolean" ? bs : mirrorRef.current;

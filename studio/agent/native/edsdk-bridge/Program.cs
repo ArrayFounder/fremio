@@ -191,6 +191,7 @@ internal sealed class EdsdkSession : IDisposable
 
     private IntPtr _cameraRef = IntPtr.Zero;
     private bool _disposed;
+    private volatile bool _shutdownRequested;
     private static readonly Edsdk.EdsCameraAddedHandler CameraAddedHandler = static _ => 0;
     private Edsdk.EdsObjectEventHandler? _captureObjectHandler;
 
@@ -225,7 +226,9 @@ internal sealed class EdsdkSession : IDisposable
             Console.Error.WriteLine($"[edsdk] camera-added handler warning (0x{hookResult:X8})");
         }
 
-        PumpSdkEvents(8, 120);
+        // Reduced from PumpSdkEvents(8, 120) = 960ms. Preview path compensates with its own
+        // PumpSdkEvents(8, 200) inside StartLiveViewStream(). Capture path benefits from faster init.
+        PumpSdkEvents(3, 60);
     }
 
     public IReadOnlyList<CameraInfo> ListCameras()
@@ -284,6 +287,15 @@ internal sealed class EdsdkSession : IDisposable
 
     public void StartLiveViewStream()
     {
+        // Monitor stdin for EOF — when Node.js calls child.stdin.end(), we get EOF
+        // and should exit the live-view loop cleanly so TryDisableEvf runs in Dispose().
+        var stdinMonitor = new Thread(() =>
+        {
+            try { while (Console.In.Read() != -1) { } } catch { }
+            _shutdownRequested = true;
+        }) { IsBackground = true, Name = "StdinMonitor" };
+        stdinMonitor.Start();
+
         EnsureCameraReady();
         TryEnableEvf();
         PumpSdkEvents(8, 200);
@@ -291,7 +303,7 @@ internal sealed class EdsdkSession : IDisposable
         using var stdout = Console.OpenStandardOutput();
         var consecutiveFails = 0;
 
-        while (true)
+        while (!_shutdownRequested)
         {
             Edsdk.EdsGetEvent();
             NativeMethods.PumpWindowsMessages();
@@ -357,6 +369,8 @@ internal sealed class EdsdkSession : IDisposable
 
             Thread.Sleep(80);
         }
+
+        Console.Error.WriteLine("[bridge] Live view loop exited gracefully (stdin closed)");
     }
 
     public byte[] GetLiveViewJpeg()
@@ -534,7 +548,9 @@ internal sealed class EdsdkSession : IDisposable
         try
         {
             TryDisableEvf();
-            PumpSdkEvents(6, 150);
+            // Reduced from PumpSdkEvents(6, 150) = 900ms. With graceful preview shutdown
+            // (stdin EOF), EVF is already disabled so less pumping is needed.
+            PumpSdkEvents(4, 100);
             SendTakePictureWithRetry();
             Console.Error.WriteLine("[bridge] TakePicture command sent, waiting for download event...");
             var deadline = DateTime.UtcNow.AddSeconds(45);
@@ -579,6 +595,10 @@ internal sealed class EdsdkSession : IDisposable
 
         if (_cameraRef != IntPtr.Zero)
         {
+            // Disable EVF before closing session so the next bridge (capture) finds
+            // the camera in normal mode and doesn't need to wait as long.
+            TryDisableEvf();
+            PumpSdkEvents(2, 80);
             Edsdk.EdsCloseSession(_cameraRef);
             Edsdk.EdsRelease(_cameraRef);
             _cameraRef = IntPtr.Zero;
