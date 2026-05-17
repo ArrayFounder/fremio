@@ -135,7 +135,7 @@ function stopSharedPreviewProcess() {
   }, 350);
 }
 
-function scheduleSharedPreviewStop(delayMs = 2000) { // OPTIMIZED: was 5000ms - faster cleanup
+function scheduleSharedPreviewStop(delayMs = 5000) { // Keep bridge alive long enough for CameraScreen to pick up after BoothSetupScreen
   if (previewIdleTimer) clearTimeout(previewIdleTimer);
   previewIdleTimer = setTimeout(() => {
     previewIdleTimer = null;

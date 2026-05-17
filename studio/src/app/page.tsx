@@ -8,7 +8,7 @@ export default function RootPage() {
         <header className="flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3" aria-label="Fremio Studio Home">
             <Image
-              src="/fremio_studio_20260426.png"
+              src="/fremio_studio.png"
               alt="Fremio Studio"
               width={220}
               height={48}

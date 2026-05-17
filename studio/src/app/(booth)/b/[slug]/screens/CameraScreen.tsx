@@ -924,7 +924,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [dslrPosterMirror, setDslrPosterMirror] = useState<boolean>(mirror);
   const DSLR_PREVIEW_RELEASE_AFTER_CAPTURE_MS = 300; // OPTIMIZED: was 600ms
   const DSLR_PREVIEW_RESUME_DELAY_MS = 80; // OPTIMIZED: was 150ms
-  const DSLR_PREVIEW_ERROR_GRACE_MS = 3500; // Grace period for USB release + queue wait (Canon gphoto2 max ~2200ms)
+  const DSLR_PREVIEW_ERROR_GRACE_MS = 7000; // Grace period for USB release + queue wait. Canon needs up to 2200ms to release USB + 2200ms recovery = 4400ms; 7s handles worst-case with margin.
   const dslrPreviewImgRef = useRef<HTMLImageElement | null>(null);
   const dslrRecordingPosterImgRef = useRef<HTMLImageElement | null>(null);
   const agentBaseRef = useRef<string | null>(cachedAgentBase);
@@ -1186,10 +1186,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             setDslrPreviewReady(true);
             setDslrPosterActive(false);
           } else if (!hasFrame) {
-            if (Date.now() - previewPollingStartedAt >= 4000) {
+            if (Date.now() - previewPollingStartedAt >= 9000) {
               void restartCanonPreviewBridge("frame tidak masuk");
               switchToStreamFallback();
-              return;
+              if (usingStreamFallback) return;
             }
             setDslrPreviewReady(false);
             if (Date.now() - previewPollingStartedAt < DSLR_PREVIEW_ERROR_GRACE_MS) {
@@ -1237,7 +1237,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             void restartCanonPreviewBridge("timeout awal live view");
             switchToStreamFallback();
           }
-        }, 4000);
+        }, 10000);
         timer = window.setTimeout(pollPreview, 0);
       } else if (base) {
         const streamUrl = getStreamPreviewUrl(cacheKey);

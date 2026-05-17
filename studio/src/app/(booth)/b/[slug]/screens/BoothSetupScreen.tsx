@@ -303,9 +303,9 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     setDslrPreviewError(null);
     setDslrPreviewFrameSrc(null);
     if (typeof window !== "undefined") {
-      // Wait 3000ms before CameraScreen starts polling. Canon gphoto2 processes
-      // have up to 2200ms timeout; this ensures the last preview process has
-      // fully released the USB session before CameraScreen's first poll.
+      // Delay CameraScreen polling to give the EDSDK bridge time to hand off
+      // the USB session cleanly. With the 5s agent idle timeout, the bridge
+      // stays alive during this delay so the first frame is near-instant.
       sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + 3000));
     }
     if (dslrPreviewImgRef.current) {

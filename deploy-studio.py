@@ -172,6 +172,8 @@ def run_remote_commands(use_password=False, password=None):
         "cp -f /root/fremio-studio/public/downloads/fremio-agent-win-bundle.zip /var/www/fremio/downloads/fremio-agent-win-bundle.zip 2>/dev/null || true",
         "cp -f /root/fremio-studio/public/downloads/fremio-agent-mac-arm64 /var/www/fremio/downloads/fremio-agent-mac-arm64 2>/dev/null || true",
         "cp -f /root/fremio-studio/public/downloads/fremio-agent-mac-x64 /var/www/fremio/downloads/fremio-agent-mac-x64 2>/dev/null || true",
+        "cp -f /root/fremio-studio/public/downloads/fremio-booth-windows-setup.exe /var/www/fremio/downloads/fremio-booth-windows-setup.exe 2>/dev/null || true",
+        "cp -f /root/fremio-studio/public/downloads/fremio-booth-windows-portable.zip /var/www/fremio/downloads/fremio-booth-windows-portable.zip 2>/dev/null || true",
         "pm2 restart fremio-studio || pm2 start npm --name fremio-studio -- start",
         "pm2 save",
         "echo Server restarted successfully"

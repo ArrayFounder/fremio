@@ -52,7 +52,8 @@ const WIN_STEPS = [
   { icon: "🌐", title: "Mulai booth", desc: "Kalau status sudah siap, simpan slug booth lalu mulai sesi foto langsung dari app." },
 ];
 
-const WINDOWS_SETUP_FILE = "fremio-agent-win.exe";
+const WINDOWS_SETUP_FILE    = "fremio-booth-windows-setup.exe";
+const WINDOWS_AGENT_ONLY_FILE = "fremio-agent-win.exe";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -177,11 +178,15 @@ export default function AgentPage() {
           {/* ── Windows content ──────────────────────────────────────────── */}
           {tab === "windows" && (
             <div className="p-5 space-y-5">
-              {/* Download button */}
+              {/* Primary download — Full Electron app (booth UI + embedded agent + Canon EDSDK) */}
               <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-100">
                 <div>
-                  <p className="font-semibold text-gray-900 text-sm">Fremio Studio — Windows <span className="text-xs font-normal text-gray-400">v1.0.30</span></p>
-                  <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Agent bridge lokal · Canon USB fix sudah termasuk</p>
+                  <p className="font-semibold text-gray-900 text-sm">
+                    Fremio Studio — Windows <span className="text-xs font-normal text-gray-400">v1.0.30</span>
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Windows 10 / 11 · 64-bit · Aplikasi lengkap · Booth UI + bridge Canon sudah termasuk
+                  </p>
                 </div>
                 <a
                   href={`/downloads/${WINDOWS_SETUP_FILE}`}
@@ -196,18 +201,22 @@ export default function AgentPage() {
                 </a>
               </div>
 
+              {/* Secondary download — standalone agent bridge only (advanced users) */}
               <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-amber-50 border border-amber-100">
                 <div>
-                  <p className="font-semibold text-amber-900 text-sm">Agent Windows Bundle (Canon EDSDK)</p>
-                  <p className="text-xs text-amber-700 mt-0.5">Versi agent lengkap beserta Canon EDSDK bridge DLL. Ekstrak ke folder yang sama, jalankan <code className="font-mono bg-amber-100 px-0.5 rounded">fremio-agent-win.exe</code> dari dalam folder bundle.</p>
+                  <p className="font-semibold text-amber-900 text-sm">Agent Bridge Saja <span className="text-xs font-normal text-amber-600">(Advanced)</span></p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    Hanya bridge hardware (~37 MB). Untuk pengguna yang sudah punya Electron app versi lama
+                    atau ingin menjalankan agent secara manual. Canon USB fix v1.0.30 sudah termasuk.
+                  </p>
                 </div>
                 <a
-                  href="/downloads/fremio-agent-win-bundle/fremio-agent-win.exe"
-                  download="fremio-agent-win.exe"
+                  href={`/downloads/${WINDOWS_AGENT_ONLY_FILE}`}
+                  download={WINDOWS_AGENT_ONLY_FILE}
                   className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
                   style={{ background: "linear-gradient(135deg, #d97706, #b45309)" }}
                 >
-                  Download Bundle
+                  Agent Only
                 </a>
               </div>
 

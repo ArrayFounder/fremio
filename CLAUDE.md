@@ -156,52 +156,106 @@ Backend: PORT, DB_HOST, JWT_SECRET, MIDTRANS_KEYS, FRONTEND_URL
 
 ### Production Environment
 - **VPS**: `root@76.13.192.32`
-- **Studio path on VPS**: `/root/fremio-studio`
+- **Studio path on VPS**: `/root/fremio-studio/studio/` ← **BENAR** (bukan `/root/fremio-studio/`)
+- **pm2 exec cwd**: `/root/fremio-studio/studio`
 - **pm2 process name**: `fremio-studio`
 - **Frontend URL**: `https://studio.fremio.id`
 - **Agent page URL**: `https://studio.fremio.id/agent`
 
+> ⚠️ **PENTING**: File app berjalan dari `/root/fremio-studio/studio/`, bukan root `/root/fremio-studio/`.
+> Kalau upload file (source code, public assets, dll) harus ke path `/root/fremio-studio/studio/`, bukan satu level di atasnya.
+> `deploy-studio.py` juga mengekstrak tar ke path yang salah — selalu verifikasi dengan `pm2 show fremio-studio | grep cwd`.
+
 ### Deployment Methods
 
-#### Method 1: Python Direct Deploy (Preferred — reliable)
+#### Method 1: Manual SCP Deploy (Paling Reliable)
+```powershell
+# 1. Build lokal
+cd studio && npm run build
+
+# 2. Buat tar (exclude node_modules, .next/cache, downloads besar)
+tar -czf deploy.tar.gz --exclude="./node_modules" --exclude="./.next/cache" --exclude="./public/downloads/*.exe" --exclude="./public/downloads/*.zip" .
+
+# 3. Upload tar ke VPS
+scp -i ~/.ssh/github-actions-key deploy.tar.gz root@76.13.192.32:/tmp/
+
+# 4. Extract ke path YANG BENAR
+ssh -i ~/.ssh/github-actions-key root@76.13.192.32 "tar -xzf /tmp/deploy.tar.gz -C /root/fremio-studio/studio && rm /tmp/deploy.tar.gz"
+
+# 5. Upload file download besar secara terpisah
+scp -i ~/.ssh/github-actions-key public/downloads/fremio-booth-windows-setup.exe root@76.13.192.32:/root/fremio-studio/studio/public/downloads/
+scp -i ~/.ssh/github-actions-key public/downloads/fremio-agent-win.exe root@76.13.192.32:/root/fremio-studio/studio/public/downloads/
+
+# 6. Sync ke nginx folder & restart
+ssh -i ~/.ssh/github-actions-key root@76.13.192.32 "cp -f /root/fremio-studio/studio/public/downloads/*.exe /var/www/fremio/downloads/ && pm2 restart fremio-studio"
+```
+
+#### Method 2: Python Direct Deploy
 ```bash
 python deploy-studio.py
 ```
-Build runs **locally**, then SCP uploads to VPS, then pm2 restarts.
-- Uses `~/.ssh/fremio_deploy` SSH key OR `github-actions-key` in repo root (ed25519)
-- Requires Node.js locally to run `npm run build` in studio/
-- No VPS build needed — faster than GitHub Actions
+> ⚠️ Script ini mengekstrak ke `/root/fremio-studio/` (salah). Perlu diperbaiki agar target ke `/root/fremio-studio/studio/`.
 
-#### Method 2: GitHub Actions (Auto-trigger on push)
+#### Method 3: GitHub Actions (Auto-trigger on push)
 - Triggers automatically on any push to `studio/**`
 - Workflow: `.github/workflows/deploy-studio.yml`
 - Builds on VPS (slower, requires npm install on VPS)
-- Manual trigger: `.github/workflows/patch-canon-fix.yml` (for TSX patch + deploy)
 
 ### SSH Key
-- File: `github-actions-key` (ed25519 private key, repo root)
-- Usage: `ssh -i github-actions-key root@76.13.192.32`
+- File: `~/.ssh/github-actions-key` (ed25519, yang berfungsi)
+- File: `~/.ssh/fremio_deploy` — **TIDAK ADA**, jangan digunakan
+- Usage: `ssh -i ~/.ssh/github-actions-key root@76.13.192.32`
+
+### Rebuild di VPS (jika perlu)
+```bash
+ssh -i ~/.ssh/github-actions-key root@76.13.192.32 "cd /root/fremio-studio/studio && npm run build && pm2 restart fremio-studio"
+```
 
 ---
 
-## Agent Downloads (studio/public/downloads/)
+## Agent Downloads & Windows App (studio/public/downloads/)
 
-Files committed to git and served at `https://studio.fremio.id/downloads/`:
+File download disajikan via nginx (`/var/www/fremio/downloads/`) dan Next.js (`studio/public/downloads/`).
 
-| File | Description |
-|------|-------------|
-| `fremio-agent-win.exe` | Windows agent binary (39MB, standalone) |
-| `fremio-agent-win-bundle/fremio-agent-win.exe` | Windows agent + Canon EDSDK DLLs |
-| `fremio-agent-win-bundle/bin/` | Canon EDSDK DLL files |
-| `fremio-agent-mac-arm64` | macOS agent — Apple Silicon |
-| `fremio-agent-mac-x64` | macOS agent — Intel |
-| `fremio-studio-launcher.exe` | Lite Windows launcher (31KB) |
-| `fremio-studio-windows-launcher.hta` | HTA-based launcher |
+> ⚠️ **NGINX RULE WAJIB**: Setiap file download baru di `/downloads/` harus ditambahkan sebagai `location` block di `/etc/nginx/sites-enabled/studio.fremio.id`. Tanpa ini file akan 404 meski ada di disk.
+
+```nginx
+# Contoh — tambahkan sebelum `location /uploads`
+location = /downloads/nama-file.exe {
+    alias /var/www/fremio/downloads/nama-file.exe;
+    add_header Content-Disposition "attachment" always;
+    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+}
+```
+Setelah edit: `nginx -t && nginx -s reload`
+
+### File Download Tersedia
+
+| File | Deskripsi | Ukuran |
+|------|-----------|--------|
+| `fremio-booth-windows-setup.exe` | **Full Electron App** — installer Windows | ~107 MB |
+| `fremio-booth-windows-portable.zip` | Full Electron App — portable/ZIP | ~144 MB |
+| `fremio-agent-win.exe` | Agent Only — binary standalone | ~38 MB |
+| `fremio-agent-win-bundle/` | Agent + Canon EDSDK DLLs | ~44 MB zip |
+| `fremio-agent-mac-arm64` | macOS agent Apple Silicon | ~46 MB |
+| `fremio-agent-mac-x64` | macOS agent Intel | ~51 MB |
+
+### Halaman /agent — Dua Tombol Download
+- **Tombol 1 (Full App)**: `fremio-booth-windows-setup.exe` — konstanta `WINDOWS_SETUP_FILE`
+- **Tombol 2 (Agent Only)**: `fremio-agent-win.exe` — konstanta `WINDOWS_AGENT_ONLY_FILE`
+
+> ⚠️ Jangan ubah `WINDOWS_SETUP_FILE` menjadi `fremio-agent-win.exe` — ini bug deploy sebelumnya yang menyebabkan kedua tombol download file yang sama (agent only).
 
 **IMPORTANT — Versioning:**
 - Filenames have NO version suffix. Use `fremio-agent-win.exe`, NOT `fremio-agent-win-v1.0.30.exe`
 - Version number is only shown as a badge in the `/agent` page UI (`v1.0.30`)
 - Do NOT reference versioned filenames like `fremio-booth-windows-setup-v1.0.XX.exe` — these never existed
+
+### Static Assets / Logo
+- Logo Fremio Studio: `my-app/src/assets/fremio_studio.png` (sumber utama)
+- Harus di-copy ke `studio/public/fremio_studio.png` agar bisa diakses web
+- Jika ada nama file baru (e.g. `fremio_studio_20260426.png`), buat alias saja di public/
+- `studio/public/` hampir kosong di git (`.gitignore` exclude `*.exe`, `*.zip`) — file harus diupload manual ke VPS
 
 **Agent architecture:**
 - The agent runs on the **operator's local machine** (booth computer), NOT on the VPS
@@ -211,7 +265,64 @@ Files committed to git and served at `https://studio.fremio.id/downloads/`:
 
 ---
 
-## Code Standards
+## Windows Electron App Build (booth-windows-app)
+
+### Lokasi
+`studio/booth-windows-app/` — Electron app yang membungkus agent + booth UI
+
+### Output Build
+- `dist/Fremio Studio-Setup-X.X.XX.exe` → di-rename ke `public/downloads/fremio-booth-windows-setup.exe`
+- `dist/Fremio Studio-X.X.XX-win.zip` → di-rename ke `public/downloads/fremio-booth-windows-portable.zip`
+- Rename dilakukan via: `cd studio && npm run app:sync-downloads`
+
+### Build Requirements
+- Windows OS (tidak bisa cross-compile dari Linux/macOS)
+- Node.js (di `C:\Program Files\nodejs`) — pastikan ada di PATH
+- PowerShell 7 (`pwsh.exe`) — install via `winget install --id Microsoft.PowerShell`
+
+### Cara Build
+```powershell
+# Set PATH untuk Node.js (jika tidak otomatis terdeteksi di pwsh)
+$env:Path = "C:\Program Files\nodejs;${env:APPDATA}\npm;" + $env:Path
+
+# Pre-populate winCodeSign cache (WAJIB — bypass symlink error Windows)
+$sevenZip = ".\node_modules\7zip-bin\win\x64\7za.exe"
+$cacheDir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0"
+New-Item -Path $cacheDir -ItemType Directory -Force
+& $sevenZip x -bd "$env:TEMP\winCodeSign-2.6.0.7z" "-o$cacheDir" -y
+# Buat placeholder untuk 2 symlinks macOS yang gagal
+New-Item -Path "$cacheDir\darwin\10.12\lib" -ItemType Directory -Force
+"" | Set-Content "$cacheDir\darwin\10.12\lib\libcrypto.dylib"
+"" | Set-Content "$cacheDir\darwin\10.12\lib\libssl.dylib"
+
+# Build
+cd studio\booth-windows-app
+$env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
+Remove-Item Env:WIN_CSC_LINK -ErrorAction SilentlyContinue
+npm run build
+
+# Sync ke downloads folder
+cd ..
+npm run app:sync-downloads
+```
+
+### Error Umum: Symlink Privilege
+```
+ERROR: Cannot create symbolic link : A required privilege is not held by the client.
+```
+**Penyebab**: electron-builder download `winCodeSign-2.6.0.7z` yang berisi symlinks macOS (`libcrypto.dylib`, `libssl.dylib`). Windows blokir pembuatan symlinks tanpa Developer Mode atau admin.
+
+**Fix**: Pre-populate cache secara manual (lihat langkah di atas) — 7za akan error code 2 (warning) tapi file lain terekstrak. Buat placeholder kosong untuk 2 symlinks yang gagal. electron-builder akan temukan folder cache dan skip re-extraction.
+
+### Setelah Build Selesai
+1. Upload `public/downloads/fremio-booth-windows-setup.exe` ke VPS
+2. Upload `public/downloads/fremio-booth-windows-portable.zip` ke VPS
+3. Copy ke `/var/www/fremio/downloads/` di VPS
+4. Pastikan nginx punya rule untuk kedua file tersebut
+
+---
+
+
 
 - TypeScript strict mode in studio
 - Error boundaries on all components
