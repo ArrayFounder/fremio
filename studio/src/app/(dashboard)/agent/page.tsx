@@ -52,7 +52,7 @@ const WIN_STEPS = [
   { icon: "🌐", title: "Mulai booth", desc: "Kalau status sudah siap, simpan slug booth lalu mulai sesi foto langsung dari app." },
 ];
 
-const WINDOWS_SETUP_FILE = "fremio-booth-windows-setup-v1.0.30.exe";
+const WINDOWS_SETUP_FILE = "fremio-agent-win.exe";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -181,7 +181,7 @@ export default function AgentPage() {
               <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-100">
                 <div>
                   <p className="font-semibold text-gray-900 text-sm">Fremio Studio — Windows <span className="text-xs font-normal text-gray-400">v1.0.30</span></p>
-                  <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Installer one-click · Includes Canon USB fix</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Windows 10 / 11 · 64-bit · Agent bridge lokal · Canon USB fix sudah termasuk</p>
                 </div>
                 <a
                   href={`/downloads/${WINDOWS_SETUP_FILE}`}
@@ -199,11 +199,11 @@ export default function AgentPage() {
               <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-amber-50 border border-amber-100">
                 <div>
                   <p className="font-semibold text-amber-900 text-sm">Agent Windows Bundle (Canon EDSDK)</p>
-                  <p className="text-xs text-amber-700 mt-0.5">Jika launcher installer belum mendeteksi Canon, gunakan bundle ini (sudah termasuk bridge + EDSDK DLL).</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Versi agent lengkap beserta Canon EDSDK bridge DLL. Ekstrak ke folder yang sama, jalankan <code className="font-mono bg-amber-100 px-0.5 rounded">fremio-agent-win.exe</code> dari dalam folder bundle.</p>
                 </div>
                 <a
-                  href="/downloads/fremio-agent-win-bundle.zip"
-                  download="fremio-agent-win-bundle.zip"
+                  href="/downloads/fremio-agent-win-bundle/fremio-agent-win.exe"
+                  download="fremio-agent-win.exe"
                   className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
                   style={{ background: "linear-gradient(135deg, #d97706, #b45309)" }}
                 >
