@@ -107,17 +107,30 @@ app.use((req, _res, next) => {
 app.get('/preview', async (_req, res) => {
   logger.debug('GET /preview — fetching DSLR live preview frame');
 
+  // Fast-path: refuse while a capture is in-flight to avoid USB conflicts.
+  if (camera.isCaptureInFlight()) {
+    return res.status(503).json({
+      ok:    false,
+      error: 'Capture sedang berjalan, preview tidak tersedia sementara.',
+      code:  'CAPTURE_IN_FLIGHT',
+      hint:  'Preview akan kembali otomatis setelah capture selesai.',
+    });
+  }
+
   let result;
   try {
     result = await camera.capturePreview();
   } catch (err) {
-    const statusCode = err && err.code === 'LIVE_VIEW_UNSUPPORTED' ? 409 : 500;
+    const isCaptureConflict = err && (err.code === 'CAPTURE_IN_FLIGHT');
+    const statusCode = isCaptureConflict ? 503 : (err && err.code === 'LIVE_VIEW_UNSUPPORTED' ? 409 : 500);
     logger.error('GET /preview error', { message: err.message });
     return res.status(statusCode).json({
       ok: false,
       error: err.message,
       code: err && err.code ? err.code : 'PREVIEW_ERROR',
-      hint: err && err.code === 'LIVE_VIEW_UNSUPPORTED'
+      hint: isCaptureConflict
+        ? 'Preview akan kembali otomatis setelah capture selesai.'
+        : err && err.code === 'LIVE_VIEW_UNSUPPORTED'
         ? 'Model kamera ini berjalan di mode capture-only. Tombol Ambil Foto tetap bisa dipakai.'
         : 'Pastikan kamera mendukung preview dan mode PTP/PC Remote aktif.',
     });
@@ -155,6 +168,17 @@ app.get('/status', async (_req, res) => {
       .then(({ cameraData, printerData }) => {
         statusCache = { ts: Date.now(), cameraData, printerData };
         return statusCache;
+      })
+      .catch((err) => {
+        // Prevent unhandled rejection from crashing the process.
+        logger.error('collectHardwareStatus failed', { message: err?.message });
+        const fallback = {
+          ts: Date.now(),
+          cameraData:  { available: false, cameras: [], error: err?.message },
+          printerData: { available: false, printers: [], error: err?.message },
+        };
+        statusCache = fallback;
+        return fallback;
       })
       .finally(() => {
         statusInFlight = null;

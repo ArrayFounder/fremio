@@ -303,13 +303,16 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     setDslrPreviewError(null);
     setDslrPreviewFrameSrc(null);
     if (typeof window !== "undefined") {
-      sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + 1600));
+      // Wait 3000ms before CameraScreen starts polling. Canon gphoto2 processes
+      // have up to 2200ms timeout; this ensures the last preview process has
+      // fully released the USB session before CameraScreen's first poll.
+      sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + 3000));
     }
     if (dslrPreviewImgRef.current) {
       dslrPreviewImgRef.current.removeAttribute("src");
       dslrPreviewImgRef.current.src = "";
     }
-    await new Promise((resolve) => setTimeout(resolve, 1400));
+    await new Promise((resolve) => setTimeout(resolve, 2800));
   }, []);
 
   useEffect(() => {

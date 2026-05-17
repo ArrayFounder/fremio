@@ -47,6 +47,33 @@ const liveViewProbeCache = {
   expiresAt: 0,
 };
 
+// ─── Preview / Capture mutex ───────────────────────────────────────────────────
+//
+// Canon cameras (and most DSLRs) expose a single USB session that can only be
+// owned by one gphoto2 process at a time.  When the live-preview loop is
+// polling /preview at high frequency, a POST /capture that arrives while a
+// preview gphoto2 process is still running will receive GP_ERROR_IO_USB_FIND
+// (0x000000C0) – the camera is already claimed.
+//
+// We fix this with two module-level primitives:
+//   • activePreviewProcess  – the ChildProcess spawned by tryPreviewStrategies
+//   • captureInFlight       – boolean set during capturePhoto execution
+//
+// capturePhoto kills the active preview process before running and waits
+// CAPTURE_PREEMPT_WAIT_MS for the Canon to release its USB session.
+// capturePreview checks captureInFlight and throws CAPTURE_IN_FLIGHT early
+// so the caller gets a clean 503 rather than a garbled USB error.
+
+let activePreviewProcess = null; // ChildProcess | null
+let captureInFlight      = false;
+
+// Serialize concurrent tryPreviewStrategies calls so only one gphoto2
+// preview process runs at a time (Canon USB session is exclusive).
+let previewInFlight      = false;
+const previewQueue       = []; // Array<() => void>  — pending callers
+
+const CAPTURE_PREEMPT_WAIT_MS = 450; // ms to wait after killing preview before capturing
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -169,7 +196,36 @@ function cameraKeyFromList(cameras) {
   return `${first.model || 'unknown'}@${first.port || 'unknown'}`;
 }
 
-async function tryPreviewStrategies({ timeoutScale = 1 } = {}) {
+/**
+ * Serializing wrapper around _tryPreviewStrategiesImpl.
+ * Canon USB sessions are exclusive — only one gphoto2 preview process may
+ * run at a time. Concurrent callers (e.g. /preview polling + status probe)
+ * are queued and run sequentially, not in parallel.
+ */
+async function tryPreviewStrategies(opts = {}) {
+  if (previewInFlight) {
+    // Wait until the current in-flight preview call finishes.
+    await new Promise((resolve) => previewQueue.push(resolve));
+  }
+  // After waking from queue (or on first call): if a capture just started,
+  // abort immediately — starting another gphoto2 process would cause USB conflict.
+  if (captureInFlight) {
+    const err = new Error('Capture sedang berjalan, preview tidak tersedia sementara.');
+    err.code = 'CAPTURE_IN_FLIGHT';
+    throw err;
+  }
+  previewInFlight = true;
+  try {
+    return await _tryPreviewStrategiesImpl(opts);
+  } finally {
+    previewInFlight = false;
+    // Wake up the next queued caller (if any).
+    const next = previewQueue.shift();
+    if (next) next();
+  }
+}
+
+async function _tryPreviewStrategiesImpl({ timeoutScale = 1 } = {}) {
   const attempts = [
     {
       name: 'capture-preview stdout',
@@ -191,14 +247,22 @@ async function tryPreviewStrategies({ timeoutScale = 1 } = {}) {
   const errors = [];
 
   for (const attempt of attempts) {
+    // Abort early if a capture request pre-empted us while iterating attempts.
+    if (captureInFlight) {
+      errors.push(`${attempt.name}: dibatalkan (capture sedang berjalan)`);
+      break;
+    }
+
     try {
       logger.debug(`Executing live preview (${attempt.name}): ${GPHOTO2} ${attempt.args.join(' ')}`);
       const stdout = await new Promise((resolve, reject) => {
-        execFile(
+        const child = execFile(
           GPHOTO2,
           attempt.args,
           { timeout: attempt.timeout, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
           (err, out, stderr) => {
+            // Deregister when the process exits (regardless of success/failure).
+            if (activePreviewProcess === child) activePreviewProcess = null;
             if (err) {
               reject(new Error(`${attempt.name} failed: ${err.message}; stderr: ${stderr || '(kosong)'}`));
               return;
@@ -206,6 +270,8 @@ async function tryPreviewStrategies({ timeoutScale = 1 } = {}) {
             resolve(Buffer.isBuffer(out) ? out : Buffer.from(out || ''));
           }
         );
+        // Register so capturePhoto can kill this process if needed.
+        activePreviewProcess = child;
       });
 
       const frame = extractJpegFrame(stdout);
@@ -220,6 +286,34 @@ async function tryPreviewStrategies({ timeoutScale = 1 } = {}) {
   }
 
   return { ok: false, frame: null, strategy: null, errors };
+}
+
+/**
+ * Kill the currently active preview gphoto2 process (if any) and wait for
+ * the Canon camera to release its USB session before a capture can start.
+ * Also clears the preview queue so queued preview calls don't immediately
+ * re-occupy the USB session after the capture starts.
+ */
+async function killActivePreviewAndWait() {
+  // Drain the queue — reject all waiting preview callers so they don't
+  // start right after the kill (they'll naturally retry from the caller).
+  while (previewQueue.length > 0) {
+    const resolve = previewQueue.shift();
+    resolve(); // wake up so they can check captureInFlight and abort early
+  }
+
+  const proc = activePreviewProcess;
+  if (!proc) return;
+
+  activePreviewProcess = null;
+  try {
+    proc.kill('SIGTERM');
+  } catch {
+    // Process may have already exited — safe to ignore.
+  }
+
+  logger.debug(`Killed active preview process (PID ${proc.pid}), waiting ${CAPTURE_PREEMPT_WAIT_MS}ms for USB release`);
+  await new Promise((r) => setTimeout(r, CAPTURE_PREEMPT_WAIT_MS));
 }
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -269,6 +363,13 @@ async function detectCamera() {
  * @returns {Promise<{ base64: string, mimeType: string, size: number, elapsedMs: number }>}
  */
 async function capturePhoto({ keepOnCamera = false } = {}) {
+  // ── Pre-empt any live-preview gphoto2 process ──────────────────────────────
+  // Set captureInFlight BEFORE killing the preview so that any queued
+  // tryPreviewStrategies callers that wake up during the kill+wait see the
+  // flag and abort instead of starting a new conflicting gphoto2 process.
+  captureInFlight = true;
+  await killActivePreviewAndWait();
+  try {
   const filename = path.join(TMPDIR, `fremio_cap_${Date.now()}.jpg`);
   const args = [
     '--capture-image-and-download',
@@ -285,7 +386,7 @@ async function capturePhoto({ keepOnCamera = false } = {}) {
   logger.info(`Capturing photo → ${filename}`);
   logger.debug(`Executing: ${GPHOTO2} ${args.join(' ')}`);
 
-  return new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     const t0 = Date.now();
 
     execFile(GPHOTO2, args, { timeout: 30_000 }, (err, stdout, stderr) => {
@@ -332,6 +433,9 @@ async function capturePhoto({ keepOnCamera = false } = {}) {
       }
     });
   });
+  } finally {
+    captureInFlight = false;
+  }
 }
 
 /**
@@ -341,6 +445,15 @@ async function capturePhoto({ keepOnCamera = false } = {}) {
  * @returns {Promise<{ buffer: Buffer, mimeType: string, size: number, elapsedMs: number }>}
  */
 async function capturePreview() {
+  // Refuse to start a new gphoto2 preview process while a capture is in-flight.
+  // The caller (GET /preview route) will return HTTP 503 so the frontend can
+  // gracefully skip that poll cycle instead of getting a USB conflict error.
+  if (captureInFlight) {
+    const err = new Error('Capture sedang berjalan, preview tidak tersedia sementara.');
+    err.code = 'CAPTURE_IN_FLIGHT';
+    throw err;
+  }
+
   const t0 = Date.now();
   const previewResult = await tryPreviewStrategies();
 
@@ -370,4 +483,9 @@ async function capturePreview() {
   throw error;
 }
 
-module.exports = { detectCamera, getCameraStatus, capturePhoto, capturePreview };
+/** Returns true while a capturePhoto() call is in-flight. */
+function isCaptureInFlight() {
+  return captureInFlight;
+}
+
+module.exports = { detectCamera, getCameraStatus, capturePhoto, capturePreview, isCaptureInFlight };
