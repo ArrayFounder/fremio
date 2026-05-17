@@ -1,0 +1,185 @@
+name: Patch Canon Fix + Deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/patch-canon-fix.yml']
+  workflow_dispatch:
+
+jobs:
+  patch-and-deploy:
+    runs-on: ubuntu-latest
+    name: Patch Canon timing fixes + Deploy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch BoothSetupScreen timing
+        run: |
+          python3 - << 'PYEOF'
+          path = 'studio/src/app/(booth)/b/[slug]/screens/BoothSetupScreen.tsx'
+          with open(path, 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          # Fix 1: add comments + change 1600->3000
+          old1 = '      sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + 1600));'
+          new1 = (
+              '      // Wait 3000ms before CameraScreen starts polling. Canon gphoto2 processes\n'
+              '      // have up to 2200ms timeout; this ensures the last preview process has\n'
+              '      // fully released the USB session before CameraScreen\'s first poll.\n'
+              '      sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + 3000));'
+          )
+          if old1 in content:
+              content = content.replace(old1, new1, 1)
+              print('BoothSetupScreen fix 1 applied: 1600->3000 + comments')
+          else:
+              print('BoothSetupScreen fix 1: already applied or no match')
+
+          # Fix 2: change 1400->2800
+          old2 = 'await new Promise((resolve) => setTimeout(resolve, 1400));'
+          new2 = 'await new Promise((resolve) => setTimeout(resolve, 2800));'
+          if old2 in content:
+              content = content.replace(old2, new2, 1)
+              print('BoothSetupScreen fix 2 applied: 1400->2800')
+          else:
+              print('BoothSetupScreen fix 2: already applied or no match')
+
+          with open(path, 'w', encoding='utf-8') as f:
+              f.write(content)
+          PYEOF
+
+      - name: Patch CameraScreen timing
+        run: |
+          python3 - << 'PYEOF'
+          import re
+          path = 'studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx'
+          with open(path, 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          # Fix 1: DSLR_PREVIEW_ERROR_GRACE_MS 1200->3500
+          new_content = re.sub(
+              r'(const DSLR_PREVIEW_ERROR_GRACE_MS\s*=\s*)1200(;[^\n]*)',
+              r'\g<1>3500; // Grace period for USB release + queue wait (Canon gphoto2 max ~2200ms)',
+              content, count=1
+          )
+          if new_content != content:
+              print('CameraScreen fix 1 applied: DSLR_PREVIEW_ERROR_GRACE_MS 1200->3500')
+              content = new_content
+          else:
+              print('CameraScreen fix 1: already applied or no match')
+
+          # Fix 2: previewPollingStartedAt threshold 1200->4000
+          old2 = 'previewPollingStartedAt >= 1200'
+          new2 = 'previewPollingStartedAt >= 4000'
+          if old2 in content:
+              content = content.replace(old2, new2, 1)
+              print('CameraScreen fix 2 applied: previewPollingStartedAt 1200->4000')
+          else:
+              print('CameraScreen fix 2: already applied or no match')
+
+          # Fix 3: ipcFallbackTimer 1800->4000 (use unique 2-line context)
+          old3 = '        }, 1800);\n        timer = window.setTimeout(pollPreview, 0);'
+          new3 = '        }, 4000);\n        timer = window.setTimeout(pollPreview, 0);'
+          if old3 in content:
+              content = content.replace(old3, new3, 1)
+              print('CameraScreen fix 3 applied: ipcFallbackTimer 1800->4000')
+          else:
+              print('CameraScreen fix 3: already applied or no match')
+
+          with open(path, 'w', encoding='utf-8') as f:
+              f.write(content)
+          PYEOF
+
+      - name: Commit patches
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "studio/src/app/(booth)/b/[slug]/screens/BoothSetupScreen.tsx"
+          git add "studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx"
+          if git diff --cached --quiet; then
+            echo "No changes to commit (patches already applied)"
+          else
+            git commit -m "fix(canon): increase preview release + grace period timings [skip ci]
+
+Prevents ECONNRESET and 0x000000C0 USB errors by giving gphoto2
+processes enough time to fully release the USB session before
+CameraScreen begins polling.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+            git push origin main
+            echo "Patches committed and pushed"
+          fi
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Package studio source
+        run: |
+          tar -czf /tmp/studio.tar.gz \
+            -C studio \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='.env' \
+            --exclude='.env.production' \
+            --exclude='.env.local' \
+            --exclude='.env.production.local' \
+            --exclude='uploads' \
+            --exclude='.git' \
+            .
+
+      - name: Upload to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          scp -i ~/.ssh/id_rsa /tmp/studio.tar.gz $VPS_USER@$VPS_HOST:/tmp/studio-deploy.tar.gz
+
+      - name: Deploy on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/id_rsa $VPS_USER@$VPS_HOST << 'ENDSSH'
+          set -e
+          echo "Extracting studio source..."
+          mkdir -p /root/fremio-studio
+          tar -xzf /tmp/studio-deploy.tar.gz -C /root/fremio-studio
+          cd /root/fremio-studio
+
+          echo "Setting up env..."
+          if [ -f .env.production.local ]; then
+            cp .env.production.local .env.local
+          fi
+
+          echo "Installing dependencies..."
+          npm install
+
+          echo "Building Next.js..."
+          npm run build
+
+          echo "Running Prisma..."
+          npx prisma generate
+          if [ -d prisma/migrations ] && find prisma/migrations -name migration.sql -print -quit | grep -q .; then
+            npx prisma migrate deploy
+          else
+            npx prisma db push
+          fi
+
+          echo "Restarting pm2..."
+          pm2 restart fremio-studio || pm2 start npm --name fremio-studio -- start
+          pm2 save
+
+          rm -f /tmp/studio-deploy.tar.gz
+          echo "Deploy complete!"
+          ENDSSH
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
