@@ -393,7 +393,10 @@ internal sealed class EdsdkSession : IDisposable
                 if (streamRef   != IntPtr.Zero) Edsdk.EdsRelease(streamRef);
             }
 
-            Thread.Sleep(80);
+            // No sleep — run at maximum camera frame rate (~20–30 FPS on Canon DSLRs).
+            // The EdsDownloadEvfImage call itself throttles naturally to the camera's
+            // live-view refresh speed; busy-looping here causes no extra CPU load because
+            // the call blocks until a new frame is ready.
         }
 
         Console.Error.WriteLine("[bridge] Live view loop exited gracefully (stdin closed)");

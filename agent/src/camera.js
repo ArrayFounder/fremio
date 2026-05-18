@@ -1,486 +1,383 @@
 'use strict';
 
 /**
- * camera.js — gphoto2 wrapper for DSLR capture
+ * camera.js — Canon EDSDK bridge wrapper for DSLR capture
  *
- * Deps: none (uses child_process + fs from Node.js stdlib)
- * Env:  GPHOTO2_PATH  — path to gphoto2 executable (default: 'gphoto2')
+ * Deps: none (uses child_process + fs + EventEmitter from Node.js stdlib)
+ * Env:  EDSDK_BRIDGE_PATH — path to edsdk-bridge-native.exe (optional override)
+ *
+ * The EDSDK bridge binary (edsdk-bridge-native.exe) must have EDSDK.dll
+ * in the same directory. CLI interface:
+ *   edsdk-bridge-native status                   → JSON to stdout
+ *   edsdk-bridge-native capture --output <path>  → writes JPEG to file
+ *   edsdk-bridge-native preview --stdout         → writes raw JPEG bytes to stdout (single frame)
+ *   edsdk-bridge-native preview-stream           → streams length-framed JPEG frames until stdin closes
  */
 
-const { execFile } = require('child_process');
-const fs           = require('fs');
-const path         = require('path');
-const os           = require('os');
-const logger       = require('./logger');
+const { execFile, spawn }  = require('child_process');
+const { EventEmitter }     = require('events');
+const fs                   = require('fs');
+const path                 = require('path');
+const os                   = require('os');
+const logger               = require('./logger');
 
-function resolveGphoto2Path() {
-  const envPath = process.env.GPHOTO2_PATH;
-  if (envPath) return envPath;
+// ─── EDSDK bridge path resolution ────────────────────────────────────────────
 
-  if (process.platform !== 'win32') return 'gphoto2';
+function resolveEdsdkBridgePath() {
+  if (process.env.EDSDK_BRIDGE_PATH) return process.env.EDSDK_BRIDGE_PATH;
 
+  const exe = process.platform === 'win32' ? 'edsdk-bridge-native.exe' : 'edsdk-bridge-native';
+
+  // Search relative to this file's location (agent/src/) up through known layouts
   const candidates = [
-    'C:\\msys64\\mingw64\\bin\\gphoto2.exe',
-    'C:\\msys64\\ucrt64\\bin\\gphoto2.exe',
-    'C:\\Program Files\\gPhoto2\\bin\\gphoto2.exe',
-    'C:\\Program Files (x86)\\gPhoto2\\bin\\gphoto2.exe',
+    path.resolve(__dirname, '..', 'bin', exe),                          // agent/bin/
+    path.resolve(__dirname, '..', '..', 'studio', 'agent', 'bin', exe), // repo-root/studio/agent/bin/
+    path.resolve(__dirname, '..', '..', 'agent', 'bin', exe),           // repo-root/agent/bin/
+    path.resolve(__dirname, exe),                                        // agent/src/
   ];
 
   for (const candidate of candidates) {
     try {
       if (fs.existsSync(candidate)) return candidate;
-    } catch {
-      // Ignore broken path checks and continue.
-    }
+    } catch { /* ignore */ }
   }
 
-  return 'gphoto2';
+  return exe; // fallback — let the OS find it on PATH
 }
 
-const GPHOTO2 = resolveGphoto2Path();
-const TMPDIR  = os.tmpdir();
-const LIVE_VIEW_PROBE_TTL_MS = 30_000;
+const EDSDK_BRIDGE = resolveEdsdkBridgePath();
+const TMPDIR       = os.tmpdir();
 
-const liveViewProbeCache = {
-  key: null,
-  value: null,
-  expiresAt: 0,
-};
+logger.info(`EDSDK bridge path: ${EDSDK_BRIDGE}`);
 
-// ─── Preview / Capture mutex ───────────────────────────────────────────────────
+// ─── Session guard ───────────────────────────────────────────────────────────
+// EDSDK opens its own COM/USB session per command invocation; concurrent
+// capture + preview calls can conflict. Use a simple in-flight flag.
+
+let captureInFlight = false;
+let previewInFlight = false;
+
+// ─── Persistent preview-stream state ─────────────────────────────────────────
+// The `preview-stream` bridge command keeps EDSDK alive and streams
+// length-framed JPEG frames (4-byte big-endian length + raw JPEG bytes)
+// to stdout until we close its stdin.
 //
-// Canon cameras (and most DSLRs) expose a single USB session that can only be
-// owned by one gphoto2 process at a time.  When the live-preview loop is
-// polling /preview at high frequency, a POST /capture that arrives while a
-// preview gphoto2 process is still running will receive GP_ERROR_IO_USB_FIND
-// (0x000000C0) – the camera is already claimed.
-//
-// We fix this with two module-level primitives:
-//   • activePreviewProcess  – the ChildProcess spawned by tryPreviewStrategies
-//   • captureInFlight       – boolean set during capturePhoto execution
-//
-// capturePhoto kills the active preview process before running and waits
-// CAPTURE_PREEMPT_WAIT_MS for the Canon to release its USB session.
-// capturePreview checks captureInFlight and throws CAPTURE_IN_FLIGHT early
-// so the caller gets a clean 503 rather than a garbled USB error.
+// We spawn ONE process shared across all connected MJPEG clients and stop it
+// when the last client disconnects.
 
-let activePreviewProcess = null; // ChildProcess | null
-let captureInFlight      = false;
+/** EventEmitter that emits 'frame' (Buffer) events from the bridge process. */
+const previewStreamEmitter = new EventEmitter();
+previewStreamEmitter.setMaxListeners(50); // support many concurrent clients
 
-// Serialize concurrent tryPreviewStrategies calls so only one gphoto2
-// preview process runs at a time (Canon USB session is exclusive).
-let previewInFlight      = false;
-const previewQueue       = []; // Array<() => void>  — pending callers
+let _streamProcess   = null; // child_process.ChildProcess or null
+let _streamClients   = 0;    // number of active /preview-stream subscribers
+let _streamParseBuffer = Buffer.alloc(0); // rolling parse buffer for length-framed data
 
-const CAPTURE_PREEMPT_WAIT_MS = 450; // ms to wait after killing preview before capturing
+function _startStreamProcess() {
+  if (_streamProcess) return; // already running
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+  logger.info('Starting persistent preview-stream bridge process');
+  _streamParseBuffer = Buffer.alloc(0);
+
+  _streamProcess = spawn(EDSDK_BRIDGE, ['preview-stream'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  _streamProcess.stderr.on('data', (d) => {
+    logger.debug(`[bridge stderr] ${d.toString().trim()}`);
+  });
+
+  _streamProcess.stdout.on('data', (chunk) => {
+    _streamParseBuffer = Buffer.concat([_streamParseBuffer, chunk]);
+    // Parse all complete frames (4-byte big-endian length prefix + JPEG payload)
+    while (_streamParseBuffer.length >= 4) {
+      const frameLen = _streamParseBuffer.readUInt32BE(0);
+      if (_streamParseBuffer.length < 4 + frameLen) break; // wait for more data
+      const frame = _streamParseBuffer.slice(4, 4 + frameLen);
+      _streamParseBuffer = _streamParseBuffer.slice(4 + frameLen);
+      previewStreamEmitter.emit('frame', frame);
+    }
+  });
+
+  _streamProcess.on('exit', (code, signal) => {
+    logger.info(`Preview-stream bridge exited (code=${code}, signal=${signal})`);
+    _streamProcess     = null;
+    _streamParseBuffer = Buffer.alloc(0);
+    previewStreamEmitter.emit('stream-end');
+  });
+
+  _streamProcess.on('error', (err) => {
+    logger.error('Preview-stream bridge error', { message: err.message });
+    _streamProcess     = null;
+    _streamParseBuffer = Buffer.alloc(0);
+    previewStreamEmitter.emit('stream-end');
+  });
+}
+
+function _stopStreamProcess() {
+  if (_streamProcess) {
+    logger.info('Stopping persistent preview-stream bridge process (no more clients)');
+    try { _streamProcess.stdin.end(); } catch { /* ignore */ }
+    _streamProcess = null;
+  }
+}
 
 /**
- * Parse `gphoto2 --auto-detect` stdout.
+ * Register a new MJPEG client to receive Canon live-view frames.
+ * Starts the bridge preview-stream process if not already running.
  *
- * Sample output:
- *   Model                          Port
- *   ----------------------------------------------------------
- *   Canon EOS 600D                 usb:001,007
- *   Nikon DSC D3400                usb:001,008
+ * @param {function(Buffer): void} onFrame  Called for each JPEG frame.
+ * @param {function(): void}       onEnd    Called when the bridge stream ends.
+ * @returns {function(): void}  Call this to unsubscribe (and stop bridge if last client).
  */
-function parseAutoDetect(stdout) {
-  return stdout
-    .split('\n')
-    .filter((l) => l.trim() && !l.startsWith('Model') && !/^-+$/.test(l.trim()))
-    .map((line) => {
-      // Camera name and port are separated by 2+ spaces
-      const parts = line.trim().split(/\s{2,}/);
-      if (parts.length < 2) return null;
-      return {
-        model: parts[0].trim(),
-        port:  parts[parts.length - 1].trim(),
-      };
-    })
-    .filter(Boolean);
-}
+function subscribePreviewStream(onFrame, onEnd) {
+  _streamClients++;
+  previewStreamEmitter.on('frame',      onFrame);
+  previewStreamEmitter.on('stream-end', onEnd);
 
-async function getCameraStatus({ refreshCapabilities = false } = {}) {
-  const detection = await detectCamera();
-  const cameraKey = cameraKeyFromList(detection.cameras);
-
-  if (!detection.available) {
-    return {
-      ...detection,
-      capabilities: {
-        supportsCapture: false,
-        supportsLiveView: false,
-        mode: 'unavailable',
-      },
-    };
+  // Start the bridge if it isn't already running AND no capture is in flight.
+  if (!_streamProcess && !captureInFlight) {
+    _startStreamProcess();
   }
 
-  const now = Date.now();
-  const canUseCache =
-    !refreshCapabilities &&
-    liveViewProbeCache.value &&
-    liveViewProbeCache.key === cameraKey &&
-    liveViewProbeCache.expiresAt > now;
-
-  let probe = canUseCache ? liveViewProbeCache.value : null;
-  if (!probe) {
-    const previewResult = await tryPreviewStrategies({ timeoutScale: 0.8 });
-    probe = {
-      supported: previewResult.ok,
-      strategy: previewResult.strategy,
-      error: previewResult.ok ? undefined : previewResult.errors.join(' | '),
-      checkedAt: new Date().toISOString(),
-    };
-    liveViewProbeCache.key = cameraKey;
-    liveViewProbeCache.value = probe;
-    liveViewProbeCache.expiresAt = now + LIVE_VIEW_PROBE_TTL_MS;
-  }
-
-  return {
-    ...detection,
-    capabilities: {
-      supportsCapture: true,
-      supportsLiveView: probe.supported === true,
-      mode: probe.supported ? 'live-view' : 'capture-only',
-      liveViewStrategy: probe.strategy || null,
-      ...(probe.error ? { liveViewError: probe.error } : {}),
-      checkedAt: probe.checkedAt,
-    },
+  return function unsubscribe() {
+    previewStreamEmitter.off('frame',      onFrame);
+    previewStreamEmitter.off('stream-end', onEnd);
+    _streamClients = Math.max(0, _streamClients - 1);
+    if (_streamClients === 0) {
+      _stopStreamProcess();
+    }
   };
 }
-/**
- * Build a human-readable hint from gphoto2 stderr.
- */
-function captureHint(stderr) {
-  if (!stderr) return '';
-  if (stderr.includes('Could not claim the USB device')) {
-    return (
-      '\nHINT: Kamera sedang diklaim aplikasi lain (Finder/Photos di Mac, atau gvfs di Linux).\n' +
-      'Solusi Mac: buka Terminal → `killall PTPCamera` lalu coba lagi.\n' +
-      'Solusi Linux: `gvfs-mount -s gphoto2` atau tambahkan udev rule.'
-    );
-  }
-  if (stderr.includes('No camera found') || stderr.includes('Could not detect any camera')) {
-    return (
-      '\nHINT: Tidak ada kamera terdeteksi.\n' +
-      '  1. Pastikan kamera menyala dan di-set ke mode PTP / PC Connect (bukan MTP/Mass Storage).\n' +
-      '  2. Coba cabut dan colok ulang kabel USB.\n' +
-      '  3. Jalankan `gphoto2 --auto-detect` di terminal untuk verifikasi.'
-    );
-  }
-  if (stderr.includes('Unknown model')) {
-    return '\nHINT: Model kamera tidak dikenali gphoto2. Cek daftar kamera yang didukung: http://gphoto.org/proj/libgphoto2/support.php';
-  }
-  if (stderr.includes('permission')) {
-    return (
-      '\nHINT: Permission denied untuk akses USB.\n' +
-      'Solusi Linux: tambahkan user ke group `plugdev` → `sudo usermod -aG plugdev $USER` lalu logout/login.'
-    );
-  }
-  return '';
-}
-
-function extractJpegFrame(buffer) {
-  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return null;
-  const soi = buffer.indexOf(Buffer.from([0xff, 0xd8]));
-  if (soi < 0) return null;
-  const eoi = buffer.indexOf(Buffer.from([0xff, 0xd9]), soi + 2);
-  if (eoi < 0) return null;
-  return buffer.subarray(soi, eoi + 2);
-}
-
-function cameraKeyFromList(cameras) {
-  if (!Array.isArray(cameras) || cameras.length === 0) return 'none';
-  const first = cameras[0];
-  return `${first.model || 'unknown'}@${first.port || 'unknown'}`;
-}
 
 /**
- * Serializing wrapper around _tryPreviewStrategiesImpl.
- * Canon USB sessions are exclusive — only one gphoto2 preview process may
- * run at a time. Concurrent callers (e.g. /preview polling + status probe)
- * are queued and run sequentially, not in parallel.
+ * Stop the preview-stream process immediately (called before a shutter capture
+ * so the two EDSDK sessions don't conflict).
  */
-async function tryPreviewStrategies(opts = {}) {
-  if (previewInFlight) {
-    // Wait until the current in-flight preview call finishes.
-    await new Promise((resolve) => previewQueue.push(resolve));
-  }
-  // After waking from queue (or on first call): if a capture just started,
-  // abort immediately — starting another gphoto2 process would cause USB conflict.
-  if (captureInFlight) {
-    const err = new Error('Capture sedang berjalan, preview tidak tersedia sementara.');
-    err.code = 'CAPTURE_IN_FLIGHT';
-    throw err;
-  }
-  previewInFlight = true;
-  try {
-    return await _tryPreviewStrategiesImpl(opts);
-  } finally {
-    previewInFlight = false;
-    // Wake up the next queued caller (if any).
-    const next = previewQueue.shift();
-    if (next) next();
-  }
+function killPreviewStream() {
+  _stopStreamProcess();
+  _streamClients = 0;
+  _streamParseBuffer = Buffer.alloc(0);
 }
 
-async function _tryPreviewStrategiesImpl({ timeoutScale = 1 } = {}) {
-  const attempts = [
-    {
-      name: 'capture-preview stdout',
-      args: ['--capture-preview', '--stdout'],
-      timeout: Math.round(2200 * timeoutScale),
-    },
-    {
-      name: 'capture-movie eosviewfinder',
-      args: ['--set-config', 'eosviewfinder=1', '--capture-movie', '--frames', '1', '--stdout'],
-      timeout: Math.round(2500 * timeoutScale),
-    },
-    {
-      name: 'capture-movie viewfinder',
-      args: ['--set-config', 'viewfinder=1', '--capture-movie', '--frames', '1', '--stdout'],
-      timeout: Math.round(2500 * timeoutScale),
-    },
-  ];
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-  const errors = [];
+function runBridgeJson(args, timeoutMs = 15_000) {
+  return new Promise((resolve, reject) => {
+    execFile(EDSDK_BRIDGE, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const raw = (stdout || '').trim();
+      let parsed = null;
+      try { parsed = raw ? JSON.parse(raw) : null; } catch { /* ignore parse errors */ }
 
-  for (const attempt of attempts) {
-    // Abort early if a capture request pre-empted us while iterating attempts.
-    if (captureInFlight) {
-      errors.push(`${attempt.name}: dibatalkan (capture sedang berjalan)`);
-      break;
-    }
-
-    try {
-      logger.debug(`Executing live preview (${attempt.name}): ${GPHOTO2} ${attempt.args.join(' ')}`);
-      const stdout = await new Promise((resolve, reject) => {
-        const child = execFile(
-          GPHOTO2,
-          attempt.args,
-          { timeout: attempt.timeout, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
-          (err, out, stderr) => {
-            // Deregister when the process exits (regardless of success/failure).
-            if (activePreviewProcess === child) activePreviewProcess = null;
-            if (err) {
-              reject(new Error(`${attempt.name} failed: ${err.message}; stderr: ${stderr || '(kosong)'}`));
-              return;
-            }
-            resolve(Buffer.isBuffer(out) ? out : Buffer.from(out || ''));
-          }
-        );
-        // Register so capturePhoto can kill this process if needed.
-        activePreviewProcess = child;
-      });
-
-      const frame = extractJpegFrame(stdout);
-      if (frame && frame.length > 0) {
-        return { ok: true, frame, strategy: attempt.name, errors };
-      }
-
-      errors.push(`${attempt.name}: tidak menemukan frame JPEG di stdout`);
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  return { ok: false, frame: null, strategy: null, errors };
-}
-
-/**
- * Kill the currently active preview gphoto2 process (if any) and wait for
- * the Canon camera to release its USB session before a capture can start.
- * Also clears the preview queue so queued preview calls don't immediately
- * re-occupy the USB session after the capture starts.
- */
-async function killActivePreviewAndWait() {
-  // Drain the queue — reject all waiting preview callers so they don't
-  // start right after the kill (they'll naturally retry from the caller).
-  while (previewQueue.length > 0) {
-    const resolve = previewQueue.shift();
-    resolve(); // wake up so they can check captureInFlight and abort early
-  }
-
-  const proc = activePreviewProcess;
-  if (!proc) return;
-
-  activePreviewProcess = null;
-  try {
-    proc.kill('SIGTERM');
-  } catch {
-    // Process may have already exited — safe to ignore.
-  }
-
-  logger.debug(`Killed active preview process (PID ${proc.pid}), waiting ${CAPTURE_PREEMPT_WAIT_MS}ms for USB release`);
-  await new Promise((r) => setTimeout(r, CAPTURE_PREEMPT_WAIT_MS));
-}
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-/**
- * Detect connected cameras using `gphoto2 --auto-detect`.
- *
- * @returns {{ available: boolean, cameras: { model: string, port: string }[], error?: string }}
- */
-async function detectCamera() {
-  logger.debug('Running gphoto2 --auto-detect');
-
-  return new Promise((resolve) => {
-    execFile(GPHOTO2, ['--auto-detect'], { timeout: 10_000 }, (err, stdout, stderr) => {
-      if (err) {
-        // ENOENT = gphoto2 not installed
-        if (err.code === 'ENOENT') {
-          logger.warn('gphoto2 not found — camera unavailable', { path: GPHOTO2 });
-          resolve({
-            available: false,
-            cameras: [],
-            error: `gphoto2 tidak ditemukan di path: "${GPHOTO2}". Install dulu (lihat README).`,
-          });
-          return;
-        }
-        logger.error('gphoto2 --auto-detect error', { message: err.message, stderr });
-        resolve({
-          available: false,
-          cameras: [],
-          error: `gphoto2 error: ${err.message}\nstderr: ${stderr || '(kosong)'}`,
-        });
+      if (err && !parsed) {
+        reject(new Error(`edsdk-bridge ${args[0]} failed: ${err.message}\nstderr: ${stderr || '(empty)'}`));
         return;
       }
-
-      logger.debug('gphoto2 --auto-detect output', { stdout, stderr });
-      const cameras = parseAutoDetect(stdout);
-      logger.info(`Camera detection: ${cameras.length} kamera ditemukan`, cameras);
-      resolve({ available: cameras.length > 0, cameras });
+      resolve({ parsed, stdout: raw, stderr: stderr || '', exitCode: err ? err.code : 0 });
     });
   });
 }
 
+function runBridgeBinary(args, timeoutMs = 30_000) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      EDSDK_BRIDGE,
+      args,
+      { timeout: timeoutMs, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err && (!stdout || stdout.length === 0)) {
+          reject(new Error(`edsdk-bridge ${args[0]} failed: ${err.message}`));
+          return;
+        }
+        resolve(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout || ''));
+      }
+    );
+  });
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /**
- * Capture a photo from the connected DSLR.
- * Downloads the JPG to a temp file, returns base64-encoded image data, then cleans up.
+ * Detect connected Canon cameras via EDSDK bridge.
+ *
+ * @returns {{ available: boolean, cameras: { model: string, port: string }[], error?: string }}
+ */
+async function detectCamera() {
+  logger.debug(`Running EDSDK bridge status: ${EDSDK_BRIDGE}`);
+
+  try {
+    const { parsed } = await runBridgeJson(['status'], 15_000);
+
+    if (!parsed) {
+      return { available: false, cameras: [], error: 'edsdk-bridge status returned no JSON' };
+    }
+
+    if (!parsed.ok) {
+      return { available: false, cameras: [], error: parsed.error || 'edsdk-bridge: camera not available' };
+    }
+
+    const cameras = (parsed.cameras || []).map((c) => ({
+      model: c.model || 'Canon DSLR',
+      port:  c.port  || 'edsdk:0',
+    }));
+
+    logger.info(`EDSDK camera detection: ${cameras.length} kamera ditemukan`, cameras);
+    return { available: cameras.length > 0, cameras };
+
+  } catch (err) {
+    // ENOENT = bridge binary not found
+    if (err.code === 'ENOENT' || err.message.includes('ENOENT')) {
+      logger.warn('edsdk-bridge-native not found', { path: EDSDK_BRIDGE });
+      return {
+        available: false,
+        cameras: [],
+        error: `edsdk-bridge-native tidak ditemukan di: "${EDSDK_BRIDGE}". Pastikan file ada di agent/bin/.`,
+      };
+    }
+    logger.error('EDSDK detectCamera error', { message: err.message });
+    return { available: false, cameras: [], error: `EDSDK error: ${err.message}` };
+  }
+}
+
+/**
+ * Get full camera status including capabilities.
+ */
+async function getCameraStatus() {
+  const detection = await detectCamera();
+
+  if (!detection.available) {
+    return {
+      ...detection,
+      capabilities: { supportsCapture: false, supportsLiveView: false, mode: 'unavailable' },
+    };
+  }
+
+  // Parse capabilities from the bridge status response
+  let capabilities = {
+    supportsCapture: true,
+    supportsLiveView: true,
+    mode: 'live-view',
+    checkedAt: new Date().toISOString(),
+  };
+
+  try {
+    const { parsed } = await runBridgeJson(['status'], 15_000);
+    if (parsed && parsed.capabilities) {
+      capabilities = {
+        ...capabilities,
+        supportsLiveView: parsed.capabilities.supportsLiveView ?? true,
+        mode: parsed.capabilities.mode || 'live-view',
+      };
+    }
+  } catch { /* use defaults */ }
+
+  return { ...detection, capabilities };
+}
+
+/**
+ * Capture a photo from the connected Canon DSLR via EDSDK.
  *
  * @param {{ keepOnCamera?: boolean }} [options]
  * @returns {Promise<{ base64: string, mimeType: string, size: number, elapsedMs: number }>}
  */
 async function capturePhoto({ keepOnCamera = false } = {}) {
-  // ── Pre-empt any live-preview gphoto2 process ──────────────────────────────
-  // Set captureInFlight BEFORE killing the preview so that any queued
-  // tryPreviewStrategies callers that wake up during the kill+wait see the
-  // flag and abort instead of starting a new conflicting gphoto2 process.
-  captureInFlight = true;
-  await killActivePreviewAndWait();
-  try {
-  const filename = path.join(TMPDIR, `fremio_cap_${Date.now()}.jpg`);
-  const args = [
-    '--capture-image-and-download',
-    '--filename', filename,
-    '--force-overwrite',
-  ];
-
-  // By default gphoto2 keeps the file on camera; --no-keep deletes it from camera
-  if (!keepOnCamera) {
-    // Intentionally omitted — default gphoto2 behavior keeps file on camera which is usually desired
-    // Add '--no-keep' here if you want the file deleted from camera card after download
+  if (captureInFlight) {
+    const err = new Error('Capture sedang berjalan, coba lagi nanti.');
+    err.code = 'CAPTURE_IN_FLIGHT';
+    throw err;
   }
 
-  logger.info(`Capturing photo → ${filename}`);
-  logger.debug(`Executing: ${GPHOTO2} ${args.join(' ')}`);
+  // Stop any running preview-stream process first — EDSDK cannot have two
+  // concurrent sessions (preview + capture) on the same camera.
+  killPreviewStream();
 
-  return await new Promise((resolve, reject) => {
-    const t0 = Date.now();
+  captureInFlight = true;
+  const filename = path.join(TMPDIR, `fremio_cap_${Date.now()}.jpg`);
 
-    execFile(GPHOTO2, args, { timeout: 30_000 }, (err, stdout, stderr) => {
-      const elapsedMs = Date.now() - t0;
-      const ctx = { command: `${GPHOTO2} ${args.join(' ')}`, stdout, stderr, elapsedMs };
+  logger.info(`Capturing photo via EDSDK → ${filename}`);
 
-      if (err) {
-        logger.error('gphoto2 capture failed', ctx);
-        const hint = captureHint(stderr);
-        reject(new Error(
-          `Capture gagal setelah ${elapsedMs}ms.\n` +
-          `Error: ${err.message}\n` +
-          `stdout: ${stdout || '(kosong)'}\n` +
-          `stderr: ${stderr || '(kosong)'}${hint}`
-        ));
-        return;
-      }
-
-      logger.debug('gphoto2 capture complete', ctx);
-
-      if (!fs.existsSync(filename)) {
-        logger.error('Photo file missing after capture', { filename, stdout, stderr });
-        reject(new Error(
-          `gphoto2 selesai tanpa error tapi file tidak ditemukan: ${filename}\n` +
-          `stdout: ${stdout}\n` +
-          `stderr: ${stderr}\n` +
-          `HINT: gphoto2 mungkin menyimpan ke nama file berbeda. Cek stdout di atas.`
-        ));
-        return;
-      }
-
-      try {
-        const buffer = fs.readFileSync(filename);
-        logger.info(`Photo captured: ${(buffer.length / 1024).toFixed(1)} KB in ${elapsedMs}ms`);
-        try { fs.unlinkSync(filename); } catch { /* temp cleanup — non-critical */ }
-        resolve({
-          base64:    buffer.toString('base64'),
-          mimeType:  'image/jpeg',
-          size:      buffer.length,
-          elapsedMs,
-        });
-      } catch (readErr) {
-        reject(new Error(`Gagal membaca file foto: ${readErr.message}`));
-      }
+  const t0 = Date.now();
+  try {
+    await new Promise((resolve, reject) => {
+      execFile(
+        EDSDK_BRIDGE,
+        ['capture', '--output', filename],
+        { timeout: 30_000 },
+        (err, stdout, stderr) => {
+          const elapsedMs = Date.now() - t0;
+          if (err) {
+            logger.error('EDSDK capture failed', { message: err.message, stdout, stderr, elapsedMs });
+            reject(new Error(
+              `EDSDK capture gagal setelah ${elapsedMs}ms.\n` +
+              `Error: ${err.message}\n` +
+              `stdout: ${stdout || '(kosong)'}\n` +
+              `stderr: ${stderr || '(kosong)'}`
+            ));
+            return;
+          }
+          resolve();
+        }
+      );
     });
-  });
+
+    if (!fs.existsSync(filename)) {
+      throw new Error(`EDSDK capture selesai tapi file tidak ditemukan: ${filename}`);
+    }
+
+    const buffer = fs.readFileSync(filename);
+    const elapsedMs = Date.now() - t0;
+    logger.info(`Photo captured via EDSDK: ${(buffer.length / 1024).toFixed(1)} KB in ${elapsedMs}ms`);
+    try { fs.unlinkSync(filename); } catch { /* non-critical cleanup */ }
+
+    return { base64: buffer.toString('base64'), mimeType: 'image/jpeg', size: buffer.length, elapsedMs };
+
   } finally {
     captureInFlight = false;
   }
 }
 
 /**
- * Capture a DSLR live preview frame (no shutter).
- * Tries several non-shutter live-view strategies and returns one JPEG frame.
+ * Capture a live preview frame via EDSDK (no shutter).
  *
  * @returns {Promise<{ buffer: Buffer, mimeType: string, size: number, elapsedMs: number }>}
  */
 async function capturePreview() {
-  // Refuse to start a new gphoto2 preview process while a capture is in-flight.
-  // The caller (GET /preview route) will return HTTP 503 so the frontend can
-  // gracefully skip that poll cycle instead of getting a USB conflict error.
   if (captureInFlight) {
     const err = new Error('Capture sedang berjalan, preview tidak tersedia sementara.');
     err.code = 'CAPTURE_IN_FLIGHT';
     throw err;
   }
 
-  const t0 = Date.now();
-  const previewResult = await tryPreviewStrategies();
-
-  if (previewResult.ok && previewResult.frame) {
-    const elapsedMs = Date.now() - t0;
-    logger.debug('gphoto2 preview frame captured', {
-      strategy: previewResult.strategy,
-      sizeKb: (previewResult.frame.length / 1024).toFixed(1),
-      elapsedMs,
-    });
-    return {
-      buffer: previewResult.frame,
-      mimeType: 'image/jpeg',
-      size: previewResult.frame.length,
-      elapsedMs,
-    };
+  if (previewInFlight) {
+    const err = new Error('Preview sedang berjalan.');
+    err.code = 'PREVIEW_IN_FLIGHT';
+    throw err;
   }
 
-  const elapsedMs = Date.now() - t0;
-  logger.error('capture live preview unavailable', { elapsedMs, errors: previewResult.errors });
-  const error = new Error(
-    `Live preview non-shutter tidak tersedia setelah ${elapsedMs}ms.\n` +
-    `Detail: ${previewResult.errors.join(' | ')}\n` +
-    'Hint: aktifkan Live View / PC Remote di kamera Canon.'
-  );
-  error.code = 'LIVE_VIEW_UNSUPPORTED';
-  throw error;
+  previewInFlight = true;
+  const t0 = Date.now();
+
+  try {
+    const buffer = await runBridgeBinary(['preview', '--stdout'], 10_000);
+
+    if (!buffer || buffer.length < 4) {
+      const err = new Error('EDSDK preview returned empty frame.');
+      err.code = 'LIVE_VIEW_UNSUPPORTED';
+      throw err;
+    }
+
+    const elapsedMs = Date.now() - t0;
+    logger.debug(`EDSDK preview frame: ${(buffer.length / 1024).toFixed(1)} KB in ${elapsedMs}ms`);
+    return { buffer, mimeType: 'image/jpeg', size: buffer.length, elapsedMs };
+
+  } catch (err) {
+    const elapsedMs = Date.now() - t0;
+    logger.error('EDSDK preview failed', { message: err.message, elapsedMs });
+    if (!err.code) err.code = 'LIVE_VIEW_UNSUPPORTED';
+    throw err;
+  } finally {
+    previewInFlight = false;
+  }
 }
 
 /** Returns true while a capturePhoto() call is in-flight. */
@@ -488,4 +385,13 @@ function isCaptureInFlight() {
   return captureInFlight;
 }
 
-module.exports = { detectCamera, getCameraStatus, capturePhoto, capturePreview, isCaptureInFlight };
+module.exports = {
+  detectCamera,
+  getCameraStatus,
+  capturePhoto,
+  capturePreview,
+  isCaptureInFlight,
+  subscribePreviewStream,
+  killPreviewStream,
+  previewStreamEmitter,
+};
