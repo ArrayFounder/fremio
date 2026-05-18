@@ -303,16 +303,18 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     setDslrPreviewError(null);
     setDslrPreviewFrameSrc(null);
     if (typeof window !== "undefined") {
-      // Delay CameraScreen polling to give the EDSDK bridge time to hand off
-      // the USB session cleanly. With the 5s agent idle timeout, the bridge
-      // stays alive during this delay so the first frame is near-instant.
-      sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + 3000));
+      // Clear any release delay so CameraScreen starts preview immediately.
+      // The agent keeps the preview bridge alive during the transition
+      // (STREAM_IDLE_GRACE_MS grace period), so CameraScreen reconnects
+      // to an already-running bridge with zero startup delay.
+      sessionStorage.removeItem("booth_dslr_stream_release_until");
     }
     if (dslrPreviewImgRef.current) {
       dslrPreviewImgRef.current.removeAttribute("src");
       dslrPreviewImgRef.current.src = "";
     }
-    await new Promise((resolve) => setTimeout(resolve, 2800));
+    // Brief yield so React can flush the state changes above before navigation.
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }, []);
 
   useEffect(() => {

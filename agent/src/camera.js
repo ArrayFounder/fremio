@@ -72,6 +72,19 @@ previewStreamEmitter.setMaxListeners(50); // support many concurrent clients
 let _streamProcess   = null; // child_process.ChildProcess or null
 let _streamClients   = 0;    // number of active /preview-stream subscribers
 let _streamParseBuffer = Buffer.alloc(0); // rolling parse buffer for length-framed data
+let _streamIdleTimer = null; // grace-period timer: keeps bridge alive briefly after last client disconnects
+
+// How long (ms) to keep the bridge process alive after the last client disconnects.
+// This allows CameraScreen (which loads right after BoothSetupScreen unmounts) to
+// reconnect to an already-running bridge — eliminating the startup delay.
+const STREAM_IDLE_GRACE_MS = 5000;
+
+function _clearStreamIdleTimer() {
+  if (_streamIdleTimer !== null) {
+    clearTimeout(_streamIdleTimer);
+    _streamIdleTimer = null;
+  }
+}
 
 function _startStreamProcess() {
   if (_streamProcess) return; // already running
@@ -114,12 +127,30 @@ function _startStreamProcess() {
   });
 }
 
-function _stopStreamProcess() {
-  if (_streamProcess) {
-    logger.info('Stopping persistent preview-stream bridge process (no more clients)');
+function _stopStreamProcess(forceImmediate = false) {
+  if (!_streamProcess) return;
+
+  if (forceImmediate) {
+    _clearStreamIdleTimer();
+    logger.info('Stopping persistent preview-stream bridge process (forced)');
     try { _streamProcess.stdin.end(); } catch { /* ignore */ }
     _streamProcess = null;
+    return;
   }
+
+  // Grace period: keep the bridge alive briefly so the next client
+  // (e.g. CameraScreen loading right after BoothSetupScreen transitions away)
+  // can reconnect to an already-running process — zero startup delay.
+  _clearStreamIdleTimer();
+  _streamIdleTimer = setTimeout(() => {
+    _streamIdleTimer = null;
+    if (_streamClients === 0 && _streamProcess) {
+      logger.info('Stopping persistent preview-stream bridge process (idle grace expired)');
+      try { _streamProcess.stdin.end(); } catch { /* ignore */ }
+      _streamProcess = null;
+    }
+  }, STREAM_IDLE_GRACE_MS);
+  logger.debug(`Preview-stream bridge idle grace started (${STREAM_IDLE_GRACE_MS}ms)`);
 }
 
 /**
@@ -135,6 +166,9 @@ function subscribePreviewStream(onFrame, onEnd) {
   previewStreamEmitter.on('frame',      onFrame);
   previewStreamEmitter.on('stream-end', onEnd);
 
+  // Cancel any pending idle-stop timer — a new client just arrived.
+  _clearStreamIdleTimer();
+
   // Start the bridge if it isn't already running AND no capture is in flight.
   if (!_streamProcess && !captureInFlight) {
     _startStreamProcess();
@@ -145,7 +179,7 @@ function subscribePreviewStream(onFrame, onEnd) {
     previewStreamEmitter.off('stream-end', onEnd);
     _streamClients = Math.max(0, _streamClients - 1);
     if (_streamClients === 0) {
-      _stopStreamProcess();
+      _stopStreamProcess(); // enters grace period before actually stopping
     }
   };
 }
@@ -155,7 +189,8 @@ function subscribePreviewStream(onFrame, onEnd) {
  * so the two EDSDK sessions don't conflict).
  */
 function killPreviewStream() {
-  _stopStreamProcess();
+  _clearStreamIdleTimer();
+  _stopStreamProcess(/* forceImmediate= */ true);
   _streamClients = 0;
   _streamParseBuffer = Buffer.alloc(0);
 }
