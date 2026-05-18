@@ -67,6 +67,7 @@ let previewRestartWindowStartedAt = 0;
 let previewRestartAttemptsInWindow = 0;
 const plannedPreviewRestarts = new Set<ReturnType<typeof spawn>>();
 let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped preview
+let captureInProgress = false; // Prevent preview auto-restart during capture
 
 const CAMERA_STATUS_CACHE_MS = 4000;
 const PREVIEW_STALL_TIMEOUT_MS = 3500;
@@ -390,7 +391,8 @@ function startSharedPreviewProcess() {
       return;
     }
     failPreviewFrameWaiters(new Error(`Live view Canon berhenti (${signal || (code ?? "unknown")})`));
-    if (hasPreviewDemand()) {
+    // Do NOT restart preview if capture is in progress — camera must stay free for the capture bridge.
+    if (hasPreviewDemand() && !captureInProgress) {
       restartSharedPreviewProcess(`preview process exit (${signal || (code ?? "unknown")})`);
     }
   });
@@ -989,6 +991,7 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
   // Pre-stop the live preview before countdown reaches 1. This gives the C# bridge
   // time to exit gracefully (TryDisableEvf + EdsCloseSession), so /capture won't hit
   // CommPortIsAlreadyOpen delays. Called by CameraScreen at countdown=2.
+  captureInProgress = true; // Block preview auto-restart until capture completes
   const stopped = await stopActivePreviewStreams(400); // 400ms grace for graceful EVF disable
   previewPreStoppedAt = Date.now();
   res.json({ ok: true, stopped });
@@ -999,6 +1002,8 @@ app.post("/capture", async (req: Request, res: Response) => {
   const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
   const wantsBinary = req.query.format === "binary" || String(req.get("accept") || "").includes("image/jpeg");
   const hadPreviewSession = isPreviewSessionActive();
+
+  captureInProgress = true; // Block preview auto-restart for entire capture duration
 
   try {
     const stoppedExistingStream = await stopActivePreviewStreams();
@@ -1060,6 +1065,9 @@ app.post("/capture", async (req: Request, res: Response) => {
     const rawError = err instanceof Error ? err.message : String(err);
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
   } finally {
+    captureInProgress = false; // Allow preview to restart again
+    previewPreStoppedAt = 0;
+
     if (hadPreviewSession) {
       setTimeout(() => { // OPTIMIZED: reduced from 120ms to 50ms for faster preview resume
         try {
