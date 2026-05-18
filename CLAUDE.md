@@ -82,9 +82,11 @@ npm run dev              # Start with nodemon
 npm start                # Production
 npm run backup           # Backup database
 
-### Local Agent
-cd agent
-npm start                # Start agent (port 7432)
+### Local Agent (Canon EDSDK — Active)
+cd studio/agent
+npm start                # Start agent (port 7432, TypeScript + C# EDSDK bridge)
+
+# ⚠️ JANGAN jalankan `cd agent && npm start` — itu legacy gphoto2, tidak dipakai
 
 ---
 
