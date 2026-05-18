@@ -101,16 +101,24 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
   }
 
-  try {
-    const url = new URL(req.url);
-    const id = url.searchParams.get("id");
-    if (!id) {
-      return NextResponse.json({ success: false, error: "Missing id parameter" }, { status: 400 });
-    }
+  const url = new URL(req.url);
+  const id = url.searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ success: false, error: "Missing id parameter" }, { status: 400 });
+  }
 
-    // Delete all related data first
-    await prisma.boothConfig.deleteMany({ where: { operatorId: id } });
-    await prisma.operator.delete({ where: { id: String(id) } });
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Delete transactions first — their FK to Operator is onDelete: Cascade,
+      // but deleting via tx.transaction.deleteMany first avoids any orphaned state.
+      await tx.transaction.deleteMany({ where: { operatorId: id } });
+      // Delete credit purchases
+      await tx.creditPurchase.deleteMany({ where: { operatorId: id } });
+      // Delete booth configs — this cascades to BoothSessions, Vouchers
+      await tx.boothConfig.deleteMany({ where: { operatorId: id } });
+      // Finally delete the operator
+      await tx.operator.delete({ where: { id: String(id) } });
+    });
 
     const origin = req.headers.get("origin") ?? "";
     const allowed = ["https://fremio.id", "https://www.fremio.id"];
@@ -126,6 +134,7 @@ export async function DELETE(req: Request) {
       }
     );
   } catch (e: any) {
+    console.error("[DELETE /api/admin/studio-operators]", e);
     return NextResponse.json({ success: false, error: e.message }, { status: 500 });
   }
 }
