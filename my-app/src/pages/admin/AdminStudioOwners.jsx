@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Users, Search, RefreshCw, ArrowLeft, ExternalLink } from "lucide-react";
+import { Users, Search, RefreshCw, ArrowLeft, ExternalLink, Trash2 } from "lucide-react";
 import api from "../../services/api";
 
 export default function AdminStudioOwners() {
@@ -15,6 +15,7 @@ export default function AdminStudioOwners() {
   const [upgradeTier, setUpgradeTier] = useState("PRO");
   const [upgradeMonths, setUpgradeMonths] = useState(1);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [deleting, setDeleting] = useState(null); // id being deleted
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -38,6 +39,21 @@ export default function AdminStudioOwners() {
       alert(e.message);
     } finally {
       setUpgradeLoading(false);
+    }
+  };
+
+  const deleteAccount = async (id, email) => {
+    if (!window.confirm(`Hapus akun "${email}" beserta seluruh booth-nya? Tindakan ini tidak dapat dibatalkan.`)) return;
+    setDeleting(id);
+    try {
+      const json = await api.delete(`/admin/studio/operators/${id}`);
+      if (!json.success) throw new Error(json.message ?? "Gagal menghapus akun");
+      await load();
+      setExpanded(null);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setDeleting(null);
     }
   };
 
@@ -167,6 +183,16 @@ export default function AdminStudioOwners() {
                                      {upgradeLoading ? "Menyimpan..." : (o.subscriptionTier === "STARTER" || o.subscriptionTier === "FREE") ? "Konfirmasi Upgrade" : "Konfirmasi Perpanjangan"}
                                    </button>
                                  </div>
+                               </div>
+
+                               {/* Delete account */}
+                               <div style={{ marginTop:10, padding:12, background:"white", border:"1px solid #fecaca", borderRadius:8 }}>
+                                 <div style={{ fontSize:12, fontWeight:700, color:"#991b1b", marginBottom:6 }}>Zona Berbahaya</div>
+                                 <div style={{ fontSize:11, color:"#666", marginBottom:8 }}>Menghapus akun ini akan menghapus seluruh data operator beserta booth-nya. Email "{o.email}" bisa dipakai untuk mendaftar ulang.</div>
+                                 <button onClick={e=>{e.stopPropagation(); deleteAccount(o.id, o.email);}} disabled={deleting === o.id}
+                                   style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 14px", background:deleting===o.id?"#fecaca":"#dc2626", color:"#fff", border:"none", borderRadius:6, fontSize:12, fontWeight:600, cursor:deleting===o.id?"not-allowed":"pointer" }}>
+                                   <Trash2 size={13} />{deleting===o.id?"Menghapus...":"Hapus Akun Ini"}
+                                 </button>
                                </div>
                            </td>
                          </tr>

@@ -95,6 +95,41 @@ export async function PUT(req: Request) {
   }
 }
 
+export async function DELETE(req: Request) {
+  const auth = req.headers.get("authorization");
+  if (!ADMIN_SECRET || auth !== `Bearer ${ADMIN_SECRET}`) {
+    return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  try {
+    const url = new URL(req.url);
+    const id = url.searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Missing id parameter" }, { status: 400 });
+    }
+
+    // Delete all related data first
+    await prisma.boothConfig.deleteMany({ where: { operatorId: id } });
+    await prisma.operator.delete({ where: { id: String(id) } });
+
+    const origin = req.headers.get("origin") ?? "";
+    const allowed = ["https://fremio.id", "https://www.fremio.id"];
+
+    return NextResponse.json(
+      { success: true, message: "Operator deleted successfully" },
+      {
+        headers: {
+          "Access-Control-Allow-Origin":  allowed.includes(origin) ? origin : "https://fremio.id",
+          "Access-Control-Allow-Methods": "DELETE, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        },
+      }
+    );
+  } catch (e: any) {
+    return NextResponse.json({ success: false, error: e.message }, { status: 500 });
+  }
+}
+
 export async function OPTIONS(req: Request) {
   const origin  = req.headers.get("origin") ?? "";
   const allowed = ["https://fremio.id", "https://www.fremio.id"];
@@ -102,7 +137,7 @@ export async function OPTIONS(req: Request) {
     status: 204,
     headers: {
       "Access-Control-Allow-Origin":  allowed.includes(origin) ? origin : "https://fremio.id",
-      "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
     },
   });

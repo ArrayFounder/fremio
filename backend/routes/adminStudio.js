@@ -148,4 +148,33 @@ router.put("/operators/:id", verifyToken, requireAdmin, async (req, res) => {
     });
   }
 });
+
+router.delete("/operators/:id", verifyToken, requireAdmin, async (req, res) => {
+  if (!ensureStudioSecret(res)) return;
+
+  try {
+    const response = await fetch(`${STUDIO_BASE_URL}/api/admin/studio-operators?id=${req.params.id}`, {
+      method: "DELETE",
+      headers: getStudioHeaders(),
+    });
+
+    const payload = await response.json();
+    if (!response.ok || !payload?.success) {
+      return res.status(response.status || 502).json({
+        success: false,
+        message: payload?.error || payload?.message || "Gagal menghapus operator",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: payload.message || "Operator berhasil dihapus",
+    });
+  } catch (error) {
+    return res.status(502).json({
+      success: false,
+      message: `Gagal menghubungi Studio API: ${error.message}`,
+    });
+  }
+});
 export default router;
