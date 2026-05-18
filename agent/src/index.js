@@ -101,6 +101,67 @@ app.use((req, _res, next) => {
 });
 
 /**
+ * GET /preview-stream
+ * MJPEG live-view stream — used as <img src> by the booth UI when the
+ * Electron IPC launcher is NOT running (standard agent exe mode).
+ * Responds with multipart/x-mixed-replace so the browser natively
+ * refreshes the image without JavaScript polling.
+ */
+app.get('/preview-stream', async (req, res) => {
+  logger.debug('GET /preview-stream — starting MJPEG live-view stream');
+
+  const boundary = 'fremioframe';
+  res.setHeader('Content-Type',  `multipart/x-mixed-replace; boundary=${boundary}`);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma',        'no-cache');
+  res.setHeader('Expires',       '0');
+
+  let active = true;
+  req.on('close', () => {
+    active = false;
+    logger.debug('GET /preview-stream — client disconnected');
+  });
+
+  const writeFrame = (buffer) => {
+    if (!active || !res.writable) return false;
+    try {
+      res.write(`--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+      res.write(buffer);
+      res.write('\r\n');
+      return true;
+    } catch {
+      active = false;
+      return false;
+    }
+  };
+
+  while (active && res.writable) {
+    // Pause while a shutter capture is in progress.
+    if (camera.isCaptureInFlight()) {
+      await new Promise((r) => setTimeout(r, 80));
+      continue;
+    }
+
+    try {
+      const result = await camera.capturePreview();
+      writeFrame(result.buffer);
+    } catch (err) {
+      if (!active) break;
+      // Another preview call is already in-flight (e.g. duplicate connection) — wait briefly.
+      if (err.code === 'PREVIEW_IN_FLIGHT') {
+        await new Promise((r) => setTimeout(r, 50));
+        continue;
+      }
+      logger.warn('GET /preview-stream frame error', { message: err.message, code: err.code });
+      // Pause before retry so we don't spam edsdk-bridge on persistent errors.
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+
+  try { res.end(); } catch { /* ignore write-after-end */ }
+});
+
+/**
  * GET /preview
  * Return one DSLR preview frame (no shutter) for live-view polling.
  */
@@ -278,7 +339,7 @@ app.use((req, res) => {
   res.status(404).json({
     ok:    false,
     error: `Route tidak ditemukan: ${req.method} ${req.path}`,
-    routes: ['GET /status', 'GET /preview', 'POST /capture', 'POST /print'],
+    routes: ['GET /status', 'GET /preview', 'GET /preview-stream', 'POST /capture', 'POST /print'],
   });
 });
 
