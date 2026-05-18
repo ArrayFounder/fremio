@@ -1391,6 +1391,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const dslrRecordingChunksRef          = useRef<Blob[]>([]);
   const dslrRecordingCanvasRef          = useRef<HTMLCanvasElement | null>(null);
   const dslrRecordingDrawTimerRef       = useRef<number | null>(null);
+  const dslrFrozenAtRef                 = useRef<number | null>(null); // timestamp saat MJPEG stop (count=3)
 
   useEffect(() => {
     if (!dslrPosterSrc) {
@@ -1475,6 +1476,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     dslrRecorderRef.current = null;
     dslrRecordingChunksRef.current = [];
     dslrRecordingCanvasRef.current = null;
+    dslrFrozenAtRef.current = null;
 
     const canvas = document.createElement("canvas");
     canvas.width = 1280;
@@ -1502,33 +1504,37 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     const drawFrame = () => {
       const img = dslrPreviewImgRef.current;
       const fallback = dslrRecordingPosterImgRef.current;
-      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        ctx.fillStyle = "#000000";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const source = (img && img.naturalWidth > 0 && img.naturalHeight > 0)
+        ? img
+        : (fallback && fallback.naturalWidth > 0 && fallback.naturalHeight > 0)
+          ? fallback
+          : null;
+
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (source) {
+        // Subtle zoom-in (1.0 → 1.05) during frozen phase (count=3 → count=0)
+        // Creates natural "build-up" tension while Canon prepares for shutter
+        const frozenAt = dslrFrozenAtRef.current;
+        const FREEZE_TOTAL_MS = 3200;
+        const zoomProgress = frozenAt !== null
+          ? Math.min((Date.now() - frozenAt) / FREEZE_TOTAL_MS, 1)
+          : 0;
+        const scale = 1.0 + 0.05 * zoomProgress; // 1.00 → 1.05
+
+        ctx.save();
+        if (scale !== 1.0) {
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.scale(scale, scale);
+          ctx.translate(-canvas.width / 2, -canvas.height / 2);
+        }
         if (mirror) {
-          ctx.save();
           ctx.translate(canvas.width, 0);
           ctx.scale(-1, 1);
-          drawCoverToCanvas(ctx, img, 0, 0, canvas.width, canvas.height);
-          ctx.restore();
-        } else {
-          drawCoverToCanvas(ctx, img, 0, 0, canvas.width, canvas.height);
         }
-      } else if (fallback && fallback.naturalWidth > 0 && fallback.naturalHeight > 0) {
-        ctx.fillStyle = "#000000";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        if (mirror) {
-          ctx.save();
-          ctx.translate(canvas.width, 0);
-          ctx.scale(-1, 1);
-          drawCoverToCanvas(ctx, fallback, 0, 0, canvas.width, canvas.height);
-          ctx.restore();
-        } else {
-          drawCoverToCanvas(ctx, fallback, 0, 0, canvas.width, canvas.height);
-        }
-      } else {
-        ctx.fillStyle = "#000000";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawCoverToCanvas(ctx, source, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
       }
     };
 
@@ -1733,6 +1739,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           const base = agentBaseRef.current;
           if (base) {
             fetch(`${base}/prepare-capture`, { method: "POST" }).catch(() => {});
+          }
+          // Mark frozen timestamp for live recording zoom effect (build-up animation)
+          if (livePhotoVideoEnabled && dslrMode) {
+            dslrFrozenAtRef.current = Date.now();
           }
         }
         if (willUseAgentCapture && count === 2) {
