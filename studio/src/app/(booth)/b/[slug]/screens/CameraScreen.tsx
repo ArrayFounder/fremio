@@ -919,6 +919,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [dslrPreviewError, setDslrPreviewError] = useState<string | null>(null);
   const [dslrPreviewPaused, setDslrPreviewPaused] = useState(false);
   const [dslrPreviewReady, setDslrPreviewReady] = useState(false);
+  // Once any countdown starts, suppress loading overlay for the rest of the session
+  const [dslrSessionStarted, setDslrSessionStarted] = useState(false);
   const [dslrPosterSrc, setDslrPosterSrc] = useState<string | null>(null);
   const [dslrPosterActive, setDslrPosterActive] = useState(false);
   const [dslrPosterMirror, setDslrPosterMirror] = useState<boolean>(mirror);
@@ -1310,7 +1312,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
-          signal: AbortSignal.timeout(15000), // Canon typically captures in 3-8 seconds
+          signal: AbortSignal.timeout(30000), // Canon typically captures in 3-8 seconds; allow up to 30s
         });
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({})) as { error?: string };
@@ -1383,6 +1385,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [countdown, setCountdown]       = useState<number | null>(null);
   const [cdState, setCdState]           = useState<CountdownState>("READY");
   const countdownTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const preCapturePromiseRef            = useRef<Promise<string> | null>(null); // Canon: pre-fired capture promise
   const dslrPreviewPauseTimerRef        = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dslrRecorderRef                 = useRef<MediaRecorder | null>(null);
   const dslrRecordingChunksRef          = useRef<Blob[]>([]);
@@ -1621,6 +1624,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     if (dslrPreviewPauseTimerRef.current) clearTimeout(dslrPreviewPauseTimerRef.current);
     setCaptureError(null);
     setCdState("COUNTING");
+    setDslrSessionStarted(true); // suppress loading overlay for rest of session
     setCountdown(5);
     const currentCaptureIndex = retakeSlotIndex !== null ? retakeSlotIndex : capturedCount;
 
@@ -1652,9 +1656,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       let dataUrl: string | null = null;
       if (captureSource === "dslr") {
         try {
-          dataUrl = await captureFromAgent(captureMirrorSnapshot);
+          // Use pre-fired promise (started at count=1) if available, otherwise fire fresh
+          dataUrl = preCapturePromiseRef.current
+            ? await preCapturePromiseRef.current
+            : await captureFromAgent(captureMirrorSnapshot);
+          preCapturePromiseRef.current = null;
           console.log("[CameraScreen] DSLR captured, mirror applied:", captureMirrorSnapshot);
         } catch (err) {
+          preCapturePromiseRef.current = null;
           setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
           if (livePhotoVideoEnabled && !dslrMode) stopRecording().catch(() => {});
           if (livePhotoVideoEnabled && dslrMode) stopDslrLiveRecording().catch(() => {});
@@ -1663,9 +1672,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         }
       } else if (captureSource === "auto" && dslrAvailable) {
         try {
-          dataUrl = await captureFromAgent(captureMirrorSnapshot);
+          // Use pre-fired promise (started at count=1) if available, otherwise fire fresh
+          dataUrl = preCapturePromiseRef.current
+            ? await preCapturePromiseRef.current
+            : await captureFromAgent(captureMirrorSnapshot);
+          preCapturePromiseRef.current = null;
           console.log("[CameraScreen] auto DSLR captured, mirror applied:", captureMirrorSnapshot);
         } catch {
+          preCapturePromiseRef.current = null;
           /* fallback ke webcam below */
         }
       }
@@ -1711,14 +1725,25 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       count -= 1;
       if (count > 0) {
         setCountdown(count);
-        if (willUseAgentCapture && count === 2) {
-          // Pre-stop live preview 1 second before capture. This lets the C# bridge
-          // exit gracefully (TryDisableEvf + EdsCloseSession), so when /capture fires
-          // at count=1, CommPortIsAlreadyOpen is avoided and cold-start delay is eliminated.
+        if (willUseAgentCapture && count === 3) {
+          // Move prepare-capture 1 step earlier (count=3 instead of count=2) so the
+          // live-view bridge has 2 s to exit gracefully before /capture fires at count=1.
+          // This eliminates CommPortIsAlreadyOpen delays and gives the EDSDK bridge
+          // maximum time to complete before countdown=0.
           const base = agentBaseRef.current;
           if (base) {
             fetch(`${base}/prepare-capture`, { method: "POST" }).catch(() => {});
           }
+        }
+        if (willUseAgentCapture && count === 2) {
+          // Pre-fire Canon capture at "2" — 2 seconds before count=0.
+          // prepare-capture was called at count=3 (~1 s ago) so the live-view bridge
+          // has already exited and recovery time is 0. The EDSDK bridge (shutter +
+          // JPEG download) now runs during the countdown, so by count=0 the image
+          // is ready (or nearly so) instead of starting fresh after countdown ends.
+          const bs = boothMirrorSettingRef.current;
+          const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
+          preCapturePromiseRef.current = captureFromAgent(captureMirror);
         }
         if (willUseAgentCapture && count === 1) {
           const bs = boothMirrorSettingRef.current;
@@ -1726,12 +1751,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           freezeDslrPreview(freezeMirror);
           // Store frozen poster BEFORE capture runs
           frozenPosterAtStart = dslrPosterSrc;
-          // Trigger capture at the START of "1" second (user sees "1" displayed for full 1 second)
-          // This gives camera ~1 second to capture before countdown would reach 0
+          // If pre-capture wasn't started at count=2 (e.g. IPC path without agentBase),
+          // start it now as a fallback — still gives 1 s of head start.
+          if (!preCapturePromiseRef.current) {
+            preCapturePromiseRef.current = captureFromAgent(freezeMirror);
+          }
+          // Show "1" for a full 1 second, then resolve at "0"
           countdownTimerRef.current = setTimeout(() => {
             setCountdown(null);
             captureAndDisplay();
-          }, 50); // Small delay to ensure poster is ready, but within the "1" second window
+          }, 1000);
           return; // Don't schedule another tick - capture is the final action
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
@@ -1830,30 +1859,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           )
         }
 
-        {/* DSLR loading overlay - Only show in live_view mode, NOT in fullscreen */}
-        {/* In fullscreen mode, the loading state is shown by disabled capture button */}
-        {mode !== "fullscreen" && dslrMode && !dslrPreviewReady && dslrSupportsLiveView !== false && dslrAvailable && !dslrPreviewPaused && (
-          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/80 backdrop-blur-sm">
-            <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
-            <p className="text-white font-bold text-lg">Menyiapkan kamera Canon…</p>
-            <p className="text-white/60 text-sm">Tunggu sebentar</p>
-          </div>
-        )}
 
-        {/* DSLR error overlay */}
-        {dslrMode && dslrPreviewError && dslrPreviewError !== "Menyiapkan live preview Canon…" && (
-          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/80 backdrop-blur-sm px-6">
-            <div className="text-5xl">📷</div>
-            <p className="text-white font-bold text-center">{dslrPreviewError}</p>
-            <button
-              onClick={() => restartCanonPreviewBridge("manual retry dari CameraScreen")}
-              className="px-6 py-3 rounded-2xl font-bold text-base bg-white/20 hover:bg-white/30 transition-colors"
-              style={{ color: "white" }}
-            >
-              🔄 Coba Lagi
-            </button>
-          </div>
-        )}
 
         {/* Capture error overlay */}
         {captureError && (
@@ -2114,22 +2120,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             />
           )}
 
-          {/* DSLR loading overlay */}
-          {dslrMode && !dslrPreviewReady && dslrSupportsLiveView !== false && dslrAvailable && !dslrPreviewPaused && (
-            <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-black/80 backdrop-blur-sm">
-              <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
-              <p className="text-white font-bold text-lg">Menyiapkan kamera Canon…</p>
-              <p className="text-white/60 text-sm">Tunggu sebentar</p>
-            </div>
-          )}
 
-          {/* DSLR error overlay */}
-          {dslrMode && dslrPreviewError && dslrPreviewError !== "Menyiapkan live preview Canon…" && (
-            <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm px-6">
-              <div className="text-5xl">📷</div>
-              <p className="text-white font-bold text-center">{dslrPreviewError}</p>
-            </div>
-          )}
 
           {/* Capture error overlay */}
           {captureError && (

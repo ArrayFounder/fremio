@@ -10,6 +10,7 @@ declare global {
   interface Window {
     fremioBooth?: {
       getBridgeStatus?: () => Promise<unknown>;
+      restartBridge?: () => Promise<unknown>;
       agentStatus: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
       agentCapture: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
       agentPreview: () => Promise<{ ok: boolean; base64?: string; mimeType?: string; error?: string }>;
