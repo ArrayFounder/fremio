@@ -28,6 +28,7 @@ internal static class Program
             "preview"        => Preview(args),
             "preview-stream" => PreviewStream(args),
             "capture"        => Capture(args),
+            "capture-armed"  => CaptureArmed(args),
             _ => Fail($"Unknown command: {args[0]}")
         };
 
@@ -136,6 +137,31 @@ internal static class Program
         {
             using var sdk = new EdsdkSession();
             sdk.CaptureToFile(outputPath!);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            return PrintBridgeError(ex);
+        }
+    }
+
+    /// <summary>
+    /// Pre-armed capture: opens session and sets up everything, signals BRIDGE_READY to stderr,
+    /// then waits for "SHOOT" on stdin before firing the shutter. This allows Node.js to
+    /// pre-arm the camera during countdown and fire the shutter with minimal delay.
+    /// </summary>
+    private static int CaptureArmed(string[] args)
+    {
+        var outputPath = GetArgValue(args, "--output");
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            return Fail("capture-armed command requires --output <path>");
+        }
+
+        try
+        {
+            using var sdk = new EdsdkSession();
+            sdk.CaptureArmedToFile(outputPath!);
             return 0;
         }
         catch (Exception ex)
@@ -601,6 +627,225 @@ internal sealed class EdsdkSession : IDisposable
             Edsdk.EdsSetObjectEventHandler(_cameraRef, Edsdk.ObjectEvent_All, null, IntPtr.Zero);
             _captureObjectHandler = null;
             Console.Error.WriteLine("[bridge] Event handler unregistered");
+        }
+    }
+
+    /// <summary>
+    /// Pre-armed capture: sets up session, disables EVF, configures SaveTo, registers the download
+    /// event handler — then signals BRIDGE_READY to stderr and blocks waiting for "SHOOT" on stdin.
+    /// When SHOOT is received, fires the shutter immediately. This eliminates setup latency from
+    /// the critical path: countdown can pre-arm during tick=1 and shoot fires at tick=0.
+    /// </summary>
+    public void CaptureArmedToFile(string outputPath)
+    {
+        EnsureCameraReady();
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
+        Console.Error.WriteLine("[bridge-armed] Session ready, setting up for capture");
+
+        // Disable EVF before setting SaveTo (same reason as CaptureToFile)
+        if (IsEvfCurrentlyEnabled())
+        {
+            Console.Error.WriteLine("[bridge-armed] EVF active, disabling");
+            TryDisableEvf();
+            PumpSdkEvents(4, 80); // 320ms — faster than CaptureToFile's 600ms
+        }
+        else
+        {
+            Console.Error.WriteLine("[bridge-armed] EVF already inactive");
+            PumpSdkEvents(1, 60); // 60ms minimal pump
+        }
+
+        // Configure camera to save to PC
+        var saveTo = SaveTo_Host;
+        var saveToErr = Edsdk.EdsSetPropertyData(_cameraRef, PropID_SaveTo, 0, Marshal.SizeOf<uint>(), ref saveTo);
+        Console.Error.WriteLine($"[bridge-armed] SaveTo_Host: 0x{saveToErr:X8}");
+        if (saveToErr != 0)
+        {
+            PumpSdkEvents(2, 60);
+            saveTo = SaveTo_Host;
+            saveToErr = Edsdk.EdsSetPropertyData(_cameraRef, PropID_SaveTo, 0, Marshal.SizeOf<uint>(), ref saveTo);
+            Console.Error.WriteLine($"[bridge-armed] SaveTo_Host retry: 0x{saveToErr:X8}");
+        }
+
+        var capacity = new Edsdk.EdsCapacity
+        {
+            NumberOfFreeClusters = int.MaxValue,
+            BytesPerSector = 0x1000,
+            Reset = 1,
+        };
+        Edsdk.EdsSetCapacity(_cameraRef, capacity);
+
+        // Let camera apply settings (reduced from 240ms to 120ms — armed path has more time budget)
+        PumpSdkEvents(2, 60); // 120ms
+
+        // Set up download event handler BEFORE signaling ready
+        var downloadDone = new ManualResetEventSlim(false);
+        var capturedData = Array.Empty<byte>();
+        var capturedError = (Exception?)null;
+        var sawNonJpegTransfer = false;
+        var lastNonJpegFileName = string.Empty;
+        // staleCutoffUtc set just before shoot so we don't reject our own capture as stale
+        var staleCutoffUtc = DateTime.UtcNow.AddSeconds(-2);
+
+        _captureObjectHandler = (evt, objRef, context) =>
+        {
+            var shouldSignal = false;
+            try
+            {
+                var evtId = (uint)evt;
+                Console.Error.WriteLine($"[bridge-armed] ObjectEvent 0x{evtId:X8}");
+
+                if (evtId != Edsdk.ObjectEvent_DirItemRequestTransfer && evtId != Edsdk.ObjectEvent_DirItemCreated)
+                {
+                    if (objRef != IntPtr.Zero) { Edsdk.EdsRelease(objRef); objRef = IntPtr.Zero; }
+                    return 0;
+                }
+
+                if (objRef == IntPtr.Zero) return 0;
+
+                Check(Edsdk.EdsGetDirectoryItemInfo(objRef, out var itemInfo), "Gagal baca info file Canon");
+                var fileName = NormalizeCameraFileName(itemInfo.FileName);
+                Console.Error.WriteLine($"[bridge-armed] DirItem: '{fileName}' size={itemInfo.Size}");
+
+                Check(Edsdk.EdsCreateMemoryStream(0, out var streamRef), "Gagal buat stream download");
+                try
+                {
+                    Check(Edsdk.EdsDownload(objRef, itemInfo.Size, streamRef), "Gagal download hasil capture Canon");
+                    Check(Edsdk.EdsGetPointer(streamRef, out var ptr), "Gagal baca pointer stream");
+                    Check(Edsdk.EdsGetLength(streamRef, out var len), "Gagal baca ukuran stream");
+
+                    if (ptr == IntPtr.Zero || len <= 0 || len > int.MaxValue)
+                    {
+                        CompleteCaptureTransferIfNeeded(evtId, objRef);
+                        capturedData = Array.Empty<byte>();
+                        return 0;
+                    }
+
+                    capturedData = new byte[len];
+                    Marshal.Copy(ptr, capturedData, 0, (int)len);
+                    var headerHex = capturedData.Length >= 4 ? string.Join(" ", capturedData.Take(4).Select(b => b.ToString("X2"))) : "N/A";
+                    Console.Error.WriteLine($"[bridge-armed] Captured {capturedData.Length} bytes, header={headerHex}");
+
+                    if (!IsLikelyJpeg(capturedData) && !IsLikelyJpegFileName(fileName))
+                    {
+                        sawNonJpegTransfer = true;
+                        lastNonJpegFileName = fileName;
+                        Console.Error.WriteLine($"[bridge-armed] Non-JPEG skipped: '{fileName}'");
+                        CompleteCaptureTransferIfNeeded(evtId, objRef);
+                        capturedData = Array.Empty<byte>();
+                        return 0;
+                    }
+
+                    var capturedAtUtc = TryParseCameraDateTime(itemInfo.DateTime);
+                    if (capturedAtUtc.HasValue && capturedAtUtc.Value.Year >= 2000 && capturedAtUtc.Value < staleCutoffUtc)
+                    {
+                        Console.Error.WriteLine($"[bridge-armed] Stale JPEG ignored (cameraTime={capturedAtUtc.Value:O})");
+                        CompleteCaptureTransferIfNeeded(evtId, objRef);
+                        capturedData = Array.Empty<byte>();
+                        return 0;
+                    }
+
+                    Console.Error.WriteLine($"[bridge-armed] JPEG accepted: '{fileName}', {capturedData.Length} bytes");
+                    CompleteCaptureTransferIfNeeded(evtId, objRef);
+                    shouldSignal = true;
+                }
+                finally
+                {
+                    if (streamRef != IntPtr.Zero) Edsdk.EdsRelease(streamRef);
+                    if (objRef != IntPtr.Zero) { Edsdk.EdsRelease(objRef); objRef = IntPtr.Zero; }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[bridge-armed] Event handler error: {ex.Message}");
+                capturedError = ex;
+                shouldSignal = true;
+                if (objRef != IntPtr.Zero) Edsdk.EdsRelease(objRef);
+            }
+            finally
+            {
+                if (shouldSignal) downloadDone.Set();
+            }
+            return 0;
+        };
+
+        Check(Edsdk.EdsSetObjectEventHandler(_cameraRef, Edsdk.ObjectEvent_All, _captureObjectHandler, IntPtr.Zero),
+              "Gagal pasang event capture Canon (armed)");
+
+        // Signal to Node.js that we're fully set up and ready to shoot
+        Console.Error.WriteLine("BRIDGE_READY");
+        Console.Error.Flush();
+
+        // Wait for SHOOT signal from Node.js via stdin (max 15s)
+        var shootSignal = new ManualResetEventSlim(false);
+        var stdinReader = new Thread(() =>
+        {
+            try
+            {
+                string? line;
+                while ((line = Console.In.ReadLine()) != null)
+                {
+                    Console.Error.WriteLine($"[bridge-armed] stdin: '{line.Trim()}'");
+                    if (line.Trim().Equals("SHOOT", StringComparison.OrdinalIgnoreCase))
+                    {
+                        shootSignal.Set();
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[bridge-armed] stdin reader error: {ex.Message}");
+            }
+            // stdin closed without SHOOT — fire anyway to avoid hang
+            shootSignal.Set();
+        }) { IsBackground = true, Name = "ArmedShootSignalReader" };
+        stdinReader.Start();
+
+        Console.Error.WriteLine("[bridge-armed] Waiting for SHOOT signal...");
+        if (!shootSignal.Wait(15000))
+        {
+            Console.Error.WriteLine("[bridge-armed] SHOOT timed out — firing anyway");
+        }
+
+        // Update stale cutoff to be relative to actual shoot time
+        staleCutoffUtc = DateTime.UtcNow.AddSeconds(-2);
+        Console.Error.WriteLine("[bridge-armed] SHOOT received — firing TakePicture");
+
+        try
+        {
+            SendTakePictureWithRetry();
+            Console.Error.WriteLine("[bridge-armed] TakePicture sent, waiting for download...");
+            var deadline = DateTime.UtcNow.AddSeconds(45);
+            while (!downloadDone.IsSet && DateTime.UtcNow < deadline)
+            {
+                Edsdk.EdsGetEvent();
+                NativeMethods.PumpWindowsMessages();
+                downloadDone.Wait(50);
+            }
+
+            if (!downloadDone.IsSet)
+                throw new TimeoutException("Timeout menunggu hasil capture Canon (armed)");
+
+            Console.Error.WriteLine($"[bridge-armed] Capture complete. sawNonJpeg={sawNonJpegTransfer}, dataLen={capturedData.Length}");
+            if (capturedError is not null) throw capturedError;
+            if (capturedData.Length == 0)
+            {
+                if (sawNonJpegTransfer)
+                {
+                    var label = BuildNonJpegTransferLabel(lastNonJpegFileName);
+                    throw new InvalidOperationException($"Capture Canon menghasilkan {label}. Ubah Image Quality ke JPEG (L/Fine).");
+                }
+                throw new InvalidOperationException("Data capture Canon kosong (armed mode)");
+            }
+
+            File.WriteAllBytes(outputPath, capturedData);
+            Console.Error.WriteLine($"[bridge-armed] Written {capturedData.Length} bytes to {outputPath}");
+        }
+        finally
+        {
+            Edsdk.EdsSetObjectEventHandler(_cameraRef, Edsdk.ObjectEvent_All, null, IntPtr.Zero);
+            _captureObjectHandler = null;
         }
     }
 

@@ -69,6 +69,19 @@ const plannedPreviewRestarts = new Set<ReturnType<typeof spawn>>();
 let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped preview
 let captureInProgress = false; // Prevent preview auto-restart during capture
 
+interface ArmedCaptureState {
+  outputPath: string;
+  process: ReturnType<typeof spawn>;
+  /** Resolves when BRIDGE_READY is printed to stderr */
+  readyPromise: Promise<void>;
+  /** Send SHOOT command to the armed bridge */
+  shootFn: () => void;
+  /** Resolves with output path when bridge exits (0=success), rejects on non-zero */
+  completionPromise: Promise<string>;
+}
+let armedCapture: ArmedCaptureState | null = null;
+
+
 const CAMERA_STATUS_CACHE_MS = 4000;
 const PREVIEW_STALL_TIMEOUT_MS = 3500;
 const PREVIEW_RESTART_WINDOW_MS = 30_000;
@@ -448,12 +461,18 @@ function stopActivePreviewStreams(killDelayMs = 150): Promise<boolean> {
 
   return new Promise((resolve) => {
     let remaining = processes.length;
+    const t0 = Date.now();
+    console.log(`[agent] stopActivePreviewStreams: killing ${remaining} process(es), killDelay=${killDelayMs}ms, maxWait=${killDelayMs+200}ms`);
     const done = () => {
       remaining -= 1;
+      console.log(`[agent] stopActivePreviewStreams: process exited, remaining=${remaining} elapsed=${Date.now()-t0}ms`);
       if (remaining <= 0) resolve(true);
     };
     const maxWait = killDelayMs + 200;
-    const timer = setTimeout(() => resolve(true), maxWait);
+    const timer = setTimeout(() => {
+      console.log(`[agent] stopActivePreviewStreams: maxWait timer fired at ${Date.now()-t0}ms`);
+      resolve(true);
+    }, maxWait);
 
     for (const child of processes) {
       if (child.killed || child.exitCode !== null) {
@@ -988,22 +1007,166 @@ app.get("/printers", async (_req: Request, res: Response) => {
 });
 
 app.post("/prepare-capture", async (_req: Request, res: Response) => {
-  // Pre-stop the live preview before countdown reaches 1. This gives the C# bridge
-  // time to exit gracefully (TryDisableEvf + EdsCloseSession), so /capture won't hit
-  // CommPortIsAlreadyOpen delays. Called by CameraScreen at countdown=2.
-  captureInProgress = true; // Block preview auto-restart until capture completes
-  const stopped = await stopActivePreviewStreams(400); // 400ms grace for graceful EVF disable
+  // Pre-arm capture: stop live preview and spawn the C# bridge in "armed" mode.
+  // The armed bridge does all setup (session open, EVF disable, SaveTo, event handler)
+  // and prints BRIDGE_READY when ready. /capture then just sends SHOOT → instant shutter.
+  captureInProgress = true;
+  const t0 = Date.now();
+
+  // Kill preview quickly (100ms grace) — we need the camera freed ASAP for the armed bridge
+  const stopped = await stopActivePreviewStreams(100);
+  console.log(`[agent] prepare-capture: preview stopped in ${Date.now()-t0}ms`);
   previewPreStoppedAt = Date.now();
-  res.json({ ok: true, stopped });
+
+  // Clean up any previous armed bridge that wasn't used
+  if (armedCapture) {
+    try { armedCapture.process.kill(); } catch { /* ignore */ }
+    armedCapture = null;
+  }
+
+  const tmpDir = os.tmpdir();
+  const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
+  const bridgePath = resolveEdsdkBridgePath();
+  const armedArgs = ["capture-armed", "--output", tmpFile];
+
+  const armedProcess = spawn(bridgePath, armedArgs, { stdio: ["pipe", "pipe", "pipe"] });
+
+  let readyResolve: () => void;
+  let readyReject: (err: Error) => void;
+  const readyPromise = new Promise<void>((res, rej) => { readyResolve = res; readyReject = rej; });
+
+  let completionResolve: (path: string) => void;
+  let completionReject: (err: Error) => void;
+  const completionPromise = new Promise<string>((res, rej) => { completionResolve = res; completionReject = rej; });
+
+  let stderrBuf = "";
+  let bridgeReady = false;
+  armedProcess.stderr?.on("data", (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
+    const lines = stderrBuf.split("\n");
+    stderrBuf = lines.pop() ?? "";
+    for (const line of lines) {
+      console.log(`[armed-bridge] ${line}`);
+      if (!bridgeReady && line.includes("BRIDGE_READY")) {
+        bridgeReady = true;
+        console.log(`[agent] BRIDGE_READY received at ${Date.now()-t0}ms after prepare-capture`);
+        readyResolve!();
+      }
+    }
+  });
+
+  armedProcess.on("exit", (code) => {
+    if (stderrBuf) { console.log(`[armed-bridge] ${stderrBuf}`); stderrBuf = ""; }
+    console.log(`[agent] Armed bridge exited code=${code}`);
+    if (!bridgeReady) readyReject!(new Error(`Armed bridge exited before BRIDGE_READY (code ${code})`));
+    if (code === 0) {
+      completionResolve!(tmpFile);
+    } else {
+      completionReject!(new Error(`Armed bridge exited with code ${code}`));
+    }
+    if (armedCapture?.process === armedProcess) armedCapture = null;
+  });
+
+  armedProcess.on("error", (err) => {
+    console.error(`[agent] Armed bridge spawn error: ${err.message}`);
+    readyReject!(err);
+    completionReject!(err);
+  });
+
+  armedCapture = {
+    outputPath: tmpFile,
+    process: armedProcess,
+    readyPromise,
+    shootFn: () => {
+      console.log(`[agent] Sending SHOOT to armed bridge`);
+      armedProcess.stdin?.write("SHOOT\n");
+    },
+    completionPromise,
+  };
+
+  // Suppress unhandled rejections — these are caught in /capture
+  readyPromise.catch(() => {});
+  completionPromise.catch(() => {});
+
+  res.json({ ok: true, stopped, armedBridgePid: armedProcess.pid });
 });
+
 
 app.post("/capture", async (req: Request, res: Response) => {
   const tmpDir = os.tmpdir();
-  const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
   const wantsBinary = req.query.format === "binary" || String(req.get("accept") || "").includes("image/jpeg");
   const hadPreviewSession = isPreviewSessionActive();
 
-  captureInProgress = true; // Block preview auto-restart for entire capture duration
+  captureInProgress = true;
+
+  // --- ARMED PATH: use pre-armed bridge spawned during /prepare-capture ---
+  // CameraScreen fires prepare-capture and /capture simultaneously at count=1.
+  // If armedCapture isn't set yet (prepare-capture is still async), wait briefly.
+  let armed = armedCapture;
+  if (!armed && captureInProgress) {
+    // Wait up to 3s for prepare-capture to finish spawning the armed bridge
+    const deadline = Date.now() + 3000;
+    while (!armedCapture && Date.now() < deadline) {
+      await new Promise<void>((r) => setTimeout(r, 30));
+    }
+    armed = armedCapture;
+  }
+
+  if (armed) {
+    armedCapture = null; // take ownership
+    const tmpFile = armed.outputPath;
+    const t0 = Date.now();
+    console.log(`[agent] /capture: using armed bridge, awaiting BRIDGE_READY`);
+    try {
+      // Wait for armed bridge to finish setup (should already be done by the time /capture fires)
+      await armed.readyPromise;
+      console.log(`[agent] /capture: BRIDGE_READY confirmed, sending SHOOT at ${Date.now()-t0}ms`);
+      armed.shootFn();
+
+      // Wait for download to complete
+      const outputPath = await armed.completionPromise;
+
+      if (!fs.existsSync(outputPath)) {
+        res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
+        return;
+      }
+
+      const buf = fs.readFileSync(outputPath);
+      console.log(`[agent] /capture: armed path done in ${Date.now()-t0}ms, ${buf.length} bytes`);
+
+      if (wantsBinary) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.send(buf);
+      } else {
+        res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
+      }
+    } catch (err: any) {
+      console.error("[agent] Armed capture error:", err);
+      const rawError = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
+    } finally {
+      captureInProgress = false;
+      previewPreStoppedAt = 0;
+      // Clean up temp file
+      const tmpFile2 = armed.outputPath;
+      if (fs.existsSync(tmpFile2)) { try { fs.unlinkSync(tmpFile2); } catch { /* ignore */ } }
+      // Restart preview if it was active
+      if (hadPreviewSession) {
+        setTimeout(() => {
+          try {
+            startSharedPreviewProcess();
+            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(2000)).catch(() => scheduleSharedPreviewStop(1000));
+          } catch { /* ignore */ }
+        }, 50);
+      }
+    }
+    return;
+  }
+
+  // --- FALLBACK PATH: traditional capture (no pre-armed bridge available) ---
+  const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
+
 
   try {
     const stoppedExistingStream = await stopActivePreviewStreams();
