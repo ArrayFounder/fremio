@@ -1517,7 +1517,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         // Subtle zoom-in (1.0 → 1.05) during frozen phase (count=3 → count=0)
         // Creates natural "build-up" tension while Canon prepares for shutter
         const frozenAt = dslrFrozenAtRef.current;
-        const FREEZE_TOTAL_MS = 3200;
+        const FREEZE_TOTAL_MS = 5000;
         const zoomProgress = frozenAt !== null
           ? Math.min((Date.now() - frozenAt) / FREEZE_TOTAL_MS, 1)
           : 0;
@@ -1731,41 +1731,24 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       count -= 1;
       if (count > 0) {
         setCountdown(count);
-        if (willUseAgentCapture && count === 3) {
-          // Move prepare-capture 1 step earlier (count=3 instead of count=2) so the
-          // live-view bridge has 2 s to exit gracefully before /capture fires at count=1.
-          // This eliminates CommPortIsAlreadyOpen delays and gives the EDSDK bridge
-          // maximum time to complete before countdown=0.
+        if (willUseAgentCapture && count === 1) {
+          const bs = boothMirrorSettingRef.current;
+          const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
+          // Freeze live preview immediately at count=1
+          freezeDslrPreview(captureMirror);
+          frozenPosterAtStart = dslrPosterSrc;
+          // Mark frozen timestamp for live recording zoom effect
+          if (livePhotoVideoEnabled && dslrMode) {
+            dslrFrozenAtRef.current = Date.now();
+          }
+          // Fire prepare-capture + capture simultaneously.
+          // Server has built-in 300 ms recovery delay after prepare-capture before
+          // the shutter triggers, so both can be sent at once.
           const base = agentBaseRef.current;
           if (base) {
             fetch(`${base}/prepare-capture`, { method: "POST" }).catch(() => {});
           }
-          // Mark frozen timestamp for live recording zoom effect (build-up animation)
-          if (livePhotoVideoEnabled && dslrMode) {
-            dslrFrozenAtRef.current = Date.now();
-          }
-        }
-        if (willUseAgentCapture && count === 2) {
-          // Pre-fire Canon capture at "2" — 2 seconds before count=0.
-          // prepare-capture was called at count=3 (~1 s ago) so the live-view bridge
-          // has already exited and recovery time is 0. The EDSDK bridge (shutter +
-          // JPEG download) now runs during the countdown, so by count=0 the image
-          // is ready (or nearly so) instead of starting fresh after countdown ends.
-          const bs = boothMirrorSettingRef.current;
-          const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
           preCapturePromiseRef.current = captureFromAgent(captureMirror);
-        }
-        if (willUseAgentCapture && count === 1) {
-          const bs = boothMirrorSettingRef.current;
-          const freezeMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
-          freezeDslrPreview(freezeMirror);
-          // Store frozen poster BEFORE capture runs
-          frozenPosterAtStart = dslrPosterSrc;
-          // If pre-capture wasn't started at count=2 (e.g. IPC path without agentBase),
-          // start it now as a fallback — still gives 1 s of head start.
-          if (!preCapturePromiseRef.current) {
-            preCapturePromiseRef.current = captureFromAgent(freezeMirror);
-          }
           // Show "1" for a full 1 second, then resolve at "0"
           countdownTimerRef.current = setTimeout(() => {
             setCountdown(null);
