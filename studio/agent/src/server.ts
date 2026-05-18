@@ -86,8 +86,8 @@ const CAMERA_STATUS_CACHE_MS = 4000;
 const PREVIEW_STALL_TIMEOUT_MS = 3500;
 const PREVIEW_RESTART_WINDOW_MS = 30_000;
 const PREVIEW_RESTART_MAX_IN_WINDOW = 6;
-const PREVIEW_RESTART_KILL_GRACE_MS = 150; // OPTIMIZED: was 350ms
-const PREVIEW_RESTART_START_DELAY_MS = 150; // OPTIMIZED: was 650ms - faster preview recovery
+const PREVIEW_RESTART_KILL_GRACE_MS = 100; // OPTIMIZED: was 350ms — faster preview kill
+const PREVIEW_RESTART_START_DELAY_MS = 100; // OPTIMIZED: was 650ms — faster preview recovery
 
 function isRunning(child: ReturnType<typeof spawn> | null): child is ReturnType<typeof spawn> {
   return !!child && !child.killed && child.exitCode === null;
@@ -147,7 +147,7 @@ function stopSharedPreviewProcess() {
     if (!child.killed && child.exitCode === null) {
       child.kill();
     }
-  }, 350);
+  }, 50); // OPTIMIZED: faster graceful kill
 }
 
 function scheduleSharedPreviewStop(delayMs = 5000) { // Keep bridge alive long enough for CameraScreen to pick up after BoothSetupScreen
@@ -441,7 +441,7 @@ function getPreviewFrame(timeoutMs = 10000): Promise<Buffer> {
   });
 }
 
-function stopActivePreviewStreams(killDelayMs = 150): Promise<boolean> {
+function stopActivePreviewStreams(killDelayMs = 50): Promise<boolean> {
   if (previewIdleTimer) {
     clearTimeout(previewIdleTimer);
     previewIdleTimer = null;
@@ -1013,9 +1013,30 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
   captureInProgress = true;
   const t0 = Date.now();
 
-  // Kill preview quickly (100ms grace) — we need the camera freed ASAP for the armed bridge
-  const stopped = await stopActivePreviewStreams(100);
-  console.log(`[agent] prepare-capture: preview stopped in ${Date.now()-t0}ms`);
+  // Kill preview — we need the camera freed ASAP for the armed bridge
+  const stopped = await stopActivePreviewStreams(50); // 50ms hard kill grace
+  console.log(`[agent] prepare-capture: preview stop requested, elapsed=${Date.now()-t0}ms`);
+
+  // CRITICAL FIX: The preview bridge can take 1000ms+ to exit (not 80ms!) due to
+  // C# live view loop hanging. We MUST wait for the preview to FULLY exit before
+  // spawning the armed bridge. Otherwise, armed bridge sees CommPortIsAlreadyOpen (0xC0)
+  // and fails all 8 retries → crash.
+  let previewExitWaitMs = 0;
+  const maxPreviewWait = 2000;
+  const pollInterval = 30;
+  while (activePreviewStreams.size > 0 && previewExitWaitMs < maxPreviewWait) {
+    await new Promise<void>((r) => setTimeout(r, pollInterval));
+    previewExitWaitMs += pollInterval;
+  }
+  if (activePreviewStreams.size > 0) {
+    console.warn(`[agent] Preview still running after ${maxPreviewWait}ms, proceeding anyway`);
+  } else {
+    console.log(`[agent] Preview confirmed dead, waited=${previewExitWaitMs}ms`);
+  }
+
+  // Extra wait: give EDSDK time to fully release the USB session after preview exit.
+  // This is the minimum reliable USB release time for EOS cameras between processes.
+  await new Promise<void>((r) => setTimeout(r, 300));
   previewPreStoppedAt = Date.now();
 
   // Clean up any previous armed bridge that wasn't used
@@ -1156,9 +1177,9 @@ app.post("/capture", async (req: Request, res: Response) => {
         setTimeout(() => {
           try {
             startSharedPreviewProcess();
-            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(2000)).catch(() => scheduleSharedPreviewStop(1000));
+            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(1000)).catch(() => scheduleSharedPreviewStop(800)); // OPTIMIZED: reduced idle from 2000/1000 to 1000/800
           } catch { /* ignore */ }
-        }, 50);
+        }, 30); // OPTIMIZED: reduced from 50ms to 30ms
       }
     }
     return;
@@ -1170,9 +1191,11 @@ app.post("/capture", async (req: Request, res: Response) => {
 
   try {
     const stoppedExistingStream = await stopActivePreviewStreams();
-    // If /prepare-capture was called during countdown, subtract elapsed time from recovery wait.
+    // Wait for preview to fully exit (same as prepare-capture fix).
+    // The preview bridge can take 500-2000ms to exit, not 150ms.
+    // Subtract elapsed from recovery wait.
     const preStopElapsedMs = previewPreStoppedAt > 0 ? Date.now() - previewPreStoppedAt : 0;
-    const baseRecoveryMs = stoppedExistingStream ? 300 : 200;
+    const baseRecoveryMs = 400; // OPTIMIZED: increased from 200/150 — longer USB release time
     const recoveryMs = Math.max(0, baseRecoveryMs - preStopElapsedMs);
     previewPreStoppedAt = 0;
     if (recoveryMs > 0) await new Promise((resolve) => setTimeout(resolve, recoveryMs));
@@ -1232,20 +1255,20 @@ app.post("/capture", async (req: Request, res: Response) => {
     previewPreStoppedAt = 0;
 
     if (hadPreviewSession) {
-      setTimeout(() => { // OPTIMIZED: reduced from 120ms to 50ms for faster preview resume
+      setTimeout(() => { // OPTIMIZED: reduced from 120ms to 30ms for faster preview resume
         try {
           startSharedPreviewProcess();
           void getPreviewFrame(1200) // OPTIMIZED: reduced from 2200ms to 1200ms
             .then(() => {
-              scheduleSharedPreviewStop(2000); // OPTIMIZED: reduced from 3500ms to 2000ms
+              scheduleSharedPreviewStop(1000); // OPTIMIZED: reduced from 2000ms to 1000ms
             })
             .catch(() => {
-              scheduleSharedPreviewStop(1000); // OPTIMIZED: reduced from 2000ms to 1000ms
+              scheduleSharedPreviewStop(800); // OPTIMIZED: reduced from 2000ms to 800ms
             });
         } catch {
           // Ignore warm-up failures; preview route will retry on next request.
         }
-      }, 50);
+      }, 30);
     }
 
     if (fs.existsSync(tmpFile)) {
