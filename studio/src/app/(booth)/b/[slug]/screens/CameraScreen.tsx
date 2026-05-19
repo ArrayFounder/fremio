@@ -140,7 +140,6 @@ interface CameraScreenProps {
   allPhotosDone:   boolean;  // semua slot sudah terisi
   retakeSlotIndex: number | null; // sedang retake slot tertentu
   onCapture:       (dataUrl: string) => void;
-  onCaptureFailed?: () => void; // called when DSLR capture fails after optimistic frozen preview shown
   onVideoReady:    (videoBlob: Blob | null, captureIndex?: number) => void;
   onProceed:       () => void;
   onRetakeSlot:    (slotIndex: number) => void;
@@ -842,7 +841,7 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   );
 }
 
-export function CameraScreen({ booth, frame, photoIndex, capturedCount, capturedPhotos, allPhotosDone, retakeSlotIndex, onCapture, onCaptureFailed, onVideoReady, onProceed, onRetakeSlot, onCountdownChange, livePhotoVideoEnabled = true, mode = "live_view", boothMirrorSetting }: CameraScreenProps) {
+export function CameraScreen({ booth, frame, photoIndex, capturedCount, capturedPhotos, allPhotosDone, retakeSlotIndex, onCapture, onVideoReady, onProceed, onRetakeSlot, onCountdownChange, livePhotoVideoEnabled = true, mode = "live_view", boothMirrorSetting }: CameraScreenProps) {
   const { primaryColor, accentColor } = booth;
   const bgColor = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.cameraBgColor as string | undefined ?? primaryColor;
   const { textPrimary, textSecondary, textTertiary } = getAdaptiveColors(bgColor);
@@ -1658,23 +1657,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
     
-    // Store the frozen poster at start of countdown to use for immediate display
-    let frozenPosterAtStart: string | null = null;
-    let frozenPreviewDispatched = false; // track if optimistic preview was shown (for rollback on failure)
-    const captureAndDisplay = async () => {
-      const bs = boothMirrorSettingRef.current;
-      const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
-      console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
-      setCountdown(null);
-      setCdState("CAPTURING");
-      
-      // For DSLR: Show frozen preview IMMEDIATELY to avoid long wait perception
-      if (dslrMode && frozenPosterAtStart) {
-        console.log("[CameraScreen] DSLR: showing frozen preview immediately");
-        frozenPreviewDispatched = true;
-        onCapture(frozenPosterAtStart);
-      }
-      
+      // Store the frozen poster at start of countdown to use for immediate display (visual freeze only)
+      const captureAndDisplay = async () => {
+        const bs = boothMirrorSettingRef.current;
+        const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
+        console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
+        setCountdown(null);
+        setCdState("CAPTURING");
+        
       // Ambil foto sesuai sumber yang dipilih operator di setup.
       let dataUrl: string | null = null;
       if (captureSource === "dslr") {
@@ -1691,11 +1681,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           if (livePhotoVideoEnabled && !dslrMode) stopRecording().catch(() => {});
           if (livePhotoVideoEnabled && dslrMode) stopDslrLiveRecording().catch(() => {});
           setCdState("READY");
-          if (frozenPreviewDispatched) {
-            // Retract the optimistic frozen preview so screen returns to camera view.
-            // Error will be surfaced after retract.
-            onCaptureFailed?.();
-          }
           setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
           return;
         }
@@ -1726,10 +1711,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         return;
       }
       // For non-DSLR: show captured photo immediately
-      // For DSLR: replace frozen preview with actual captured photo if different
+      // For DSLR: show actual captured photo from Canon
       if (!dslrMode) {
         onCapture(dataUrl);
-      } else if (dataUrl !== frozenPosterAtStart) {
+      } else {
         onCapture(dataUrl);
       }
       if (livePhotoVideoEnabled && !dslrMode) {
@@ -1778,9 +1763,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           // HTTP requests are fired while the capture command is in flight.
           captureInProgressRef.current = true;
 
-          // Freeze live preview at count=1 and capture the data URL synchronously
-          // (dslrPosterSrc state is still stale here — use the return value directly)
-          frozenPosterAtStart = freezeDslrPreview(captureMirror);
+          // Freeze live preview at count=1 (visual effect only — pauses the MJPEG stream).
+          // We don't use the return value; the real result comes from the Canon JPEG.
+          freezeDslrPreview(captureMirror);
 
           // Mark frozen timestamp for live recording zoom effect
           if (livePhotoVideoEnabled && dslrMode) {
@@ -1817,7 +1802,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
     countdownTimerRef.current = setTimeout(tick, 1000);
-  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, freezeDslrPreview, livePhotoVideoEnabled, onCapture, onCaptureFailed, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
+  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, freezeDslrPreview, livePhotoVideoEnabled, onCapture, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
 
   // Viewfinder — landscape 16:9 di landscape, 4:3 di portrait
   const aspectStyle = isPortrait

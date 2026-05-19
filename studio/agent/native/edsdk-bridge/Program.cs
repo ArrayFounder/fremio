@@ -209,7 +209,7 @@ internal sealed class EdsdkSession : IDisposable
     private const uint PropID_ProductName = 0x00000002;
     private const uint PropID_SaveTo = 0x0000000B;
     private const uint SaveTo_Host = 2;
-    private const uint PropID_ImageQuality = 0x00000102;
+    private const uint PropID_ImageQuality = 0x00000100;
     // Large Fine JPEG (kEdsImageQuality_LJF). Forces JPEG output regardless of camera dial setting.
     // This ensures photobox always receives a JPEG even if camera is set to RAW or RAW+JPEG.
     private const uint ImageQuality_LargeJpegFine = 0x00640f0f;
@@ -550,14 +550,24 @@ internal sealed class EdsdkSession : IDisposable
                     Console.Error.WriteLine($"[bridge] Captured {capturedData.Length} bytes, header={headerHex}");
                     if (!IsLikelyJpeg(capturedData) && !IsLikelyJpegFileName(fileName))
                     {
-                        sawNonJpegTransfer = true;
-                        lastNonJpegFileName = fileName;
-                        Console.Error.WriteLine($"[bridge] Non-JPEG detected: fileName='{fileName}', header={headerHex}, size={capturedData.Length}");
-                        Console.Error.WriteLine("[bridge] Skipping non-JPEG transfer, waiting for JPEG...");
-                        CompleteCaptureTransferIfNeeded(evtId, objRef);
-                        capturedData = Array.Empty<byte>();
-                        capturedError = null;
-                        return 0;
+                        Console.Error.WriteLine($"[bridge] Non-JPEG received: fileName='{fileName}', header={headerHex}, trying embedded JPEG extraction...");
+                        var embedded = TryExtractEmbeddedJpeg(capturedData);
+                        if (embedded != null && embedded.Length > 100_000)
+                        {
+                            Console.Error.WriteLine($"[bridge] Embedded JPEG extracted: {embedded.Length} bytes (from {capturedData.Length} byte RAW)");
+                            capturedData = embedded;
+                            // Fall through to stale-check and signal below
+                        }
+                        else
+                        {
+                            sawNonJpegTransfer = true;
+                            lastNonJpegFileName = fileName;
+                            Console.Error.WriteLine("[bridge] Skipping non-JPEG transfer, no usable embedded JPEG found");
+                            CompleteCaptureTransferIfNeeded(evtId, objRef);
+                            capturedData = Array.Empty<byte>();
+                            capturedError = null;
+                            return 0;
+                        }
                     }
 
                     var capturedAtUtc = TryParseCameraDateTime(itemInfo.DateTime);
@@ -748,12 +758,23 @@ internal sealed class EdsdkSession : IDisposable
 
                     if (!IsLikelyJpeg(capturedData) && !IsLikelyJpegFileName(fileName))
                     {
-                        sawNonJpegTransfer = true;
-                        lastNonJpegFileName = fileName;
-                        Console.Error.WriteLine($"[bridge-armed] Non-JPEG skipped: '{fileName}'");
-                        CompleteCaptureTransferIfNeeded(evtId, objRef);
-                        capturedData = Array.Empty<byte>();
-                        return 0;
+                        Console.Error.WriteLine($"[bridge-armed] Non-JPEG received: '{fileName}', trying embedded JPEG extraction...");
+                        var embedded = TryExtractEmbeddedJpeg(capturedData);
+                        if (embedded != null && embedded.Length > 100_000) // at least 100KB to be a real photo
+                        {
+                            Console.Error.WriteLine($"[bridge-armed] Embedded JPEG extracted: {embedded.Length} bytes (from {capturedData.Length} byte RAW)");
+                            capturedData = embedded;
+                            // Fall through to stale-check and signal below
+                        }
+                        else
+                        {
+                            sawNonJpegTransfer = true;
+                            lastNonJpegFileName = fileName;
+                            Console.Error.WriteLine($"[bridge-armed] Non-JPEG skipped (no usable embedded JPEG): '{fileName}'");
+                            CompleteCaptureTransferIfNeeded(evtId, objRef);
+                            capturedData = Array.Empty<byte>();
+                            return 0;
+                        }
                     }
 
                     var capturedAtUtc = TryParseCameraDateTime(itemInfo.DateTime);
@@ -1077,6 +1098,41 @@ internal sealed class EdsdkSession : IDisposable
             && bytes[0] == 0xFF
             && bytes[1] == 0xD8
             && bytes[2] == 0xFF;
+    }
+
+    /// <summary>
+    /// Scans rawData for embedded JPEG streams (SOI=FF D8 FF ... EOI=FF D9) and returns
+    /// the largest one found. Canon CR2/CR3 RAW files always contain at least one embedded
+    /// JPEG preview (typically the full-size or near-full-size processed image).
+    /// Returns null if no valid JPEG is found.
+    /// </summary>
+    private static byte[]? TryExtractEmbeddedJpeg(byte[] rawData)
+    {
+        byte[]? best = null;
+        int bestLen = 0;
+
+        for (int i = 0; i < rawData.Length - 3; i++)
+        {
+            if (rawData[i] != 0xFF || rawData[i + 1] != 0xD8 || rawData[i + 2] != 0xFF)
+                continue;
+
+            // Scan forward for JPEG EOI marker (FF D9)
+            for (int j = i + 4; j < rawData.Length - 1; j++)
+            {
+                if (rawData[j] == 0xFF && rawData[j + 1] == 0xD9)
+                {
+                    int len = j + 2 - i;
+                    if (len > bestLen)
+                    {
+                        bestLen = len;
+                        best = new byte[len];
+                        Buffer.BlockCopy(rawData, i, best, 0, len);
+                    }
+                    break; // found EOI for this JPEG, look for next SOI
+                }
+            }
+        }
+        return best;
     }
 
     /// <summary>

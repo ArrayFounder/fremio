@@ -2151,7 +2151,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
               onCapture={(dataUrl) =>
                 dispatch({ type: "PHOTO_CAPTURED", payload: { dataUrl, videoBlob: null } })
               }
-              onCaptureFailed={() => dispatch({ type: "PHOTO_RETRACT_LAST" })}
               onVideoReady={(videoBlob, captureIndex) =>
                 dispatch({ type: "PHOTO_VIDEO_READY", payload: { videoBlob, captureIndex } })
               }
