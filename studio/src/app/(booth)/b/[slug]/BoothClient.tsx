@@ -83,6 +83,7 @@ type Action =
   | { type: "PAYMENT_SUCCESS"; payload: { sessionId: string } }
   | { type: "FRAME_SELECTED";  payload: { frame: FrameData } }
   | { type: "PHOTO_CAPTURED";  payload: { dataUrl: string; videoBlob: Blob | null } }
+  | { type: "PHOTO_RETRACT_LAST" }       // revert optimistic frozen preview on capture failure
   | { type: "PHOTO_REVIEW_CONFIRM" }   // user tekan Lanjut di preview satu foto
   | { type: "PHOTO_RETAKE_SINGLE" }   // user tekan Ulangi di preview satu foto
   | { type: "PHOTO_SAVED";     payload: { photoUrl: string; videoUrl: string | null; downloadUrl: string; printImageDataUrl?: string } }
@@ -193,6 +194,30 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         screen: "PHOTO_REVIEW",
+        currentVideoReady: false,
+        session: { ...state.session, capturedPhotos: newPhotos, capturedVideos: newVideos },
+      };
+    }
+
+    case "PHOTO_RETRACT_LAST": {
+      // Revert the optimistic frozen preview shown before capture. Remove the last
+      // captured photo (which was only a frozen frame), return to CAMERA screen.
+      const retakeIdx = state.retakeSlotIndex;
+      let newPhotos: string[];
+      let newVideos: (Blob | null)[];
+      if (retakeIdx !== null) {
+        // Retake mode: restore empty slot
+        newPhotos = [...state.session.capturedPhotos];
+        newPhotos[retakeIdx] = "";
+        newVideos = [...state.session.capturedVideos];
+        newVideos[retakeIdx] = null;
+      } else {
+        newPhotos = state.session.capturedPhotos.slice(0, -1);
+        newVideos = state.session.capturedVideos.slice(0, -1);
+      }
+      return {
+        ...state,
+        screen: "CAMERA",
         currentVideoReady: false,
         session: { ...state.session, capturedPhotos: newPhotos, capturedVideos: newVideos },
       };
@@ -2126,6 +2151,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
               onCapture={(dataUrl) =>
                 dispatch({ type: "PHOTO_CAPTURED", payload: { dataUrl, videoBlob: null } })
               }
+              onCaptureFailed={() => dispatch({ type: "PHOTO_RETRACT_LAST" })}
               onVideoReady={(videoBlob, captureIndex) =>
                 dispatch({ type: "PHOTO_VIDEO_READY", payload: { videoBlob, captureIndex } })
               }

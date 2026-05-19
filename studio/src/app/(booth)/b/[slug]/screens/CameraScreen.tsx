@@ -140,6 +140,7 @@ interface CameraScreenProps {
   allPhotosDone:   boolean;  // semua slot sudah terisi
   retakeSlotIndex: number | null; // sedang retake slot tertentu
   onCapture:       (dataUrl: string) => void;
+  onCaptureFailed?: () => void; // called when DSLR capture fails after optimistic frozen preview shown
   onVideoReady:    (videoBlob: Blob | null, captureIndex?: number) => void;
   onProceed:       () => void;
   onRetakeSlot:    (slotIndex: number) => void;
@@ -841,7 +842,7 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   );
 }
 
-export function CameraScreen({ booth, frame, photoIndex, capturedCount, capturedPhotos, allPhotosDone, retakeSlotIndex, onCapture, onVideoReady, onProceed, onRetakeSlot, onCountdownChange, livePhotoVideoEnabled = true, mode = "live_view", boothMirrorSetting }: CameraScreenProps) {
+export function CameraScreen({ booth, frame, photoIndex, capturedCount, capturedPhotos, allPhotosDone, retakeSlotIndex, onCapture, onCaptureFailed, onVideoReady, onProceed, onRetakeSlot, onCountdownChange, livePhotoVideoEnabled = true, mode = "live_view", boothMirrorSetting }: CameraScreenProps) {
   const { primaryColor, accentColor } = booth;
   const bgColor = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.cameraBgColor as string | undefined ?? primaryColor;
   const { textPrimary, textSecondary, textTertiary } = getAdaptiveColors(bgColor);
@@ -1659,6 +1660,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     
     // Store the frozen poster at start of countdown to use for immediate display
     let frozenPosterAtStart: string | null = null;
+    let frozenPreviewDispatched = false; // track if optimistic preview was shown (for rollback on failure)
     const captureAndDisplay = async () => {
       const bs = boothMirrorSettingRef.current;
       const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
@@ -1669,6 +1671,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       // For DSLR: Show frozen preview IMMEDIATELY to avoid long wait perception
       if (dslrMode && frozenPosterAtStart) {
         console.log("[CameraScreen] DSLR: showing frozen preview immediately");
+        frozenPreviewDispatched = true;
         onCapture(frozenPosterAtStart);
       }
       
@@ -1685,10 +1688,15 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         } catch (err) {
           preCapturePromiseRef.current = null;
           captureInProgressRef.current = false; // allow preview polling to resume on error
-          setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
           if (livePhotoVideoEnabled && !dslrMode) stopRecording().catch(() => {});
           if (livePhotoVideoEnabled && dslrMode) stopDslrLiveRecording().catch(() => {});
           setCdState("READY");
+          if (frozenPreviewDispatched) {
+            // Retract the optimistic frozen preview so screen returns to camera view.
+            // Error will be surfaced after retract.
+            onCaptureFailed?.();
+          }
+          setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
           return;
         }
       } else if (captureSource === "auto" && dslrAvailable) {
@@ -1809,7 +1817,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
     countdownTimerRef.current = setTimeout(tick, 1000);
-  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, freezeDslrPreview, livePhotoVideoEnabled, onCapture, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
+  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, freezeDslrPreview, livePhotoVideoEnabled, onCapture, onCaptureFailed, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
 
   // Viewfinder — landscape 16:9 di landscape, 4:3 di portrait
   const aspectStyle = isPortrait

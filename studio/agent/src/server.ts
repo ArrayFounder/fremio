@@ -26,7 +26,7 @@ import { promisify } from "util";
 const execAsync = promisify(exec);
 
 const PORT    = Number(process.env.AGENT_PORT ?? 3002);
-const VERSION = "1.0.7";
+const VERSION = "1.0.9";
 
 // ── App setup ────────────────────────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ let previewRestartAttemptsInWindow = 0;
 const plannedPreviewRestarts = new Set<ReturnType<typeof spawn>>();
 let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped preview
 let captureInProgress = false; // Prevent preview auto-restart during capture
+let captureHandlerInFlight = false; // Prevent duplicate /capture calls (separate from captureInProgress)
 
 interface ArmedCaptureState {
   outputPath: string;
@@ -325,6 +326,14 @@ function startSharedPreviewProcess() {
   // This prevents the preview bridge from colliding with the armed bridge on USB.
   if (armedCapture) {
     console.log("[agent] startSharedPreviewProcess: blocked (armedCapture active)");
+    return;
+  }
+
+  // FIX 6: Don't restart preview during capture preparation (/prepare-capture sets captureInProgress).
+  // Without this, a restarted preview can grab the USB session before the armed bridge spawns,
+  // causing 0x000000C0 CommPortIsAlreadyOpen on ALL 8 armed bridge retries.
+  if (captureInProgress) {
+    console.log("[agent] startSharedPreviewProcess: blocked (captureInProgress)");
     return;
   }
 
@@ -1128,6 +1137,8 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     // Kill the failed armed bridge to avoid orphaned USB session
     try { armedProcess.kill(); } catch { /* ignore */ }
     if (armedCapture?.process === armedProcess) armedCapture = null;
+    // FIX: Reset captureInProgress so preview can restart and the wait loop in /capture exits early
+    captureInProgress = false;
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
   }
 });
@@ -1138,24 +1149,26 @@ app.post("/capture", async (req: Request, res: Response) => {
   const wantsBinary = req.query.format === "binary" || String(req.get("accept") || "").includes("image/jpeg");
   const hadPreviewSession = isPreviewSessionActive();
 
-  // FIX 5: Prevent concurrent /capture calls from racing (e.g. double-trigger).
-  if (captureInProgress) {
-    // A capture is already in progress — reject immediately to avoid double-fire.
-    // CameraScreen should guard this, but we double-check server-side.
+  // FIX 5: Prevent duplicate /capture calls from racing (e.g. double-trigger).
+  // Uses captureHandlerInFlight (not captureInProgress) so it doesn't false-reject
+  // the legitimate /capture call that runs simultaneously with /prepare-capture.
+  if (captureHandlerInFlight) {
     console.warn("[agent] /capture: rejected (capture already in progress)");
     res.status(409).json({ ok: false, error: "Capture sedang berlangsung — tunggu beberapa saat" });
     return;
   }
 
+  captureHandlerInFlight = true;
   captureInProgress = true;
 
   // FIX 1: If armedCapture is still spawning (prepare-capture was fired simultaneously
   // from CameraScreen), wait up to 5s for it to become available before falling through
   // to the fallback path. This prevents execBridgeBuffer from racing with the armed bridge.
+  // Also exits early if captureInProgress was reset (prepare-capture failed).
   let armed = armedCapture;
-  if (!armed && captureInProgress) {
+  if (!armed) {
     const deadline = Date.now() + 5000;
-    while (!armedCapture && Date.now() < deadline) {
+    while (!armedCapture && captureInProgress && Date.now() < deadline) {
       await new Promise<void>((r) => setTimeout(r, 50));
     }
     armed = armedCapture;
@@ -1195,6 +1208,7 @@ app.post("/capture", async (req: Request, res: Response) => {
       const rawError = err instanceof Error ? err.message : String(err);
       res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
     } finally {
+      captureHandlerInFlight = false;
       captureInProgress = false;
       previewPreStoppedAt = 0;
       // Clean up temp file
@@ -1279,6 +1293,7 @@ app.post("/capture", async (req: Request, res: Response) => {
     const rawError = err instanceof Error ? err.message : String(err);
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
   } finally {
+    captureHandlerInFlight = false;
     captureInProgress = false; // Allow preview to restart again
     previewPreStoppedAt = 0;
 
