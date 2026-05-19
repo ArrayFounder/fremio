@@ -9,19 +9,19 @@
     "net8.0": []
   },
   "packageFolders": {
-    "C:\\Users\\Djoekanda's Pride\\.nuget\\packages\\": {}
+    "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "c:\\Users\\Djoekanda's Pride\\Documents\\fremio\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
+      "projectUniqueName": "C:\\Users\\A.r.r.a.y.19\\fremio.worktrees\\agents-fix-canon-camera-capture-errors\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
       "projectName": "edsdk-bridge-native",
-      "projectPath": "c:\\Users\\Djoekanda's Pride\\Documents\\fremio\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
-      "packagesPath": "C:\\Users\\Djoekanda's Pride\\.nuget\\packages\\",
-      "outputPath": "c:\\Users\\Djoekanda's Pride\\Documents\\fremio\\fremio\\studio\\agent\\native\\edsdk-bridge\\obj\\",
+      "projectPath": "C:\\Users\\A.r.r.a.y.19\\fremio.worktrees\\agents-fix-canon-camera-capture-errors\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
+      "packagesPath": "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\A.r.r.a.y.19\\fremio.worktrees\\agents-fix-canon-camera-capture-errors\\studio\\agent\\native\\edsdk-bridge\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\Djoekanda's Pride\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "C:\\Users\\A.r.r.a.y.19\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"

@@ -1,0 +1,5 @@
+C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\studio\agent\native\edsdk-bridge\publish\win-x64\edsdk-bridge-native.exe
+C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\studio\agent\native\edsdk-bridge\publish\win-x64\edsdk-bridge-native.dll
+C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\studio\agent\native\edsdk-bridge\publish\win-x64\edsdk-bridge-native.deps.json
+C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\studio\agent\native\edsdk-bridge\publish\win-x64\edsdk-bridge-native.runtimeconfig.json
+C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\studio\agent\native\edsdk-bridge\publish\win-x64\edsdk-bridge-native.pdb

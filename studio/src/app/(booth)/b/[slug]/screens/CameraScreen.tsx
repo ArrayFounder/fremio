@@ -919,6 +919,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [dslrPreviewError, setDslrPreviewError] = useState<string | null>(null);
   const [dslrPreviewPaused, setDslrPreviewPaused] = useState(false);
   const [dslrPreviewReady, setDslrPreviewReady] = useState(false);
+  // After this grace period, capture is enabled even if live preview never loads.
+  // Prevents the capture button from being permanently blocked by a stalled preview.
+  const [dslrCaptureGraceExpired, setDslrCaptureGraceExpired] = useState(false);
   // Once any countdown starts, suppress loading overlay for the rest of the session
   const [dslrSessionStarted, setDslrSessionStarted] = useState(false);
   const [dslrPosterSrc, setDslrPosterSrc] = useState<string | null>(null);
@@ -934,6 +937,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   useEffect(() => {
     agentBaseRef.current = agentBase;
   }, [agentBase]);
+
+  // After 6s of DSLR mode being active, allow capture even if live preview hasn't loaded.
+  // This prevents a permanently-disabled capture button when preview stalls or fails.
+  useEffect(() => {
+    if (!dslrMode || !dslrAvailable) return;
+    const timer = setTimeout(() => setDslrCaptureGraceExpired(true), 6000);
+    return () => clearTimeout(timer);
+  }, [dslrMode, dslrAvailable]);
 
   const restartCanonPreviewBridge = useCallback(async (reason: string): Promise<boolean> => {
     if (typeof window === "undefined") return false;
@@ -1820,7 +1831,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const ch = frame.canvasHeight || 1920;
   const frameAspect = cw / ch;
   const canTriggerCapture = dslrMode
-    ? dslrAvailable && dslrSupportsCapture && (dslrSupportsLiveView === false || dslrPreviewReady) && cdState === "READY"
+    ? dslrAvailable && dslrSupportsCapture && (dslrSupportsLiveView === false || dslrPreviewReady || dslrCaptureGraceExpired) && cdState === "READY"
     : isReady && cdState === "READY";
 
   return (
