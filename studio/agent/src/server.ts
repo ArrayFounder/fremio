@@ -26,7 +26,7 @@ import { promisify } from "util";
 const execAsync = promisify(exec);
 
 const PORT    = Number(process.env.AGENT_PORT ?? 3002);
-const VERSION = "1.0.5";
+const VERSION = "1.0.14";
 
 // ── App setup ────────────────────────────────────────────────────────────────
 
@@ -66,13 +66,29 @@ let previewRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let previewRestartWindowStartedAt = 0;
 let previewRestartAttemptsInWindow = 0;
 const plannedPreviewRestarts = new Set<ReturnType<typeof spawn>>();
+let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped preview
+let captureInProgress = false; // Prevent preview auto-restart during capture
+let captureHandlerInFlight = false; // Prevent duplicate /capture calls (separate from captureInProgress)
+
+interface ArmedCaptureState {
+  outputPath: string;
+  process: ReturnType<typeof spawn>;
+  /** Resolves when BRIDGE_READY is printed to stderr */
+  readyPromise: Promise<void>;
+  /** Send SHOOT command to the armed bridge */
+  shootFn: () => void;
+  /** Resolves with output path when bridge exits (0=success), rejects on non-zero */
+  completionPromise: Promise<string>;
+}
+let armedCapture: ArmedCaptureState | null = null;
+
 
 const CAMERA_STATUS_CACHE_MS = 4000;
 const PREVIEW_STALL_TIMEOUT_MS = 3500;
 const PREVIEW_RESTART_WINDOW_MS = 30_000;
 const PREVIEW_RESTART_MAX_IN_WINDOW = 6;
-const PREVIEW_RESTART_KILL_GRACE_MS = 150; // OPTIMIZED: was 350ms
-const PREVIEW_RESTART_START_DELAY_MS = 150; // OPTIMIZED: was 650ms - faster preview recovery
+const PREVIEW_RESTART_KILL_GRACE_MS = 100; // OPTIMIZED: was 350ms — faster preview kill
+const PREVIEW_RESTART_START_DELAY_MS = 100; // OPTIMIZED: was 650ms — faster preview recovery
 
 function isRunning(child: ReturnType<typeof spawn> | null): child is ReturnType<typeof spawn> {
   return !!child && !child.killed && child.exitCode === null;
@@ -132,10 +148,10 @@ function stopSharedPreviewProcess() {
     if (!child.killed && child.exitCode === null) {
       child.kill();
     }
-  }, 350);
+  }, 50); // OPTIMIZED: faster graceful kill
 }
 
-function scheduleSharedPreviewStop(delayMs = 2000) { // OPTIMIZED: was 5000ms - faster cleanup
+function scheduleSharedPreviewStop(delayMs = 5000) { // Keep bridge alive long enough for CameraScreen to pick up after BoothSetupScreen
   if (previewIdleTimer) clearTimeout(previewIdleTimer);
   previewIdleTimer = setTimeout(() => {
     previewIdleTimer = null;
@@ -306,6 +322,21 @@ async function getCameraStatusForRoute(): Promise<CameraStatusResult> {
 function startSharedPreviewProcess() {
   if (isRunning(sharedPreviewProcess)) return;
 
+  // FIX 2: Don't restart preview while an armed capture bridge is holding the camera.
+  // This prevents the preview bridge from colliding with the armed bridge on USB.
+  if (armedCapture) {
+    console.log("[agent] startSharedPreviewProcess: blocked (armedCapture active)");
+    return;
+  }
+
+  // FIX 6: Don't restart preview during capture preparation (/prepare-capture sets captureInProgress).
+  // Without this, a restarted preview can grab the USB session before the armed bridge spawns,
+  // causing 0x000000C0 CommPortIsAlreadyOpen on ALL 8 armed bridge retries.
+  if (captureInProgress) {
+    console.log("[agent] startSharedPreviewProcess: blocked (captureInProgress)");
+    return;
+  }
+
   updateCameraStatusCache(buildPreviewActiveCameraStatus());
 
   const bridgePath = resolveEdsdkBridgePath();
@@ -326,6 +357,14 @@ function startSharedPreviewProcess() {
   sharedPreviewProcess = child;
   activePreviewStreams.add(child);
   armPreviewStallMonitor();
+
+  child.stdout?.on("error", (err) => {
+    // Suppress ECONNRESET/EPIPE that occurs when process is force-killed mid-stream.
+    console.error("[agent] Preview stdout pipe error (suppressed):", err.message);
+  });
+  child.stdin?.on("error", () => {
+    // Suppress EPIPE when writing to stdin of an already-dead process.
+  });
 
   child.stdout?.on("data", (chunk: Buffer) => {
     sharedPreviewBuffer = Buffer.concat([sharedPreviewBuffer, chunk]);
@@ -381,7 +420,8 @@ function startSharedPreviewProcess() {
       return;
     }
     failPreviewFrameWaiters(new Error(`Live view Canon berhenti (${signal || (code ?? "unknown")})`));
-    if (hasPreviewDemand()) {
+    // Do NOT restart preview if capture is in progress — camera must stay free for the capture bridge.
+    if (hasPreviewDemand() && !captureInProgress) {
       restartSharedPreviewProcess(`preview process exit (${signal || (code ?? "unknown")})`);
     }
   });
@@ -417,7 +457,7 @@ function getPreviewFrame(timeoutMs = 10000): Promise<Buffer> {
   });
 }
 
-function stopActivePreviewStreams(): Promise<boolean> {
+function stopActivePreviewStreams(killDelayMs = 1500): Promise<boolean> {
   if (previewIdleTimer) {
     clearTimeout(previewIdleTimer);
     previewIdleTimer = null;
@@ -437,11 +477,18 @@ function stopActivePreviewStreams(): Promise<boolean> {
 
   return new Promise((resolve) => {
     let remaining = processes.length;
+    const t0 = Date.now();
+    console.log(`[agent] stopActivePreviewStreams: killing ${remaining} process(es), killDelay=${killDelayMs}ms, maxWait=${killDelayMs+200}ms`);
     const done = () => {
       remaining -= 1;
+      console.log(`[agent] stopActivePreviewStreams: process exited, remaining=${remaining} elapsed=${Date.now()-t0}ms`);
       if (remaining <= 0) resolve(true);
     };
-    const timer = setTimeout(() => resolve(true), 300); // OPTIMIZED: was 500ms
+    const maxWait = killDelayMs + 200;
+    const timer = setTimeout(() => {
+      console.log(`[agent] stopActivePreviewStreams: maxWait timer fired at ${Date.now()-t0}ms`);
+      resolve(true);
+    }, maxWait);
 
     for (const child of processes) {
       if (child.killed || child.exitCode !== null) {
@@ -453,15 +500,17 @@ function stopActivePreviewStreams(): Promise<boolean> {
         activePreviewStreams.delete(child);
         done();
       });
+      // FIX 3: Graceful shutdown — send stdin EOF first, give C# bridge 1500ms to
+      // call EdsCloseSession and exit cleanly. Only then kill if still alive.
       child.stdin?.end();
-      setTimeout(() => { // OPTIMIZED: reduced from 350ms to 150ms
+      setTimeout(() => {
         if (!child.killed && child.exitCode === null) {
           child.kill();
         }
-      }, 150);
+      }, killDelayMs);
     }
 
-    setTimeout(() => clearTimeout(timer), 400); // OPTIMIZED: was 600ms
+    setTimeout(() => clearTimeout(timer), maxWait + 100);
   });
 }
 
@@ -659,6 +708,7 @@ function isRetryableCaptureFailure(rawMessage: string): boolean {
     message.includes("gagal trigger shutter canon")
     || message.includes("device busy")
     || message.includes("kamera canon sedang busy")
+    || message.includes("000000c0") // CommPortIsAlreadyOpen — session not yet released
   );
 }
 
@@ -666,12 +716,26 @@ async function detectCameras(): Promise<CameraStatusResult> {
   try {
     const bridgePath = resolveEdsdkBridgePath();
     const statusArgs = parseBridgeArgs(process.env.EDSDK_BRIDGE_STATUS_ARGS, "status --json");
-    const { stdout } = await execBridgeBuffer(bridgePath, statusArgs, 8000);
+    const { stdout, stderr } = await execBridgeBuffer(bridgePath, statusArgs, 12000);
+
+    // Always surface bridge diagnostic output to console so operator can see it
+    if (stderr.trim()) {
+      stderr.trim().split(/\r?\n/).forEach((line) => {
+        if (line.trim()) console.log(`[camera-detect] ${line.trim()}`);
+      });
+    }
+
     const payload = JSON.parse(stdout.toString("utf8")) as BridgeStatusPayload;
 
     const cameras = Array.isArray(payload.cameras)
       ? payload.cameras.map((c) => ({ model: String(c.model || "Canon"), port: String(c.port || "") }))
       : [];
+
+    if (cameras.length > 0) {
+      console.log(`[agent] Kamera Canon terdeteksi: ${cameras.map((c) => c.model).join(", ")}`);
+    } else {
+      console.warn(`[agent] Kamera Canon tidak terdeteksi. ${payload.error ?? "Cek koneksi USB dan mode kamera."}`);
+    }
 
     return {
       available: cameras.length > 0,
@@ -682,12 +746,14 @@ async function detectCameras(): Promise<CameraStatusResult> {
       capabilities: payload.capabilities,
     };
   } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[agent] detectCameras error: ${msg}`);
     return {
       available: false,
       count: 0,
       devices: [],
       type: "none",
-      error: error instanceof Error ? error.message : String(error),
+      error: msg,
     };
   }
 }
@@ -972,17 +1038,225 @@ app.get("/printers", async (_req: Request, res: Response) => {
   res.json({ ok: true, printers });
 });
 
-app.post("/capture", async (req: Request, res: Response) => {
+app.post("/prepare-capture", async (_req: Request, res: Response) => {
+  // Pre-arm capture: stop live preview and spawn the C# bridge in "armed" mode.
+  // The armed bridge does all setup (session open, EVF disable, SaveTo, event handler)
+  // and prints BRIDGE_READY when ready. /capture then just sends SHOOT → instant shutter.
+  captureInProgress = true;
+  const t0 = Date.now();
+
+  // Kill preview — we need the camera freed ASAP for the armed bridge
+  const stopped = await stopActivePreviewStreams(50); // 50ms hard kill grace
+  console.log(`[agent] prepare-capture: preview stop requested, elapsed=${Date.now()-t0}ms`);
+
+  // CRITICAL FIX: The preview bridge can take 1000ms+ to exit (not 80ms!) due to
+  // C# live view loop hanging. We MUST wait for the preview to FULLY exit before
+  // spawning the armed bridge. Otherwise, armed bridge sees CommPortIsAlreadyOpen (0xC0)
+  // and fails all 8 retries → crash.
+  let previewExitWaitMs = 0;
+  const maxPreviewWait = 2000;
+  const pollInterval = 30;
+  while (activePreviewStreams.size > 0 && previewExitWaitMs < maxPreviewWait) {
+    await new Promise<void>((r) => setTimeout(r, pollInterval));
+    previewExitWaitMs += pollInterval;
+  }
+  if (activePreviewStreams.size > 0) {
+    console.warn(`[agent] Preview still running after ${maxPreviewWait}ms, proceeding anyway`);
+  } else {
+    console.log(`[agent] Preview confirmed dead, waited=${previewExitWaitMs}ms`);
+  }
+
+  // Extra wait: give EDSDK time to fully release the USB session after preview exit.
+  // This is the minimum reliable USB release time for EOS cameras between processes.
+  await new Promise<void>((r) => setTimeout(r, 300));
+  previewPreStoppedAt = Date.now();
+
+  // Clean up any previous armed bridge that wasn't used
+  if (armedCapture) {
+    try { armedCapture.process.kill(); } catch { /* ignore */ }
+    armedCapture = null;
+  }
+
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
+  const bridgePath = resolveEdsdkBridgePath();
+  const armedArgs = ["capture-armed", "--output", tmpFile];
+
+  const armedProcess = spawn(bridgePath, armedArgs, { stdio: ["pipe", "pipe", "pipe"] });
+
+  let readyResolve: () => void;
+  let readyReject: (err: Error) => void;
+  const readyPromise = new Promise<void>((res, rej) => { readyResolve = res; readyReject = rej; });
+
+  let completionResolve: (path: string) => void;
+  let completionReject: (err: Error) => void;
+  const completionPromise = new Promise<string>((res, rej) => { completionResolve = res; completionReject = rej; });
+
+  let stderrBuf = "";
+  let bridgeReady = false;
+  armedProcess.stderr?.on("data", (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
+    const lines = stderrBuf.split("\n");
+    stderrBuf = lines.pop() ?? "";
+    for (const line of lines) {
+      console.log(`[armed-bridge] ${line}`);
+      if (!bridgeReady && line.includes("BRIDGE_READY")) {
+        bridgeReady = true;
+        console.log(`[agent] BRIDGE_READY received at ${Date.now()-t0}ms after prepare-capture`);
+        readyResolve!();
+      }
+    }
+  });
+
+  armedProcess.on("exit", (code) => {
+    if (stderrBuf) { console.log(`[armed-bridge] ${stderrBuf}`); stderrBuf = ""; }
+    console.log(`[agent] Armed bridge exited code=${code}`);
+    if (!bridgeReady) readyReject!(new Error(`Armed bridge exited before BRIDGE_READY (code ${code})`));
+    if (code === 0) {
+      completionResolve!(tmpFile);
+    } else {
+      completionReject!(new Error(`Armed bridge exited with code ${code}`));
+    }
+    if (armedCapture?.process === armedProcess) armedCapture = null;
+  });
+
+  armedProcess.on("error", (err) => {
+    console.error(`[agent] Armed bridge spawn error: ${err.message}`);
+    readyReject!(err);
+    completionReject!(err);
+  });
+
+  armedCapture = {
+    outputPath: tmpFile,
+    process: armedProcess,
+    readyPromise,
+    shootFn: () => {
+      console.log(`[agent] Sending SHOOT to armed bridge`);
+      armedProcess.stdin?.write("SHOOT\n");
+    },
+    completionPromise,
+  };
+
+  // Suppress unhandled rejections — these are caught in /capture
+  readyPromise.catch(() => {});
+  completionPromise.catch(() => {});
+
+  // FIX 4: Wait for BRIDGE_READY before responding to client.
+  // This ensures /capture (fired simultaneously) always finds armedCapture fully initialized.
+  // If BRIDGE_READY never comes (camera busy / USB conflict), return error instead of success.
+  try {
+    await readyPromise; // timeout is 15s in the bridge's SHOOT wait, but we trust the bridge
+    console.log(`[agent] /prepare-capture: BRIDGE_READY confirmed, responding at ${Date.now()-t0}ms`);
+    res.json({ ok: true, stopped, armedBridgePid: armedProcess.pid });
+  } catch (err) {
+    console.error(`[agent] /prepare-capture: BRIDGE_READY failed: ${(err as Error).message}`);
+    // Kill the failed armed bridge to avoid orphaned USB session
+    try { armedProcess.kill(); } catch { /* ignore */ }
+    if (armedCapture?.process === armedProcess) armedCapture = null;
+    // FIX: Reset captureInProgress so preview can restart and the wait loop in /capture exits early
+    captureInProgress = false;
+    res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
+  }
+});
+
+
+app.post("/capture", async (req: Request, res: Response) => {
+  const tmpDir = os.tmpdir();
   const wantsBinary = req.query.format === "binary" || String(req.get("accept") || "").includes("image/jpeg");
   const hadPreviewSession = isPreviewSessionActive();
 
+  // FIX 5: Prevent duplicate /capture calls from racing (e.g. double-trigger).
+  // Uses captureHandlerInFlight (not captureInProgress) so it doesn't false-reject
+  // the legitimate /capture call that runs simultaneously with /prepare-capture.
+  if (captureHandlerInFlight) {
+    console.warn("[agent] /capture: rejected (capture already in progress)");
+    res.status(409).json({ ok: false, error: "Capture sedang berlangsung — tunggu beberapa saat" });
+    return;
+  }
+
+  captureHandlerInFlight = true;
+  captureInProgress = true;
+
+  // FIX 1: If armedCapture is still spawning (prepare-capture was fired simultaneously
+  // from CameraScreen), wait up to 5s for it to become available before falling through
+  // to the fallback path. This prevents execBridgeBuffer from racing with the armed bridge.
+  // Also exits early if captureInProgress was reset (prepare-capture failed).
+  let armed = armedCapture;
+  if (!armed) {
+    const deadline = Date.now() + 5000;
+    while (!armedCapture && captureInProgress && Date.now() < deadline) {
+      await new Promise<void>((r) => setTimeout(r, 50));
+    }
+    armed = armedCapture;
+  }
+
+  if (armed) {
+    armedCapture = null; // take ownership
+    const tmpFile = armed.outputPath;
+    const t0 = Date.now();
+    console.log(`[agent] /capture: using armed bridge, awaiting BRIDGE_READY`);
+    try {
+      // Wait for armed bridge to finish setup (should already be done by the time /capture fires)
+      await armed.readyPromise;
+      console.log(`[agent] /capture: BRIDGE_READY confirmed, sending SHOOT at ${Date.now()-t0}ms`);
+      armed.shootFn();
+
+      // Wait for download to complete
+      const outputPath = await armed.completionPromise;
+
+      if (!fs.existsSync(outputPath)) {
+        res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
+        return;
+      }
+
+      const buf = fs.readFileSync(outputPath);
+      console.log(`[agent] /capture: armed path done in ${Date.now()-t0}ms, ${buf.length} bytes`);
+
+      if (wantsBinary) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.send(buf);
+      } else {
+        res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
+      }
+    } catch (err: any) {
+      console.error("[agent] Armed capture error:", err);
+      const rawError = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
+    } finally {
+      captureHandlerInFlight = false;
+      captureInProgress = false;
+      previewPreStoppedAt = 0;
+      // Clean up temp file
+      const tmpFile2 = armed.outputPath;
+      if (fs.existsSync(tmpFile2)) { try { fs.unlinkSync(tmpFile2); } catch { /* ignore */ } }
+      // FIX 2: Don't restart preview if another armed capture is incoming (next countdown cycle).
+      if (hadPreviewSession && !armedCapture) {
+        setTimeout(() => {
+          try {
+            startSharedPreviewProcess();
+            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(1000)).catch(() => scheduleSharedPreviewStop(800)); // OPTIMIZED: reduced idle from 2000/1000 to 1000/800
+          } catch { /* ignore */ }
+        }, 30); // OPTIMIZED: reduced from 50ms to 30ms
+      }
+    }
+    return;
+  }
+
+  // --- FALLBACK PATH: traditional capture (no pre-armed bridge available) ---
+  const tmpFile = path.join(tmpDir, `fremio-capture-${Date.now()}.jpg`);
+
+
   try {
     const stoppedExistingStream = await stopActivePreviewStreams();
-    // OPTIMIZED: Reduced recovery delay - was 800/500ms, now 300/200ms for faster transition
-    const recoveryMs = stoppedExistingStream ? 300 : 200;
-    await new Promise((resolve) => setTimeout(resolve, recoveryMs));
+    // Wait for preview to fully exit (same as prepare-capture fix).
+    // The preview bridge can take 500-2000ms to exit, not 150ms.
+    // Subtract elapsed from recovery wait.
+    const preStopElapsedMs = previewPreStoppedAt > 0 ? Date.now() - previewPreStoppedAt : 0;
+    const baseRecoveryMs = 400; // OPTIMIZED: increased from 200/150 — longer USB release time
+    const recoveryMs = Math.max(0, baseRecoveryMs - preStopElapsedMs);
+    previewPreStoppedAt = 0;
+    if (recoveryMs > 0) await new Promise((resolve) => setTimeout(resolve, recoveryMs));
 
     const bridgePath = resolveEdsdkBridgePath();
     const captureArgs = parseBridgeArgs(process.env.EDSDK_BRIDGE_CAPTURE_ARGS, "capture --output {output}")
@@ -1035,21 +1309,25 @@ app.post("/capture", async (req: Request, res: Response) => {
     const rawError = err instanceof Error ? err.message : String(err);
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
   } finally {
-    if (hadPreviewSession) {
-      setTimeout(() => { // OPTIMIZED: reduced from 120ms to 50ms for faster preview resume
+    captureHandlerInFlight = false;
+    captureInProgress = false; // Allow preview to restart again
+    previewPreStoppedAt = 0;
+
+    if (hadPreviewSession && !armedCapture) {
+      setTimeout(() => { // OPTIMIZED: reduced from 120ms to 30ms for faster preview resume
         try {
           startSharedPreviewProcess();
           void getPreviewFrame(1200) // OPTIMIZED: reduced from 2200ms to 1200ms
             .then(() => {
-              scheduleSharedPreviewStop(2000); // OPTIMIZED: reduced from 3500ms to 2000ms
+              scheduleSharedPreviewStop(1000); // OPTIMIZED: reduced from 2000ms to 1000ms
             })
             .catch(() => {
-              scheduleSharedPreviewStop(1000); // OPTIMIZED: reduced from 2000ms to 1000ms
+              scheduleSharedPreviewStop(800); // OPTIMIZED: reduced from 2000ms to 800ms
             });
         } catch {
           // Ignore warm-up failures; preview route will retry on next request.
         }
-      }, 50);
+      }, 30);
     }
 
     if (fs.existsSync(tmpFile)) {
@@ -1112,6 +1390,13 @@ app.get("/preview-stream", async (_req: Request, res: Response) => {
       clearInterval(keepAlive);
       previewFrameSubscribers.delete(sendFrame);
       scheduleSharedPreviewStop();
+    });
+
+    res.on("error", () => {
+      // Suppress ECONNRESET when browser disconnects (e.g., navigating away during capture).
+      closed = true;
+      clearInterval(keepAlive);
+      previewFrameSubscribers.delete(sendFrame);
     });
   } catch (err: any) {
     console.error("[agent] Preview stream error:", err);

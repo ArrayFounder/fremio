@@ -95,6 +95,50 @@ export async function PUT(req: Request) {
   }
 }
 
+export async function DELETE(req: Request) {
+  const auth = req.headers.get("authorization");
+  if (!ADMIN_SECRET || auth !== `Bearer ${ADMIN_SECRET}`) {
+    return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const id = url.searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ success: false, error: "Missing id parameter" }, { status: 400 });
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Delete transactions first — their FK to Operator is onDelete: Cascade,
+      // but deleting via tx.transaction.deleteMany first avoids any orphaned state.
+      await tx.transaction.deleteMany({ where: { operatorId: id } });
+      // Delete credit purchases
+      await tx.creditPurchase.deleteMany({ where: { operatorId: id } });
+      // Delete booth configs — this cascades to BoothSessions, Vouchers
+      await tx.boothConfig.deleteMany({ where: { operatorId: id } });
+      // Finally delete the operator
+      await tx.operator.delete({ where: { id: String(id) } });
+    });
+
+    const origin = req.headers.get("origin") ?? "";
+    const allowed = ["https://fremio.id", "https://www.fremio.id"];
+
+    return NextResponse.json(
+      { success: true, message: "Operator deleted successfully" },
+      {
+        headers: {
+          "Access-Control-Allow-Origin":  allowed.includes(origin) ? origin : "https://fremio.id",
+          "Access-Control-Allow-Methods": "DELETE, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        },
+      }
+    );
+  } catch (e: any) {
+    console.error("[DELETE /api/admin/studio-operators]", e);
+    return NextResponse.json({ success: false, error: e.message }, { status: 500 });
+  }
+}
+
 export async function OPTIONS(req: Request) {
   const origin  = req.headers.get("origin") ?? "";
   const allowed = ["https://fremio.id", "https://www.fremio.id"];
@@ -102,7 +146,7 @@ export async function OPTIONS(req: Request) {
     status: 204,
     headers: {
       "Access-Control-Allow-Origin":  allowed.includes(origin) ? origin : "https://fremio.id",
-      "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
     },
   });

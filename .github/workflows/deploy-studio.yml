@@ -1,0 +1,83 @@
+name: Deploy Studio to VPS
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'studio/**'
+      - '.github/workflows/deploy-studio.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Studio to VPS
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          cp github-actions-key ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 76.13.192.32 >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Package studio source
+        run: |
+          tar -czf /tmp/studio.tar.gz \
+            -C studio \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='.env' \
+            --exclude='.env.production' \
+            --exclude='.env.local' \
+            --exclude='.env.production.local' \
+            --exclude='uploads' \
+            --exclude='.git' \
+            .
+
+      - name: Upload to VPS
+        run: |
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no /tmp/studio.tar.gz root@76.13.192.32:/tmp/studio-deploy.tar.gz
+
+      - name: Deploy on VPS
+        run: |
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no root@76.13.192.32 << 'ENDSSH'
+          set -e
+          echo "📦 Extracting studio source..."
+          mkdir -p /root/fremio-studio
+          tar -xzf /tmp/studio-deploy.tar.gz -C /root/fremio-studio
+          cd /root/fremio-studio
+
+          echo "🔑 Setting up env..."
+          if [ -f .env.production.local ]; then
+            cp .env.production.local .env.local
+          fi
+
+          echo "📥 Installing dependencies..."
+          npm install
+
+          echo "🔨 Building Next.js..."
+          npm run build
+
+          echo "🗄️ Running Prisma..."
+          npx prisma generate
+          if [ -d prisma/migrations ] && find prisma/migrations -name migration.sql -print -quit | grep -q .; then
+            npx prisma migrate deploy
+          else
+            npx prisma db push
+          fi
+
+          echo "🚀 Restarting pm2..."
+          pm2 restart fremio-studio || pm2 start npm --name fremio-studio -- start
+          pm2 save
+
+          rm -f /tmp/studio-deploy.tar.gz
+          echo "✅ Deploy complete!"
+          ENDSSH
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa

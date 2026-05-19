@@ -10,6 +10,7 @@ declare global {
   interface Window {
     fremioBooth?: {
       getBridgeStatus?: () => Promise<unknown>;
+      restartBridge?: () => Promise<unknown>;
       agentStatus: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
       agentCapture: () => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
       agentPreview: () => Promise<{ ok: boolean; base64?: string; mimeType?: string; error?: string }>;
@@ -209,8 +210,8 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printI
       };
 
       const agentCandidates = [
-        "http://127.0.0.1:7432",
-        "http://localhost:7432",
+        "http://127.0.0.1:3002",
+        "http://localhost:3002",
         "http://127.0.0.1:3002",
         "http://localhost:3002",
       ];

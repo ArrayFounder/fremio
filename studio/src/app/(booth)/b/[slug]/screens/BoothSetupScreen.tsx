@@ -303,13 +303,18 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     setDslrPreviewError(null);
     setDslrPreviewFrameSrc(null);
     if (typeof window !== "undefined") {
-      sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + 1600));
+      // Clear any release delay so CameraScreen starts preview immediately.
+      // The agent keeps the preview bridge alive during the transition
+      // (STREAM_IDLE_GRACE_MS grace period), so CameraScreen reconnects
+      // to an already-running bridge with zero startup delay.
+      sessionStorage.removeItem("booth_dslr_stream_release_until");
     }
     if (dslrPreviewImgRef.current) {
       dslrPreviewImgRef.current.removeAttribute("src");
       dslrPreviewImgRef.current.src = "";
     }
-    await new Promise((resolve) => setTimeout(resolve, 1400));
+    // Brief yield so React can flush the state changes above before navigation.
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }, []);
 
   useEffect(() => {
@@ -547,7 +552,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               } : undefined),
             },
           };
-          setAgentBase("http://127.0.0.1:7432");
+          setAgentBase("http://127.0.0.1:3002");
         }
       }
 
@@ -578,7 +583,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
         if (!status && ipcRes.ok && ipcRes.payload) {
           status = ipcRes.payload as AgentStatusPayload;
-          setAgentBase("http://127.0.0.1:7432");
+          setAgentBase("http://127.0.0.1:3002");
         } else if (!ipcRes.ok) {
           lastError = new Error(ipcRes.error || "Agent status IPC gagal");
         }
@@ -589,16 +594,16 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
         const candidates = isHttps
           ? [
-              "https://localhost:7432",
-              "https://127.0.0.1:7432",
-              "http://localhost:7432",
-              "http://127.0.0.1:7432",
+              "https://localhost:3002",
+              "https://127.0.0.1:3002",
+              "http://localhost:3002",
+              "http://127.0.0.1:3002",
             ]
           : [
-              "http://localhost:7432",
-              "http://127.0.0.1:7432",
-              "https://localhost:7432",
-              "https://127.0.0.1:7432",
+              "http://localhost:3002",
+              "http://127.0.0.1:3002",
+              "https://localhost:3002",
+              "https://127.0.0.1:3002",
             ];
 
         for (const base of candidates) {
@@ -641,7 +646,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
         if (previewRes.ok && previewRes.base64) {
           status = buildCanonFallbackStatus(status);
-          setAgentBase("http://127.0.0.1:7432");
+          setAgentBase("http://127.0.0.1:3002");
         }
       }
 
@@ -651,7 +656,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
       if (!status && typeof window !== "undefined" && window.fremioBooth) {
         status = buildCanonFallbackStatus(null);
-        setAgentBase("http://127.0.0.1:7432");
+        setAgentBase("http://127.0.0.1:3002");
       }
 
       if (!status) {

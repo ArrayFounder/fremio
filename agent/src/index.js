@@ -101,23 +101,79 @@ app.use((req, _res, next) => {
 });
 
 /**
+ * GET /preview-stream
+ * MJPEG live-view stream — used as <img src> by the booth UI when the
+ * Electron IPC launcher is NOT running (standard agent exe mode).
+ *
+ * Uses the persistent `preview-stream` bridge process (one EDSDK session
+ * shared across all clients) instead of spawning a new process per frame.
+ * This removes the per-frame process-spawn overhead and achieves the
+ * maximum frame rate the camera hardware supports (~20–30 FPS on Canon DSLRs).
+ */
+app.get('/preview-stream', (req, res) => {
+  logger.debug('GET /preview-stream — new MJPEG client connected');
+
+  const boundary = 'fremioframe';
+  res.setHeader('Content-Type',  `multipart/x-mixed-replace; boundary=${boundary}`);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma',        'no-cache');
+  res.setHeader('Expires',       '0');
+
+  const writeFrame = (buffer) => {
+    if (!res.writable) return;
+    try {
+      res.write(`--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+      res.write(buffer);
+      res.write('\r\n');
+    } catch {
+      unsubscribe();
+    }
+  };
+
+  const onEnd = () => {
+    try { res.end(); } catch { /* ignore */ }
+  };
+
+  const unsubscribe = camera.subscribePreviewStream(writeFrame, onEnd);
+
+  req.on('close', () => {
+    logger.debug('GET /preview-stream — client disconnected');
+    unsubscribe();
+    try { res.end(); } catch { /* ignore */ }
+  });
+});
+
+/**
  * GET /preview
  * Return one DSLR preview frame (no shutter) for live-view polling.
  */
 app.get('/preview', async (_req, res) => {
   logger.debug('GET /preview — fetching DSLR live preview frame');
 
+  // Fast-path: refuse while a capture is in-flight to avoid USB conflicts.
+  if (camera.isCaptureInFlight()) {
+    return res.status(503).json({
+      ok:    false,
+      error: 'Capture sedang berjalan, preview tidak tersedia sementara.',
+      code:  'CAPTURE_IN_FLIGHT',
+      hint:  'Preview akan kembali otomatis setelah capture selesai.',
+    });
+  }
+
   let result;
   try {
     result = await camera.capturePreview();
   } catch (err) {
-    const statusCode = err && err.code === 'LIVE_VIEW_UNSUPPORTED' ? 409 : 500;
+    const isCaptureConflict = err && (err.code === 'CAPTURE_IN_FLIGHT');
+    const statusCode = isCaptureConflict ? 503 : (err && err.code === 'LIVE_VIEW_UNSUPPORTED' ? 409 : 500);
     logger.error('GET /preview error', { message: err.message });
     return res.status(statusCode).json({
       ok: false,
       error: err.message,
       code: err && err.code ? err.code : 'PREVIEW_ERROR',
-      hint: err && err.code === 'LIVE_VIEW_UNSUPPORTED'
+      hint: isCaptureConflict
+        ? 'Preview akan kembali otomatis setelah capture selesai.'
+        : err && err.code === 'LIVE_VIEW_UNSUPPORTED'
         ? 'Model kamera ini berjalan di mode capture-only. Tombol Ambil Foto tetap bisa dipakai.'
         : 'Pastikan kamera mendukung preview dan mode PTP/PC Remote aktif.',
     });
@@ -155,6 +211,17 @@ app.get('/status', async (_req, res) => {
       .then(({ cameraData, printerData }) => {
         statusCache = { ts: Date.now(), cameraData, printerData };
         return statusCache;
+      })
+      .catch((err) => {
+        // Prevent unhandled rejection from crashing the process.
+        logger.error('collectHardwareStatus failed', { message: err?.message });
+        const fallback = {
+          ts: Date.now(),
+          cameraData:  { available: false, cameras: [], error: err?.message },
+          printerData: { available: false, printers: [], error: err?.message },
+        };
+        statusCache = fallback;
+        return fallback;
       })
       .finally(() => {
         statusInFlight = null;
@@ -254,7 +321,7 @@ app.use((req, res) => {
   res.status(404).json({
     ok:    false,
     error: `Route tidak ditemukan: ${req.method} ${req.path}`,
-    routes: ['GET /status', 'GET /preview', 'POST /capture', 'POST /print'],
+    routes: ['GET /status', 'GET /preview', 'GET /preview-stream', 'POST /capture', 'POST /print'],
   });
 });
 
