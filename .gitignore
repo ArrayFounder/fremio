@@ -94,3 +94,5 @@ studio/public/downloads/*.zip
 # Next.js build cache
 studio/.next/cache/
 my-app/.next/cache/
+# Self-contained C# builds > 50MB
+studio/agent/native/edsdk-bridge/publish/sc-win-x64/

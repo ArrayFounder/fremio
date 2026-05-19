@@ -1126,11 +1126,13 @@ internal sealed class EdsdkSession : IDisposable
 
     private void SendTakePictureWithRetry()
     {
-        // Brief stabilisation pump before first attempt — camera must have fully exited
-        // EVF mode and applied SaveTo settings. Without this, TakePicture can return
-        // EdsErr_TakePictureNg on the first attempt, forcing slow retries.
-        PumpSdkEvents(1, 60); // OPTIMIZED: 60ms — reduced from 2×80=160ms
+        // Extended stabilisation before first TakePicture attempt.
+        // Canon 2000D/T7 needs more time after EVF disable + SaveTo switch
+        // to accept shutter commands. Without enough prep, first TakePicture
+        // returns 0x8D01 (StoreNotReady) and all 10 retries fail.
+        PumpSdkEvents(3, 80); // 240ms — doubled from 1×60=60ms
         NativeMethods.PumpWindowsMessages();
+        Thread.Sleep(150);
 
         uint lastErr = 0;
         for (var attempt = 1; attempt <= 10; attempt++)
@@ -1148,9 +1150,9 @@ internal sealed class EdsdkSession : IDisposable
             // Do NOT call TryDisableEvf() here — EVF is already disabled. Calling it again
             // adds up to 2-3 seconds per retry (6×220ms × 2 props = ~2640ms worst case),
             // which causes the 30-second browser timeout when multiple retries are needed.
-            PumpSdkEvents(2, 80); // OPTIMIZED: 160ms — reduced from 3×100=300ms
+            PumpSdkEvents(3, 80); // 240ms — increased from 2×80=160ms for 0x8D01 recovery
             NativeMethods.PumpWindowsMessages();
-            Thread.Sleep(150); // OPTIMIZED: reduced from 200ms
+            Thread.Sleep(300); // doubled from 150ms — more time for card to finish writing
         }
 
         Check(lastErr, "Gagal trigger shutter Canon");
