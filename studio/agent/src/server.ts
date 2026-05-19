@@ -26,7 +26,7 @@ import { promisify } from "util";
 const execAsync = promisify(exec);
 
 const PORT    = Number(process.env.AGENT_PORT ?? 3002);
-const VERSION = "1.0.12";
+const VERSION = "1.0.13";
 
 // ── App setup ────────────────────────────────────────────────────────────────
 

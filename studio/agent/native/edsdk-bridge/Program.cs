@@ -1101,10 +1101,10 @@ internal sealed class EdsdkSession : IDisposable
     }
 
     /// <summary>
-    /// Scans rawData for embedded JPEG streams (SOI=FF D8 FF ... EOI=FF D9) and returns
-    /// the largest one found. Canon CR2/CR3 RAW files always contain at least one embedded
-    /// JPEG preview (typically the full-size or near-full-size processed image).
-    /// Returns null if no valid JPEG is found.
+    /// Scans rawData for embedded JPEG streams and returns the largest valid one.
+    /// Uses proper JPEG marker walking (reads segment lengths and handles byte stuffing)
+    /// to avoid false positives from accidental FF D9 sequences in RAW image data.
+    /// Canon CR2/CR3 RAW files always contain at least one embedded JPEG preview.
     /// </summary>
     private static byte[]? TryExtractEmbeddedJpeg(byte[] rawData)
     {
@@ -1113,26 +1113,90 @@ internal sealed class EdsdkSession : IDisposable
 
         for (int i = 0; i < rawData.Length - 3; i++)
         {
+            // SOI must be FF D8, and the next byte must be FF (start of first segment marker)
             if (rawData[i] != 0xFF || rawData[i + 1] != 0xD8 || rawData[i + 2] != 0xFF)
                 continue;
 
-            // Scan forward for JPEG EOI marker (FF D9)
-            for (int j = i + 4; j < rawData.Length - 1; j++)
+            // Validate: byte after FF must be a real APP/DQT/SOF-class marker
+            // (0xE0–0xEF = APPn, 0xDB = DQT, 0xC0–0xCF = SOF, 0xFE = COM)
+            byte firstMarker = rawData[i + 3];
+            if (!((firstMarker >= 0xE0 && firstMarker <= 0xEF) ||
+                  firstMarker == 0xDB || firstMarker == 0xFE ||
+                  (firstMarker >= 0xC0 && firstMarker <= 0xCF && firstMarker != 0xC4 && firstMarker != 0xC8)))
+                continue;
+
+            int end = FindJpegEnd(rawData, i);
+            if (end <= 0) continue;
+
+            int len = end - i;
+            if (len < 100_000) continue; // Must be at least 100 KB to be a real photo
+
+            if (len > bestLen)
             {
-                if (rawData[j] == 0xFF && rawData[j + 1] == 0xD9)
-                {
-                    int len = j + 2 - i;
-                    if (len > bestLen)
-                    {
-                        bestLen = len;
-                        best = new byte[len];
-                        Buffer.BlockCopy(rawData, i, best, 0, len);
-                    }
-                    break; // found EOI for this JPEG, look for next SOI
-                }
+                bestLen = len;
+                best = new byte[len];
+                Buffer.BlockCopy(rawData, i, best, 0, len);
             }
         }
         return best;
+    }
+
+    /// <summary>
+    /// Walks JPEG markers starting at 'start' (must point to SOI = FF D8) to find the
+    /// real EOI marker, honouring segment lengths and byte stuffing in entropy data.
+    /// Returns the index AFTER the EOI byte, or -1 if no valid JPEG is found.
+    /// </summary>
+    private static int FindJpegEnd(byte[] data, int start)
+    {
+        if (start + 2 >= data.Length) return -1;
+        if (data[start] != 0xFF || data[start + 1] != 0xD8) return -1;
+
+        int pos = start + 2; // skip SOI
+
+        while (pos + 1 < data.Length)
+        {
+            if (data[pos] != 0xFF) return -1; // lost marker sync
+
+            // Skip padding 0xFF bytes
+            while (pos < data.Length && data[pos] == 0xFF) pos++;
+            if (pos >= data.Length) return -1;
+
+            byte marker = data[pos++];
+
+            if (marker == 0xD9) return pos; // EOI — done
+            if (marker == 0xD8) continue;   // embedded SOI — skip
+            if (marker == 0x01) continue;   // TEM standalone
+
+            // RST0–RST7 (0xD0–0xD7): standalone, no length field
+            if (marker >= 0xD0 && marker <= 0xD7) continue;
+
+            // All other markers: 2-byte big-endian segment length (includes the 2 length bytes)
+            if (pos + 1 >= data.Length) return -1;
+            int segLen = (data[pos] << 8) | data[pos + 1];
+            if (segLen < 2 || pos + segLen > data.Length) return -1;
+            pos += segLen;
+
+            if (marker == 0xDA) // SOS: entropy-coded data follows the header
+            {
+                // Scan through entropy data respecting byte stuffing (FF 00)
+                while (pos + 1 < data.Length)
+                {
+                    if (data[pos] == 0xFF)
+                    {
+                        byte next = data[pos + 1];
+                        if (next == 0xD9) return pos + 2;           // EOI
+                        if (next == 0x00) { pos += 2; continue; }   // stuffed byte
+                        if (next >= 0xD0 && next <= 0xD7) { pos += 2; continue; } // RST
+                        if (next == 0xFF) { pos++; continue; }       // padding
+                        // Another segment marker (next SOS for progressive, etc.)
+                        break; // re-enter outer loop to process it
+                    }
+                    pos++;
+                }
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>
