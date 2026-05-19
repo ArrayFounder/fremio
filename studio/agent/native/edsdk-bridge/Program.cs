@@ -209,6 +209,10 @@ internal sealed class EdsdkSession : IDisposable
     private const uint PropID_ProductName = 0x00000002;
     private const uint PropID_SaveTo = 0x0000000B;
     private const uint SaveTo_Host = 2;
+    private const uint PropID_ImageQuality = 0x00000102;
+    // Large Fine JPEG (kEdsImageQuality_LJF). Forces JPEG output regardless of camera dial setting.
+    // This ensures photobox always receives a JPEG even if camera is set to RAW or RAW+JPEG.
+    private const uint ImageQuality_LargeJpegFine = 0x00640f0f;
     private const uint EdsErr_DeviceBusy = 0x00000081;
     private const uint EdsErr_TakePictureNg = 0x00008D07;
     private const uint EdsErr_ObjectNotReady = 0x0000A102;
@@ -470,6 +474,10 @@ internal sealed class EdsdkSession : IDisposable
             Console.Error.WriteLine($"[bridge] SaveTo_Host retry result: 0x{saveToErr:X8}");
         }
 
+        // Force Large Fine JPEG image quality so camera always sends JPEG to PC,
+        // regardless of whether user set RAW or RAW+JPEG on the camera dial.
+        ForceJpegImageQuality("[bridge]");
+
         var capacity = new Edsdk.EdsCapacity
         {
             NumberOfFreeClusters = int.MaxValue,
@@ -675,6 +683,9 @@ internal sealed class EdsdkSession : IDisposable
             saveToErr = Edsdk.EdsSetPropertyData(_cameraRef, PropID_SaveTo, 0, Marshal.SizeOf<uint>(), ref saveTo);
             Console.Error.WriteLine($"[bridge-armed] SaveTo_Host retry: 0x{saveToErr:X8}");
         }
+
+        // Force Large Fine JPEG so camera always sends JPEG regardless of dial setting (RAW/RAW+JPEG).
+        ForceJpegImageQuality("[bridge-armed]");
 
         var capacity = new Edsdk.EdsCapacity
         {
@@ -1067,6 +1078,28 @@ internal sealed class EdsdkSession : IDisposable
             && bytes[1] == 0xD8
             && bytes[2] == 0xFF;
     }
+
+    /// <summary>
+    /// Forces camera image quality to Large Fine JPEG so we always receive a JPEG file,
+    /// regardless of whether the operator has the camera dial set to RAW or RAW+JPEG.
+    /// Logs the result but never throws — if the set fails, we still attempt the capture.
+    /// </summary>
+    private void ForceJpegImageQuality(string logPrefix)
+    {
+        var quality = ImageQuality_LargeJpegFine;
+        var err = Edsdk.EdsSetPropertyData(_cameraRef, PropID_ImageQuality, 0, Marshal.SizeOf<uint>(), ref quality);
+        if (err == 0)
+        {
+            Console.Error.WriteLine($"{logPrefix} ImageQuality forced to LargeJpegFine: OK");
+        }
+        else
+        {
+            // Non-fatal: log and continue. Camera may already be in JPEG mode,
+            // or the model may not support runtime quality change.
+            Console.Error.WriteLine($"{logPrefix} ImageQuality force warning: 0x{err:X8} (non-fatal)");
+        }
+    }
+
 
     private static bool IsLikelyJpegFileName(string fileName)
     {
