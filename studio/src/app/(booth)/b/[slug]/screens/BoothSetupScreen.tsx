@@ -491,7 +491,6 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     if (agentCheckInFlightRef.current) return;
 
     setAgentChecking(true);
-    const debugLog = (msg: string) => console.log(`[BoothSetup checkAgent] ${msg}`);
 
     const run = async () => {
       let status: AgentStatusPayload | null = null;
@@ -593,27 +592,28 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       // ── 2. Fallback: direct HTTP fetch ──
       if (!status) {
         const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
-        // Agent runs on https://127.0.0.1:3002 (Windows HTTPS, self-signed cert)
-        // Browser HTTPS page can reach https://127.0.0.1 but NOT http://127.0.0.1
-        const candidates = [
-          "https://127.0.0.1:3002",
-          "https://localhost:3002",
-          "http://127.0.0.1:3002",
-          "http://localhost:3002",
-        ];
+        const candidates = isHttps
+          ? [
+              "https://localhost:3002",
+              "https://127.0.0.1:3002",
+              "http://localhost:3002",
+              "http://127.0.0.1:3002",
+            ]
+          : [
+              "http://localhost:3002",
+              "http://127.0.0.1:3002",
+              "https://localhost:3002",
+              "https://127.0.0.1:3002",
+            ];
 
         for (const base of candidates) {
           try {
-            debugLog(`Trying: ${base}/status`);
             const res = await fetch(`${base}/status`, { signal: AbortSignal.timeout(9000) });
             if (!res.ok) throw new Error(`status ${res.status}`);
-            const data = await res.json() as AgentStatusPayload;
-            debugLog(`Got response from ${base}: camera=${JSON.stringify(data.camera?.cameras ?? data.camera?.devices ?? [])}`);
-            status = data;
+            status = await res.json() as AgentStatusPayload;
             setAgentBase(base);
             break;
           } catch (error) {
-            debugLog(`Failed ${base}: ${error instanceof Error ? error.message : String(error)}`);
             lastError = error;
           }
         }
@@ -709,23 +709,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     }
   }, [captureSource, printerName]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    // ── Init phase: retry checkAgent for a few seconds in case agent takes time to start
-    let initRetries = 0;
-    const MAX_INIT_RETRIES = 8;
-    const INIT_RETRY_INTERVAL_MS = 2000;
-    const initInterval = setInterval(() => {
-      if (agentOnline) { clearInterval(initInterval); return; }
-      if (agentCheckInFlightRef.current) return;
-      initRetries++;
-      void checkAgent().then(() => {
-        if (agentOnline) clearInterval(initInterval);
-        else if (initRetries >= MAX_INIT_RETRIES) clearInterval(initInterval);
-      });
-    }, INIT_RETRY_INTERVAL_MS);
-
-    return () => clearInterval(initInterval);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { checkAgent(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (isTabletMode) return;
