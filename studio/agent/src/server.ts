@@ -1497,18 +1497,20 @@ TqbbwuTRFiZzBCbQKR34tPM=
 -----END PRIVATE KEY-----`;
 
 // ── Start ────────────────────────────────────────────────────────────────────
-// Windows  → HTTP  (Chrome/Edge treat http://127.0.0.1 as secure context)
-// macOS    → HTTPS (Safari requires HTTPS even for loopback; cert must be trusted once)
+// HTTPS everywhere: Chrome/Edge/Safari treat http://127.0.0.1 as a secure context
+// BUT only on macOS. On Windows, https://localhost still triggers cert errors.
+// We serve HTTPS on both platforms. On macOS the cert must be trusted once;
+// on Windows the user gets a cert warning (they can proceed to accept it once).
 
-const proto = isMac ? "https" : "http";
+const useHttps = true; // Always HTTPS for studio.fremio.id (remote HTTPS page) compatibility
 
-const server = isMac
+const server = useHttps
   ? https.createServer({ cert: TLS_CERT, key: TLS_KEY }, app)
   : http.createServer(app);
 
 server.on("error", (error: NodeJS.ErrnoException) => {
   if (error.code === "EADDRINUSE") {
-    console.error(`[agent] Port ${PORT} sudah dipakai. Agent lain kemungkinan masih berjalan di ${proto}://127.0.0.1:${PORT}.`);
+    console.error(`[agent] Port ${PORT} sudah dipakai. Agent lain kemungkinan masih berjalan di https://127.0.0.1:${PORT}.`);
     process.exit(0);
   }
   console.error(`[agent] Gagal menjalankan server: ${error.message}`);
@@ -1518,25 +1520,20 @@ server.on("error", (error: NodeJS.ErrnoException) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`╔══════════════════════════════════════╗`);
   console.log(`║  Fremio Studio Agent v${VERSION}       ║`);
-  console.log(`║  ${proto}://127.0.0.1:${PORT}             ║`);
+  console.log(`║  https://127.0.0.1:${PORT}            ║`);
   console.log(`║  Platform: ${process.platform.padEnd(26)}║`);
   console.log(`╚══════════════════════════════════════╝`);
 
-  // macOS: write cert and show one-time install command
-  if (isMac) {
+  // Windows: show self-signed cert warning so user knows to accept browser cert
+  if (isWin) {
     const certPath = path.join(os.homedir(), "Downloads", "fremio-cert.pem");
     try {
       fs.writeFileSync(certPath, TLS_CERT, { mode: 0o644 });
       console.log(``);
       console.log(`╔══════════════════════════════════════════════════════════════╗`);
-      console.log(`║  PERLU DILAKUKAN SEKALI: install sertifikat HTTPS agent      ║`);
-      console.log(`║  Salin dan jalankan perintah di bawah di Terminal:           ║`);
-      console.log(`║                                                              ║`);
-      console.log(`║  sudo security add-trusted-cert -d -r trustRoot \\           ║`);
-      console.log(`║    -k /Library/Keychains/System.keychain \\                  ║`);
-      console.log(`║    ~/Downloads/fremio-cert.pem                               ║`);
-      console.log(`║                                                              ║`);
-      console.log(`║  Lalu restart browser, dan buka booth kembali.              ║`);
+      console.log(`║  Windows: Terima certificate sekali saat Chrome tampilkan     ║`);
+      console.log(`║  warning "Your connection is not private".                     ║`);
+      console.log(`║  Klik "Lanjut" / "Advanced" > "Proceed to 127.0.0.1".         ║`);
       console.log(`╚══════════════════════════════════════════════════════════════╝`);
       console.log(``);
     } catch { /* ignore */ }
