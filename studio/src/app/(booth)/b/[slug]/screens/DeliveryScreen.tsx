@@ -210,8 +210,8 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printI
       };
 
       const agentCandidates = [
-        "http://127.0.0.1:7432",
-        "http://localhost:7432",
+        "http://127.0.0.1:3002",
+        "http://localhost:3002",
         "http://127.0.0.1:3002",
         "http://localhost:3002",
       ];

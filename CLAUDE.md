@@ -35,7 +35,7 @@ fremio/
 │
 ├── studio/agent/        # ✅ AKTIF — TypeScript/EDSDK agent (yang dipakai Electron)
 │   ├── src/
-│   │   ├── server.ts    # HTTP server + MJPEG stream (port 7432)
+│   │   ├── server.ts    # HTTP server + MJPEG stream (port 3002)
 │   │   └── ...
 │   └── native/
 │       └── edsdk-bridge/  # C# .NET 8 wrapper untuk Canon EDSDK SDK
@@ -84,7 +84,7 @@ npm run backup           # Backup database
 
 ### Local Agent (Canon EDSDK — Active)
 cd studio/agent
-npm start                # Start agent (port 7432, TypeScript + C# EDSDK bridge)
+npm start                # Start agent (port 3002, TypeScript + C# EDSDK bridge)
 
 # ⚠️ JANGAN jalankan `cd agent && npm start` — itu legacy gphoto2, tidak dipakai
 
@@ -128,7 +128,7 @@ npm start                # Start agent (port 7432, TypeScript + C# EDSDK bridge)
 | studio/src/app/(dashboard)/agent/page.tsx | Agent download page at /agent |
 | studio/src/app/(booth)/b/[slug]/screens/BoothSetupScreen.tsx | Hardware setup before booth session |
 | studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx | Booth camera + countdown UI |
-| studio/agent/src/server.ts | ✅ AKTIF — Agent TypeScript/EDSDK (port 7432), MJPEG `/preview-stream` |
+| studio/agent/src/server.ts | ✅ AKTIF — Agent TypeScript/EDSDK (port 3002), MJPEG `/preview-stream` |
 | studio/agent/native/edsdk-bridge/Program.cs | C# wrapper Canon EDSDK — `EnsureCameraReady()`, retry logic |
 | agent/src/camera.js | ⚠️ LEGACY gphoto2 — TIDAK DIGUNAKAN, jangan edit |
 | agent/src/index.js | ⚠️ LEGACY agent Express — TIDAK DIGUNAKAN |
@@ -158,10 +158,10 @@ Agent aktif dikompilasi menjadi `fremio-agent-win.exe` (TypeScript + C# EDSDK br
 ```
 Electron App
   └── studio/booth-windows-app/main.js
-        ├── Spawn: studio/agent/ (TypeScript server, port 7432)
+        ├── Spawn: studio/agent/ (TypeScript server, port 3002)
         │     └── spawn: studio/agent/native/edsdk-bridge/Program.cs (C# .NET 8)
         │           └── Canon EDSDK SDK (DLL) → Camera via USB
-        └── Protocol: fremio-agent://local/* → http://127.0.0.1:7432/*
+        └── Protocol: fremio-agent://local/* → http://127.0.0.1:3002/*
 ```
 
 ### Key Agent Files
@@ -206,7 +206,7 @@ Electron App
 
 ### Known Working Parameters
 
-- Agent port: `AGENT_PORT = BRIDGE_PORT = 7432`
+- Agent port: `AGENT_PORT = BRIDGE_PORT = 3002`
 - `/preview-stream` → valid MJPEG stream
 - Grace period error: `DSLR_PREVIEW_ERROR_GRACE_MS = 7000ms` (di `CameraScreen.tsx`)
 - IPC fallback timer: `ipcFallbackTimer = 10000ms`
@@ -317,7 +317,7 @@ Setelah edit: `nginx -t && nginx -s reload`
 - The agent runs on the **operator's local machine** (booth computer), NOT on the VPS
 - Active agent: `studio/agent/` (TypeScript) — dikompilasi jadi `fremio-agent-win.exe`
 - Legacy agent: `agent/` (gphoto2) — TIDAK dipakai, jangan diedit
-- Exposes HTTP on port 7432, protocol handler: `fremio-agent://local/*` → `http://127.0.0.1:7432/*`
+- Exposes HTTP on port 3002, protocol handler: `fremio-agent://local/*` → `http://127.0.0.1:3002/*`
 - GitHub deploys do NOT update the local agent — operators must update manually
 
 ---

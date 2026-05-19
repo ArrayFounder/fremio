@@ -1004,7 +1004,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             if (data.camera?.available) {
               const capabilities = data.camera.capabilities;
               useIpcAgentRef.current = true;
-              setAgentBase("http://127.0.0.1:7432");
+              setAgentBase("http://127.0.0.1:3002");
               setDslrAvailable(true);
               setDslrModel(data.camera.cameras?.[0]?.model ?? "DSLR");
               setDslrSupportsCapture(capabilities?.supportsCapture !== false);
@@ -1023,20 +1023,20 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       const isHttps = window.location.protocol === "https:";
       const candidates = isHttps
         ? [
-            "https://localhost:7432",
-            "https://127.0.0.1:7432",
             "https://localhost:3002",
             "https://127.0.0.1:3002",
-            "http://localhost:7432",
-            "http://127.0.0.1:7432",
+            "https://localhost:3002",
+            "https://127.0.0.1:3002",
+            "http://localhost:3002",
+            "http://127.0.0.1:3002",
             "http://localhost:3002",
             "http://127.0.0.1:3002",
           ]
         : [
-            "http://localhost:7432",
-            "http://127.0.0.1:7432",
-            "https://localhost:7432",
-            "https://127.0.0.1:7432",
+            "http://localhost:3002",
+            "http://127.0.0.1:3002",
+            "https://localhost:3002",
+            "https://127.0.0.1:3002",
             "http://localhost:3002",
             "http://127.0.0.1:3002",
             "https://localhost:3002",
