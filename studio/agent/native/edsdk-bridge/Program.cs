@@ -263,9 +263,15 @@ internal sealed class EdsdkSession : IDisposable
 
     public IReadOnlyList<CameraInfo> ListCameras()
     {
-        for (var attempt = 0; attempt < 6; attempt++)
+        // Up to 8 attempts × (480ms pump + 600ms sleep) ≈ 8.6s — handles slow USB enum on fresh machines
+        for (var attempt = 0; attempt < 8; attempt++)
         {
-            PumpSdkEvents(4, 120);
+            // First attempt: quick check (camera usually already enumerated by OS).
+            // Subsequent attempts: longer pump to allow USB re-enumeration.
+            if (attempt == 0)
+                PumpSdkEvents(2, 80);
+            else
+                PumpSdkEvents(4, 120);
 
             var listRef = IntPtr.Zero;
             var result = new List<CameraInfo>();
@@ -289,7 +295,7 @@ internal sealed class EdsdkSession : IDisposable
                     }
                 }
 
-                if (result.Count > 0 || attempt == 5)
+                if (result.Count > 0 || attempt == 7)
                 {
                     return result;
                 }
@@ -299,7 +305,7 @@ internal sealed class EdsdkSession : IDisposable
                 if (listRef != IntPtr.Zero) Edsdk.EdsRelease(listRef);
             }
 
-            Thread.Sleep(500);
+            Thread.Sleep(600);
         }
 
         return Array.Empty<CameraInfo>();

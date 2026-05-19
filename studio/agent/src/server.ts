@@ -26,7 +26,7 @@ import { promisify } from "util";
 const execAsync = promisify(exec);
 
 const PORT    = Number(process.env.AGENT_PORT ?? 3002);
-const VERSION = "1.0.13";
+const VERSION = "1.0.14";
 
 // ── App setup ────────────────────────────────────────────────────────────────
 
@@ -716,12 +716,26 @@ async function detectCameras(): Promise<CameraStatusResult> {
   try {
     const bridgePath = resolveEdsdkBridgePath();
     const statusArgs = parseBridgeArgs(process.env.EDSDK_BRIDGE_STATUS_ARGS, "status --json");
-    const { stdout } = await execBridgeBuffer(bridgePath, statusArgs, 8000);
+    const { stdout, stderr } = await execBridgeBuffer(bridgePath, statusArgs, 12000);
+
+    // Always surface bridge diagnostic output to console so operator can see it
+    if (stderr.trim()) {
+      stderr.trim().split(/\r?\n/).forEach((line) => {
+        if (line.trim()) console.log(`[camera-detect] ${line.trim()}`);
+      });
+    }
+
     const payload = JSON.parse(stdout.toString("utf8")) as BridgeStatusPayload;
 
     const cameras = Array.isArray(payload.cameras)
       ? payload.cameras.map((c) => ({ model: String(c.model || "Canon"), port: String(c.port || "") }))
       : [];
+
+    if (cameras.length > 0) {
+      console.log(`[agent] Kamera Canon terdeteksi: ${cameras.map((c) => c.model).join(", ")}`);
+    } else {
+      console.warn(`[agent] Kamera Canon tidak terdeteksi. ${payload.error ?? "Cek koneksi USB dan mode kamera."}`);
+    }
 
     return {
       available: cameras.length > 0,
@@ -732,12 +746,14 @@ async function detectCameras(): Promise<CameraStatusResult> {
       capabilities: payload.capabilities,
     };
   } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[agent] detectCameras error: ${msg}`);
     return {
       available: false,
       count: 0,
       devices: [],
       type: "none",
-      error: error instanceof Error ? error.message : String(error),
+      error: msg,
     };
   }
 }
