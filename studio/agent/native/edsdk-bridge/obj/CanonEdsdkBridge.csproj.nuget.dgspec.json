@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj": {}
+    "C:\\Users\\A.r.r.a.y.19\\fremio.worktrees\\agents-fix-canon-camera-capture-errors\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj": {}
   },
   "projects": {
-    "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj": {
+    "C:\\Users\\A.r.r.a.y.19\\fremio.worktrees\\agents-fix-canon-camera-capture-errors\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
+        "projectUniqueName": "C:\\Users\\A.r.r.a.y.19\\fremio.worktrees\\agents-fix-canon-camera-capture-errors\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
         "projectName": "edsdk-bridge-native",
-        "projectPath": "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
+        "projectPath": "C:\\Users\\A.r.r.a.y.19\\fremio.worktrees\\agents-fix-canon-camera-capture-errors\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
         "packagesPath": "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\obj\\",
+        "outputPath": "C:\\Users\\A.r.r.a.y.19\\fremio.worktrees\\agents-fix-canon-camera-capture-errors\\studio\\agent\\native\\edsdk-bridge\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\A.r.r.a.y.19\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -42,14 +42,6 @@
       "frameworks": {
         "net8.0": {
           "targetAlias": "net8.0",
-          "dependencies": {
-            "Microsoft.NET.ILLink.Tasks": {
-              "suppressParent": "All",
-              "target": "Package",
-              "version": "[8.0.27, )",
-              "autoReferenced": true
-            }
-          },
           "imports": [
             "net461",
             "net462",
@@ -61,20 +53,6 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.27, 8.0.27]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.27, 8.0.27]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.27, 8.0.27]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
