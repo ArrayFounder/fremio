@@ -1,0 +1,2 @@
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/publish/sc-win-x64/edsdk-bridge-native.pdb
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/publish/sc-win-x64/edsdk-bridge-native.exe

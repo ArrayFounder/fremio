@@ -821,6 +821,12 @@ internal sealed class EdsdkSession : IDisposable
         staleCutoffUtc = DateTime.UtcNow.AddSeconds(-2);
         Console.Error.WriteLine("[bridge-armed] SHOOT received — firing TakePicture");
 
+        // Extra stabilisation after EVF disable: some Canon models (especially 2000D / T7)
+        // need 200–300ms before TakePicture is accepted after switching SaveTo to Host.
+        // Without this, the first TakePicture can return 0x8D01 (StoreNotReady).
+        PumpSdkEvents(2, 80);
+        Thread.Sleep(200);
+
         try
         {
             SendTakePictureWithRetry();
@@ -1048,7 +1054,10 @@ internal sealed class EdsdkSession : IDisposable
 
     private static bool IsRetryableShutterError(uint err)
     {
-        return err == EdsErr_DeviceBusy || err == EdsErr_TakePictureNg;
+        // 0x8D01 = PTP_RC_StoreNotReady — card masih menulis, retry
+        // 0x8D07 = PTP_RC_GeneralError — retryable
+        // 0x81   = DeviceBusy — sedang sibuk, retry
+        return err == EdsErr_DeviceBusy || err == EdsErr_TakePictureNg || err == 0x00008D01;
     }
 
     private static bool IsLikelyJpeg(byte[] bytes)

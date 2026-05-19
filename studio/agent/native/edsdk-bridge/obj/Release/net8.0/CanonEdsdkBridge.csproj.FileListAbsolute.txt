@@ -1,15 +1,30 @@
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\edsdk-bridge-native.exe
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\edsdk-bridge-native.deps.json
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\edsdk-bridge-native.runtimeconfig.json
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\edsdk-bridge-native.dll
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\edsdk-bridge-native.pdb
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEdsdkBridge.GeneratedMSBuildEditorConfig.editorconfig
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEdsdkBridge.AssemblyInfoInputs.cache
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEdsdkBridge.AssemblyInfo.cs
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEdsdkBridge.csproj.CoreCompileInputs.cache
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEdsdkBridge.sourcelink.json
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\edsdk-bridge-native.dll
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\refint\edsdk-bridge-native.dll
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\edsdk-bridge-native.pdb
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEdsdkBridge.genruntimeconfig.cache
-c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\ref\edsdk-bridge-native.dll
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/bin/Release/net8.0/edsdk-bridge-native.exe
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/bin/Release/net8.0/edsdk-bridge-native.deps.json
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/bin/Release/net8.0/edsdk-bridge-native.runtimeconfig.json
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/bin/Release/net8.0/edsdk-bridge-native.dll
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/bin/Release/net8.0/edsdk-bridge-native.pdb
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.GeneratedMSBuildEditorConfig.editorconfig
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.AssemblyInfoInputs.cache
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.AssemblyInfo.cs
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.csproj.CoreCompileInputs.cache
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.sourcelink.json
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/edsdk-bridge-native.dll
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/refint/edsdk-bridge-native.dll
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/edsdk-bridge-native.pdb
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.genruntimeconfig.cache
+c:/Users/A.r.r.a.y.19/fremio/studio/agent/native/edsdk-bridge/obj/Release/net8.0/ref/edsdk-bridge-native.dll
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/publish/win-x64/edsdk-bridge-native
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/publish/win-x64/edsdk-bridge-native.deps.json
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/publish/win-x64/edsdk-bridge-native.runtimeconfig.json
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/publish/win-x64/edsdk-bridge-native.dll
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/publish/win-x64/edsdk-bridge-native.pdb
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.GeneratedMSBuildEditorConfig.editorconfig
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.AssemblyInfoInputs.cache
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.AssemblyInfo.cs
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.csproj.CoreCompileInputs.cache
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.sourcelink.json
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/edsdk-bridge-native.dll
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/refint/edsdk-bridge-native.dll
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/edsdk-bridge-native.pdb
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/CanonEdsdkBridge.genruntimeconfig.cache
+/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/Release/net8.0/ref/edsdk-bridge-native.dll
