@@ -709,7 +709,23 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     }
   }, [captureSource, printerName]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { checkAgent(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    // ── Init phase: retry checkAgent for a few seconds in case agent takes time to start
+    let initRetries = 0;
+    const MAX_INIT_RETRIES = 8;
+    const INIT_RETRY_INTERVAL_MS = 2000;
+    const initInterval = setInterval(() => {
+      if (agentOnline === true) { clearInterval(initInterval); return; }
+      if (agentCheckInFlightRef.current) return;
+      initRetries++;
+      void checkAgent().then(() => {
+        if (agentOnline === true) clearInterval(initInterval);
+        else if (initRetries >= MAX_INIT_RETRIES) clearInterval(initInterval);
+      });
+    }, INIT_RETRY_INTERVAL_MS);
+
+    return () => clearInterval(initInterval);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (isTabletMode) return;
