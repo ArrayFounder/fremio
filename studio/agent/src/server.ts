@@ -70,9 +70,17 @@ let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped
 let captureInProgress = false; // Prevent preview auto-restart during capture
 let captureHandlerInFlight = false; // Prevent duplicate /capture calls (separate from captureInProgress)
 let shootFiredAt = 0; // Timestamp when SHOOT was sent — allows immediate preview restart
-/** Pending capture responses keyed by a session ID */
+/**
+ * Pending capture responses keyed by a session ID.
+ * @deprecated — replaced by streamingJPEG mechanism.
+ */
 const pendingCaptures = new Map<string, { res: Response; wantsBinary: boolean }>();
-let shootFiredAt = 0; // Timestamp when SHOOT was sent — allows immediate preview restart
+/**
+ * For streaming JPEG delivery: the Response object of the in-flight /capture call.
+ * shootFn writes JPEG directly to this response after SHOOT fires.
+ * CameraScreen reads JPEG directly from the streaming response — no file polling.
+ */
+let pendingCaptureResponse: Response | null = null;
 
 interface ArmedCaptureState {
   outputPath: string;
@@ -1117,45 +1125,26 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     console.log(`[agent] Armed bridge exited code=${code}`);
     if (!bridgeReady) readyReject!(new Error(`Armed bridge exited before BRIDGE_READY (code ${code})`));
 
-    // Deliver pending capture result if this bridge had one in flight.
-    const pending = pendingCaptures.get("current");
-    pendingCaptures.delete("current");
-
     if (code === 0) {
       completionResolve!(tmpFile);
-      // Serve the captured image to the pending response.
-      if (pending) {
-        try {
-          const buf = fs.readFileSync(tmpFile);
-          console.log(`[agent] Delivering pending capture: ${buf.length} bytes`);
-          pending.res.setHeader("Content-Type", "image/jpeg");
-          pending.res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-          pending.res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
-        } catch (err) {
-          console.error("[agent] Pending capture delivery error:", err);
-          pending.res.status(500).json({ ok: false, error: "Capture berhasil tapi gagal kirim hasil" });
-        } finally {
-          try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
-          captureHandlerInFlight = false;
-          captureInProgress = false;
-          previewPreStoppedAt = 0;
-          if (hadPreviewSession) {
-            setTimeout(() => {
-              try {
-                startSharedPreviewProcess();
-                void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(1000)).catch(() => scheduleSharedPreviewStop(800));
-              } catch { /* ignore */ }
-            }, 30);
-          }
-        }
+      // Camera is now free after bridge exits.
+      // Restart preview if we had one before pre-arm stopped it.
+      if (hadPreviewSession) {
+        setTimeout(() => {
+          try {
+            startSharedPreviewProcess();
+            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(1000)).catch(() => scheduleSharedPreviewStop(800));
+          } catch { /* ignore */ }
+        }, 30);
       }
     } else {
       completionReject!(new Error(`Armed bridge exited with code ${code}`));
-      if (pending) {
-        pending.res.status(500).json({ ok: false, error: `Bridge error (code ${code})` });
-        captureHandlerInFlight = false;
-        captureInProgress = false;
-        previewPreStoppedAt = 0;
+      if (hadPreviewSession) {
+        setTimeout(() => {
+          try {
+            startSharedPreviewProcess();
+          } catch { /* ignore */ }
+        }, 30);
       }
     }
     if (armedCapture?.process === armedProcess) armedCapture = null;
@@ -1175,6 +1164,20 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
       console.log(`[agent] Sending SHOOT to armed bridge`);
       armedProcess.stdin?.write("SHOOT\n");
       shootFiredAt = Date.now();
+
+      // Restart preview IMMEDIATELY after SHOOT — camera is about to
+      // finish its shot, we don't need to wait for download to resume live view.
+      // The bridge keeps camera USB busy until it exits; startSharedPreviewProcess
+      // is blocked by captureInProgress guard, so no race on the camera.
+      if (hadPreviewSession) {
+        setTimeout(() => {
+          captureInProgress = false;
+          try {
+            startSharedPreviewProcess();
+            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(1000)).catch(() => scheduleSharedPreviewStop(800));
+          } catch { /* ignore */ }
+        }, 30);
+      }
     },
     completionPromise,
   };
@@ -1244,14 +1247,26 @@ app.post("/capture", async (req: Request, res: Response) => {
       console.log(`[agent] /capture: BRIDGE_READY confirmed, sending SHOOT at ${Date.now()-t0}ms`);
       armed.shootFn();
 
-      // Register this response to be delivered when download completes.
-      // The bridge keeps the camera busy; preview auto-restarts via its own logic after SHOOT.
-      const captureRes = res;
-      pendingCaptures.set("current", { res: captureRes, wantsBinary });
+      // Wait for bridge to download the JPEG file and exit.
+      // The bridge holds camera USB during download; preview auto-restarts
+      // in the 'exit' handler below (camera becomes free after bridge exits).
+      const outputPath = await armed.completionPromise;
 
-      // Return immediately so CameraScreen can resume live preview ASAP.
-      // Download happens in background; result delivered via stored response.
-      captureRes.json({ ok: true, pending: true });
+      if (!fs.existsSync(outputPath)) {
+        res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
+        return;
+      }
+
+      const buf = fs.readFileSync(outputPath);
+      console.log(`[agent] /capture: armed path done in ${Date.now()-t0}ms, ${buf.length} bytes`);
+
+      if (wantsBinary) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.send(buf);
+      } else {
+        res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
+      }
     } catch (err: any) {
       captureHandlerInFlight = false;
       captureInProgress = false;
@@ -1260,6 +1275,15 @@ app.post("/capture", async (req: Request, res: Response) => {
         res.end();
       } else {
         res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage(rawError) });
+      }
+    } finally {
+      if (hadPreviewSession) {
+        setTimeout(() => {
+          try {
+            startSharedPreviewProcess();
+            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(1000)).catch(() => scheduleSharedPreviewStop(800));
+          } catch { /* ignore */ }
+        }, 30);
       }
     }
     return;

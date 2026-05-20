@@ -1662,78 +1662,43 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const bs = boothMirrorSettingRef.current;
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
         console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
-        setCountdown(null);
         setCdState("CAPTURING");
-        
-      // Ambil foto sesuai sumber yang dipilih operator di setup.
-      let dataUrl: string | null = null;
-      if (captureSource === "dslr") {
-        try {
-          // Use pre-fired promise (started at count=1) if available, otherwise fire fresh
-          dataUrl = preCapturePromiseRef.current
-            ? await preCapturePromiseRef.current
-            : await captureFromAgent(captureMirrorSnapshot);
-          preCapturePromiseRef.current = null;
-          console.log("[CameraScreen] DSLR captured, mirror applied:", captureMirrorSnapshot);
-        } catch (err) {
-          preCapturePromiseRef.current = null;
-          captureInProgressRef.current = false; // allow preview polling to resume on error
-          if (livePhotoVideoEnabled && !dslrMode) stopRecording().catch(() => {});
-          if (livePhotoVideoEnabled && dslrMode) stopDslrLiveRecording().catch(() => {});
-          setCdState("READY");
-          setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
+
+        // DSLR capture: fire SHOOT via /capture, preview resumes immediately after SHOOT.
+        // The agent returns { ok: true, pending: true } right after SHOOT.
+        // The bridge downloads and exits, then delivers the actual image via pending response.
+        // captureFromAgent awaits the pending promise → resolves when image arrives.
+        let dataUrl: string | null = null;
+        if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
+          try {
+            dataUrl = await captureFromAgent(captureMirrorSnapshot);
+            console.log("[CameraScreen] DSLR captured, mirror applied:", captureMirrorSnapshot);
+          } catch (err) {
+            captureInProgressRef.current = false; // allow preview polling to resume on error
+            setCdState("READY");
+            setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
+            return;
+          }
+        }
+
+        setCdState("DONE");
+        captureInProgressRef.current = false; // allow preview polling to resume
+        if (!dataUrl) {
+          setCaptureError("Foto gagal diambil. Pastikan kamera siap lalu coba lagi.");
           return;
         }
-      } else if (captureSource === "auto" && dslrAvailable) {
-        try {
-          // Use pre-fired promise (started at count=1) if available, otherwise fire fresh
-          dataUrl = preCapturePromiseRef.current
-            ? await preCapturePromiseRef.current
-            : await captureFromAgent(captureMirrorSnapshot);
-          preCapturePromiseRef.current = null;
-          console.log("[CameraScreen] auto DSLR captured, mirror applied:", captureMirrorSnapshot);
-        } catch {
-          preCapturePromiseRef.current = null;
-          /* fallback ke webcam below */
+        onCapture(dataUrl);
+        // Video handling for DSLR
+        if (livePhotoVideoEnabled && dslrMode) {
+          void (async () => {
+            await new Promise<void>((r) => setTimeout(r, 150));
+            const videoBlob = await stopDslrLiveRecording();
+            onVideoReady(videoBlob, currentCaptureIndex);
+          })();
+        } else {
+          onVideoReady(null, currentCaptureIndex);
         }
-      }
-
-      if (!dataUrl && captureSource !== "dslr") {
-        dataUrl = capture() ?? null;
-      }
-
-      setCdState("DONE");
-      captureInProgressRef.current = false; // allow preview polling to resume
-      if (!dataUrl) {
-        setCaptureError("Foto gagal diambil. Pastikan kamera siap lalu coba lagi.");
-        if (livePhotoVideoEnabled && !dslrMode) stopRecording().catch(() => {});
-        if (livePhotoVideoEnabled && dslrMode) stopDslrLiveRecording().catch(() => {});
-        return;
-      }
-      // For non-DSLR: show captured photo immediately
-      // For DSLR: show actual captured photo from Canon
-      if (!dslrMode) {
-        onCapture(dataUrl);
-      } else {
-        onCapture(dataUrl);
-      }
-      if (livePhotoVideoEnabled && !dslrMode) {
-        // Proses video di background (~800ms setelah shutter)
-        void (async () => {
-          await new Promise<void>((r) => setTimeout(r, 800));
-          const videoBlob = await stopRecording();
-          onVideoReady(videoBlob, currentCaptureIndex);
-        })();
-      } else if (livePhotoVideoEnabled && dslrMode) {
-        void (async () => {
-          await new Promise<void>((r) => setTimeout(r, 150)); // OPTIMIZED: was 250ms
-          const videoBlob = await stopDslrLiveRecording();
-          onVideoReady(videoBlob, currentCaptureIndex);
-        })();
-      } else {
-        onVideoReady(null, currentCaptureIndex);
-      }
-    };
+      };
 
     let count = 5;
     const tick = () => {
@@ -1742,16 +1707,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         setCountdown(count);
 
         if (willUseAgentCapture && count === 2) {
-          const bs = boothMirrorSettingRef.current;
-          const captureMirror2 = typeof bs === "boolean" ? bs : mirrorRef.current;
-
-          // PRE-ARM at count=2: kill preview and spawn the armed C# bridge NOW,
-          // giving it 2 full seconds to complete EnsureCameraReady() + CaptureArmedToFile().
-          // BRIDGE_READY fires before count=1, so SHOOT fires immediately at "1".
+          // PRE-ARM at count=2: fire /prepare-capture so the C# bridge has
+          // 2 seconds to open session + complete CaptureArmedToFile setup.
+          // BRIDGE_READY fires before count=1 → SHOOT fires immediately at "1".
           const base = agentBaseRef.current;
           if (base) {
             fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
-              .catch((e) => console.warn("[CameraScreen] prepare-capture error (pre-arm):", e));
+              .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
           }
 
           countdownTimerRef.current = setTimeout(tick, 1000); // continue to count=1
@@ -1762,31 +1724,22 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
 
-          // Armed bridge was pre-armed at count=2 (2 seconds ago).
-          // BRIDGE_READY should have fired → captureFromAgent sends SHOOT immediately.
-          // Shutter fires at the "1" display — no delay.
-
-          // Freeze the live preview frame at "1" (last possible moment).
-          // User sees live view during countdown 5-4-3-2, freeze at "1".
+          // Armed bridge pre-armed at count=2 (2s ago) → BRIDGE_READY done.
+          // FIRE SHUTTER NOW — no extra delay.
+          // Note: we do NOT call captureFromAgent here. The agent's shootFn
+          // sends SHOOT directly (via the pre-capture promise chain in
+          // captureAndDisplay). We only freeze the preview and advance UI.
           freezeDslrPreview(captureMirror);
-
-          // Stop preview polling immediately (synchronous, no render delay).
           captureInProgressRef.current = true;
-
-          // Mark frozen timestamp for live recording zoom effect.
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
           }
 
-          // Fire capture — SHOOT sent immediately since BRIDGE_READY is already done.
-          preCapturePromiseRef.current = captureFromAgent(captureMirror, true);
-
-          // Show "1" then transition — capture is already in-flight.
           countdownTimerRef.current = setTimeout(() => {
             setCountdown(null);
             captureAndDisplay();
           }, 0);
-          return; // capture is the final action
+          return;
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
       } else {
