@@ -1434,6 +1434,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   const [countdown, setCountdown]       = useState<number | null>(null);
   const [cdState, setCdState]           = useState<CountdownState>("READY");
+  type CapturePhase = "idle" | "preparing";
+  const [capturePhase, setCapturePhase] = useState<CapturePhase>("idle");
   const countdownTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
   const preCapturePromiseRef            = useRef<Promise<string> | null>(null); // Canon: pre-fired capture promise
   // Ref-based flag checked synchronously in the RAF preview poll loop.
@@ -1702,6 +1704,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
         console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
 
+        // Show "Menyiapkan hasil…" immediately while waiting for Canon shutter
+        setCapturePhase("preparing");
+        setCountdown(null); // hide countdown number
+
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
           try {
@@ -1711,6 +1717,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             captureInProgressRef.current = false; // allow preview polling to resume on error
             setCdState("READY");
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
+            setCapturePhase("idle"); // hide "Menyiapkan hasil" overlay on error
             return;
           }
         }
@@ -1723,6 +1730,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         }
         onCapture(dataUrl);
         setCountdown(null); // hide countdown overlay after capture done
+        setCapturePhase("idle"); // hide "Menyiapkan hasil" overlay
         // Video handling for DSLR
         if (livePhotoVideoEnabled && dslrMode) {
           void (async () => {
@@ -1752,8 +1760,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
         }
 
-        // FREEZE preview at count=1: user sees frozen "1" momentarily
+        // FREEZE preview at count=1: user sees frozen "1" briefly, then capture fires
         if (willUseAgentCapture && count === 1) {
+          setCountdown(1);
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
           freezeDslrPreview(captureMirror);
@@ -1761,7 +1770,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
           }
-          captureAndDisplay();
+          // Brief pause so user sees "1" frozen, then fire capture
+          countdownTimerRef.current = setTimeout(() => {
+            captureAndDisplay();
+          }, 500);
           return;
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
@@ -1878,7 +1890,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         )}
 
         {/* Capture loading overlay — shows while DSLR is downloading the photo */}
-        {captureInProgressRef.current && cdState === "COUNTING" && (
+        {capturePhase === "preparing" && (
           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
             <div className="text-6xl animate-pulse">⏳</div>
             <p className="mt-6 text-white font-bold text-2xl">Menyiapkan hasil…</p>
@@ -2147,7 +2159,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           )}
 
           {/* Capture loading overlay — shows while DSLR is downloading the photo */}
-          {captureInProgressRef.current && (
+          {capturePhase === "preparing" && (
             <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
               <div className="text-6xl animate-pulse">⏳</div>
               <p className="mt-6 text-white font-bold text-2xl">Menyiapkan hasil…</p>
