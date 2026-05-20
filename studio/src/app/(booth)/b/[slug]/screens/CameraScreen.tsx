@@ -1696,12 +1696,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     }
 
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
-    
-      // Store the frozen poster at start of countdown to use for immediate display (visual freeze only)
+
+      const MIN_COUNTDOWN_1_MS = 1500; // minimum duration user sees "1" before capture starts
       const captureAndDisplay = async () => {
         const bs = boothMirrorSettingRef.current;
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
         console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
+
+        // Transition to CAPTURING state — keep showing "1" in the overlay while we wait
+        // for Canon to capture and deliver the image. The loading spinner below the
+        // countdown gives visual feedback that work is happening.
         setCdState("CAPTURING");
 
         // DSLR capture: fire SHOOT via /capture, preview resumes immediately after SHOOT.
@@ -1770,10 +1774,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             dslrFrozenAtRef.current = Date.now();
           }
 
-          // Countdown stays at 1. The overlay will show "1" during CAPTURING state.
-          // Only setCountdown(null) after capture completes (in onCapture).
+          // Show "1" for at least MIN_COUNTDOWN_1_MS so user actually sees it.
+          // During this window, setCdState("CAPTURING") keeps the overlay visible
+          // with a loading spinner beneath the countdown number.
           setCountdown(1);
-          captureAndDisplay();
+          setTimeout(() => {
+            captureAndDisplay();
+          }, MIN_COUNTDOWN_1_MS);
           return;
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
@@ -1896,13 +1903,19 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
         {/* Countdown overlay — fullscreen center */}
         {(cdState === "COUNTING" || cdState === "CAPTURING") && countdown !== null && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none">
             <span
               className="text-white font-black drop-shadow-2xl animate-bounce"
               style={{ fontSize: "20vw", lineHeight: 1, color: accentColor }}
             >
               {countdown}
             </span>
+            {/* Loading indicator — clearly shows capture is in progress */}
+            {cdState === "CAPTURING" && (
+              <span className="text-white text-3xl mt-6 font-bold animate-pulse" style={{ animationDuration: "1.2s" }}>
+                ⏳ Mengambil foto…
+              </span>
+            )}
           </div>
         )}
 
@@ -2240,14 +2253,19 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           )}
 
           {/* Countdown overlay */}
-          {cdState === "COUNTING" && countdown !== null && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
+          {(cdState === "COUNTING" || cdState === "CAPTURING") && countdown !== null && (
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none">
               <span
                 className="text-white font-black drop-shadow-2xl animate-bounce"
                 style={{ fontSize: "20vw", lineHeight: 1, color: accentColor }}
               >
                 {countdown}
               </span>
+              {cdState === "CAPTURING" && (
+                <span className="text-white text-2xl mt-4 font-bold animate-pulse" style={{ animationDuration: "1.2s" }}>
+                  ⏳ Mengambil foto…
+                </span>
+              )}
             </div>
           )}
 
