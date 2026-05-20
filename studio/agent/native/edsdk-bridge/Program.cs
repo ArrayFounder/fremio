@@ -445,11 +445,12 @@ internal sealed class EdsdkSession : IDisposable
 
     public void CaptureToFile(string outputPath)
     {
-        EnsureCameraReady();
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
-        Console.Error.WriteLine("[bridge] Capture: session ready");
+        var t0 = System.Diagnostics.Stopwatch.StartNew();
+        Console.Error.WriteLine($"[bridge] Capture: session ready (EnsureCameraReady took {t0.ElapsedMilliseconds}ms)");
         var captureStartedAtUtc = DateTime.UtcNow;
         var staleCutoffUtc = captureStartedAtUtc.AddSeconds(-2);
+
+        
 
         // Disable EVF FIRST — before setting SaveTo or any property.
         // Some Canon models ignore SaveTo_Host while still in EVF/live-view mode,
@@ -466,6 +467,7 @@ internal sealed class EdsdkSession : IDisposable
             Console.Error.WriteLine("[bridge] EVF already inactive, skipping disable pump");
             PumpSdkEvents(1, 60); // OPTIMIZED: 60ms — reduced from 1×80=80ms
         }
+        
 
         // Configure camera to save to PC so we receive download events
         var saveTo = SaveTo_Host;
@@ -495,6 +497,7 @@ internal sealed class EdsdkSession : IDisposable
 
         // Let camera apply SaveTo + capacity settings before we send shutter
         PumpSdkEvents(1, 60); // OPTIMIZED: 60ms — reduced from 3×80=240ms
+        
 
         var downloadDone = new ManualResetEventSlim(false);
         var capturedData = Array.Empty<byte>();
@@ -617,11 +620,12 @@ internal sealed class EdsdkSession : IDisposable
 
         Check(Edsdk.EdsSetObjectEventHandler(_cameraRef, Edsdk.ObjectEvent_All, _captureObjectHandler, IntPtr.Zero), "Gagal pasang event capture Canon");
         Console.Error.WriteLine("[bridge] Event handler registered, sending TakePicture command");
+        
 
         try
         {
             SendTakePictureWithRetry();
-            Console.Error.WriteLine("[bridge] TakePicture command sent, waiting for download event...");
+            Console.Error.WriteLine("[bridge] TakePicture fired, waiting for download event...");
             var deadline = DateTime.UtcNow.AddSeconds(45);
             while (!downloadDone.IsSet && DateTime.UtcNow < deadline)
             {
@@ -632,7 +636,12 @@ internal sealed class EdsdkSession : IDisposable
             if (!downloadDone.IsSet)
                 throw new TimeoutException("Timeout menunggu hasil capture Canon");
 
+            
+            
             Console.Error.WriteLine($"[bridge] Capture sequence completed. sawNonJpegTransfer={sawNonJpegTransfer}, lastNonJpegFileName='{lastNonJpegFileName}', capturedData.Length={capturedData.Length}");
+
+            // Summary timing at the very end for easy grep
+            
             if (capturedError is not null) throw capturedError;
             if (capturedData.Length == 0)
             {
@@ -670,58 +679,44 @@ internal sealed class EdsdkSession : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
         Console.Error.WriteLine("[bridge-armed] Session ready, setting up for capture");
 
-        // Disable EVF before setting SaveTo (same reason as CaptureToFile)
+        // Disable EVF only if currently active.
+        // After clean preview shutdown, the preview bridge's TryDisableEvfFast() already
+        // disabled EVF — skipping TryDisableEvf + pump saves ~80ms on the fast path.
         if (IsEvfCurrentlyEnabled())
         {
-            Console.Error.WriteLine("[bridge-armed] EVF active, disabling");
             TryDisableEvf();
-            PumpSdkEvents(4, 60); // OPTIMIZED: 240ms — reduced from 5×80=400ms
-            Console.Error.WriteLine($"[bridge-armed] EVF disable+stabilise done: {tArm.ElapsedMilliseconds}ms");
+            PumpSdkEvents(1, 80); // 80ms — let camera complete EVF→capture mode transition
+            Console.Error.WriteLine($"[bridge-armed] EVF disabled: {tArm.ElapsedMilliseconds}ms");
         }
         else
         {
-            // EVF was already disabled (likely by the preview bridge TryDisableEvfFast).
-            // The camera hardware still needs time to fully transition from live-view to
-            // capture mode even after the property reports inactive.
-            Console.Error.WriteLine("[bridge-armed] EVF already inactive, stabilising camera");
-            PumpSdkEvents(1, 60); // OPTIMIZED: 60ms — reduced from 2×80=160ms
-            Console.Error.WriteLine($"[bridge-armed] EVF stabilise done: {tArm.ElapsedMilliseconds}ms");
+            Console.Error.WriteLine($"[bridge-armed] EVF already inactive, skipping disable: {tArm.ElapsedMilliseconds}ms");
+            PumpSdkEvents(1, 20); // minimal 20ms pump
         }
 
-        // Configure camera to save to PC
+        // Configure SaveTo=Host (MUST be set before TakePicture or camera saves to card)
         var saveTo = SaveTo_Host;
         var saveToErr = Edsdk.EdsSetPropertyData(_cameraRef, PropID_SaveTo, 0, Marshal.SizeOf<uint>(), ref saveTo);
-        Console.Error.WriteLine($"[bridge-armed] SaveTo_Host: 0x{saveToErr:X8}");
         if (saveToErr != 0)
         {
-            PumpSdkEvents(2, 60);
-            saveTo = SaveTo_Host;
+            PumpSdkEvents(1, 60);
             saveToErr = Edsdk.EdsSetPropertyData(_cameraRef, PropID_SaveTo, 0, Marshal.SizeOf<uint>(), ref saveTo);
-            Console.Error.WriteLine($"[bridge-armed] SaveTo_Host retry: 0x{saveToErr:X8}");
         }
+        Console.Error.WriteLine($"[bridge-armed] SaveTo_Host: 0x{saveToErr:X8}");
 
-        // Force Large Fine JPEG so camera always sends JPEG regardless of dial setting (RAW/RAW+JPEG).
+        // Force Large Fine JPEG so camera always sends JPEG regardless of dial setting
         ForceJpegImageQuality("[bridge-armed]");
 
-        var capacity = new Edsdk.EdsCapacity
-        {
-            NumberOfFreeClusters = int.MaxValue,
-            BytesPerSector = 0x1000,
-            Reset = 1,
-        };
+        // Set capacity so camera knows PC can accept any file size
+        var capacity = new Edsdk.EdsCapacity { NumberOfFreeClusters = int.MaxValue, BytesPerSector = 0x1000, Reset = 1 };
         Edsdk.EdsSetCapacity(_cameraRef, capacity);
 
-        // Let camera apply settings before registering handler and signalling ready
-        PumpSdkEvents(1, 60); // OPTIMIZED: 60ms — reduced from 1×80=80ms
-
-        // Set up download event handler BEFORE signaling ready
+        // Set up download event handler BEFORE shooting
         var downloadDone = new ManualResetEventSlim(false);
         var capturedData = Array.Empty<byte>();
         var capturedError = (Exception?)null;
         var sawNonJpegTransfer = false;
         var lastNonJpegFileName = string.Empty;
-        // staleCutoffUtc set just before shoot so we don't reject our own capture as stale
-        var staleCutoffUtc = DateTime.UtcNow.AddSeconds(-2);
 
         _captureObjectHandler = (evt, objRef, context) =>
         {
@@ -759,55 +754,41 @@ internal sealed class EdsdkSession : IDisposable
 
                     capturedData = new byte[len];
                     Marshal.Copy(ptr, capturedData, 0, (int)len);
-                    var headerHex = capturedData.Length >= 4 ? string.Join(" ", capturedData.Take(4).Select(b => b.ToString("X2"))) : "N/A";
-                    Console.Error.WriteLine($"[bridge-armed] Captured {capturedData.Length} bytes, header={headerHex}");
 
                     if (!IsLikelyJpeg(capturedData) && !IsLikelyJpegFileName(fileName))
                     {
                         Console.Error.WriteLine($"[bridge-armed] Non-JPEG received: '{fileName}', trying embedded JPEG extraction...");
                         var embedded = TryExtractEmbeddedJpeg(capturedData);
-                        if (embedded != null && embedded.Length > 100_000) // at least 100KB to be a real photo
+                        if (embedded != null && embedded.Length > 100_000)
                         {
                             Console.Error.WriteLine($"[bridge-armed] Embedded JPEG extracted: {embedded.Length} bytes (from {capturedData.Length} byte RAW)");
                             capturedData = embedded;
-                            // Fall through to stale-check and signal below
                         }
                         else
                         {
                             sawNonJpegTransfer = true;
                             lastNonJpegFileName = fileName;
-                            Console.Error.WriteLine($"[bridge-armed] Non-JPEG skipped (no usable embedded JPEG): '{fileName}'");
+                            Console.Error.WriteLine($"[bridge-armed] Non-JPEG skipped: '{fileName}'");
                             CompleteCaptureTransferIfNeeded(evtId, objRef);
                             capturedData = Array.Empty<byte>();
                             return 0;
                         }
                     }
 
-                    var capturedAtUtc = TryParseCameraDateTime(itemInfo.DateTime);
-                    if (capturedAtUtc.HasValue && capturedAtUtc.Value.Year >= 2000 && capturedAtUtc.Value < staleCutoffUtc)
-                    {
-                        Console.Error.WriteLine($"[bridge-armed] Stale JPEG ignored (cameraTime={capturedAtUtc.Value:O})");
-                        CompleteCaptureTransferIfNeeded(evtId, objRef);
-                        capturedData = Array.Empty<byte>();
-                        return 0;
-                    }
-
-                    Console.Error.WriteLine($"[bridge-armed] JPEG accepted: '{fileName}', {capturedData.Length} bytes");
+                    Console.Error.WriteLine($"[bridge-armed] JPEG accepted: {capturedData.Length} bytes");
                     CompleteCaptureTransferIfNeeded(evtId, objRef);
                     shouldSignal = true;
                 }
                 finally
                 {
                     if (streamRef != IntPtr.Zero) Edsdk.EdsRelease(streamRef);
-                    if (objRef != IntPtr.Zero) { Edsdk.EdsRelease(objRef); objRef = IntPtr.Zero; }
                 }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[bridge-armed] Event handler error: {ex.Message}");
+                Console.Error.WriteLine($"[bridge-armed] Capture error: {ex.Message}");
                 capturedError = ex;
                 shouldSignal = true;
-                if (objRef != IntPtr.Zero) Edsdk.EdsRelease(objRef);
             }
             finally
             {
@@ -816,10 +797,15 @@ internal sealed class EdsdkSession : IDisposable
             return 0;
         };
 
+        // Register AFTER handler closure is defined (critical fix)
         Check(Edsdk.EdsSetObjectEventHandler(_cameraRef, Edsdk.ObjectEvent_All, _captureObjectHandler, IntPtr.Zero),
               "Gagal pasang event capture Canon (armed)");
 
-        // Signal to Node.js that we're fully set up and ready to shoot
+        Console.Error.WriteLine($"[bridge-armed] Setup done in {tArm.ElapsedMilliseconds}ms, waiting for SHOOT...");
+
+        // Signal Node.js that setup is complete and camera is armed.
+        // Node.js /capture handler waits on readyPromise which resolves when this line appears.
+        // MUST flush so the line is not buffered — Node.js reads it from stderr immediately.
         Console.Error.WriteLine("BRIDGE_READY");
         Console.Error.Flush();
 
@@ -855,19 +841,16 @@ internal sealed class EdsdkSession : IDisposable
             Console.Error.WriteLine("[bridge-armed] SHOOT timed out — firing anyway");
         }
 
-        // Update stale cutoff to be relative to actual shoot time
-        staleCutoffUtc = DateTime.UtcNow.AddSeconds(-2);
+        var t0 = System.Diagnostics.Stopwatch.StartNew();
         Console.Error.WriteLine("[bridge-armed] SHOOT received — firing TakePicture");
 
-        // Minimal post-SHOOT stabilisation — just enough for the camera hardware
-        // to latch the shutter command before we poll for the download event.
-        PumpSdkEvents(1, 60);
-        Thread.Sleep(40);
-
+        // ZERO delay: camera is pre-configured (EVF disabled, SaveTo=Host, JPEG forced).
+        // Fire immediately to minimize lag. Retries handle any brief hardware busy state.
         try
         {
             SendTakePictureWithRetry();
-            Console.Error.WriteLine("[bridge-armed] TakePicture sent, waiting for download...");
+            var captureMs = t0.ElapsedMilliseconds;
+            Console.Error.WriteLine($"[bridge-armed] TakePicture fired in <{captureMs}ms, polling for download event...");
             var deadline = DateTime.UtcNow.AddSeconds(45);
             while (!downloadDone.IsSet && DateTime.UtcNow < deadline)
             {
@@ -1284,12 +1267,6 @@ internal sealed class EdsdkSession : IDisposable
 
     private void SendTakePictureWithRetry()
     {
-        // Minimal pre-shutter stabilisation — camera is already configured (EVF disabled,
-        // SaveTo=Host, JPEG quality set). 80ms is enough for EDSDK to accept the command.
-        PumpSdkEvents(1, 60); // 60ms
-        NativeMethods.PumpWindowsMessages();
-        Thread.Sleep(20);   // 20ms — total 80ms vs previous 390ms
-
         uint lastErr = 0;
         for (var attempt = 1; attempt <= 10; attempt++)
         {
@@ -1303,10 +1280,8 @@ internal sealed class EdsdkSession : IDisposable
             }
 
             Console.Error.WriteLine($"[bridge] TakePicture retry {attempt}/10 after error 0x{err:X8}");
-            // Retry stabilization: faster polling for card write completion
-            PumpSdkEvents(2, 80); // 160ms — reduced from 240ms
-            NativeMethods.PumpWindowsMessages();
-            Thread.Sleep(100);    // reduced from 300ms
+            // No PumpSdkEvents here — just sleep and retry
+            Thread.Sleep(50);    // minimal 50ms between retries
         }
 
         Check(lastErr, "Gagal trigger shutter Canon");

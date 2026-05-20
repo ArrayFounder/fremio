@@ -1751,21 +1751,25 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (count > 0) {
         setCountdown(count);
 
-        // PRE-ARM at count=1: fire /prepare-capture so the C# bridge has ~1s
-        // to open session + complete CaptureArmedToFile setup.
-        // BRIDGE_READY fires before trigger → SHOOT fires immediately.
-        // Preview stays live until the last moment for better UX.
-        if (willUseAgentCapture && count === 1) {
+        // PRE-ARM at count=2 (not count=1): fire /prepare-capture so the C# bridge has
+        // ~2.5s to open session + complete CaptureArmedToFile setup (vs ~1s at count=1).
+        // BRIDGE_READY fires before trigger → SHOOT fires immediately at count=1.
+        // Always fire prepare-capture when DSLR/Auto mode regardless of dslrAvailable
+        // (dslrAvailable may be stale due to sessionStorage from previous sessions).
+        if ((captureSource === "dslr" || captureSource === "auto") && count === 2) {
           const base = agentBaseRef.current;
           if (base) {
             fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
               .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
           }
+        }
 
+        // Trigger shutter at count=1: capture AND display result.
+        if (willUseAgentCapture && count === 1) {
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
 
-          // Armed bridge pre-armed at count=1 (~1s ago) → BRIDGE_READY done.
+          // Armed bridge was pre-armed at count=2 (~2s ago) → BRIDGE_READY should be done.
           // FREEZE preview + FIRE SHUTTER immediately — no extra delay.
           // Keep countdown at 1 so user sees the number (not hidden) while capture downloads.
           freezeDslrPreview(captureMirror);
