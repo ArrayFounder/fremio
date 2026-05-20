@@ -1057,9 +1057,9 @@ app.get("/printers", async (_req: Request, res: Response) => {
 });
 
 app.post("/prepare-capture", async (_req: Request, res: Response) => {
-  // Pre-arm capture: stop live preview and spawn the C# bridge in "armed" mode.
-  // The armed bridge does all setup (session open, EVF disable, SaveTo, event handler)
-  // and prints BRIDGE_READY when ready. /capture then just sends SHOOT → instant shutter.
+  // Pre-arm capture: do NOT stop preview here — CameraScreen stops it at countdown=1
+  // for the freeze effect. We just spawn the armed bridge so /capture fires instantly.
+  // Preview is already dead by the time /capture fires in the freeze branch.
   captureInProgress = true;
   const t0 = Date.now();
   const hadPreviewSession = isPreviewSessionActive();
@@ -1082,22 +1082,6 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
   // stayed "open" → armed bridge hit CommPortIsAlreadyOpen (0xC0) on ALL 8 retries → 2s+ delay.
   // With 400ms, C# Dispose() completes (TryDisableEvfFast + EdsCloseSession ≈ 150-200ms),
   // armed bridge opens session on first attempt.
-  const stopped = await stopActivePreviewStreams(400); // 400ms clean-shutdown grace
-  console.log(`[agent] prepare-capture: preview stop requested, elapsed=${Date.now()-t0}ms`);
-
-  // Wait for preview process to fully exit (confirms OS released the USB session handle).
-  let previewExitWaitMs = 0;
-  const maxPreviewWait = 1000; // covers 400ms kill grace + exit latency
-  const pollInterval = 30;
-  while (activePreviewStreams.size > 0 && previewExitWaitMs < maxPreviewWait) {
-    await new Promise<void>((r) => setTimeout(r, pollInterval));
-    previewExitWaitMs += pollInterval;
-  }
-  if (activePreviewStreams.size > 0) {
-    console.warn(`[agent] Preview still running after ${maxPreviewWait}ms, proceeding anyway`);
-  } else {
-    console.log(`[agent] Preview confirmed dead, waited=${previewExitWaitMs}ms`);
-  }
 
   // Brief settle after process exit before spawning armed bridge.
   await new Promise<void>((r) => setTimeout(r, 50));
@@ -1216,7 +1200,7 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     await readyPromise; // timeout is 15s in the bridge's SHOOT wait, but we trust the bridge
     console.log(`[agent] /prepare-capture: BRIDGE_READY confirmed, responding at ${Date.now()-t0}ms`);
     captureInProgress = false; // Reset so preview can restart if needed
-    res.json({ ok: true, stopped, armedBridgePid: armedProcess.pid });
+    res.json({ ok: true, armedBridgePid: armedProcess.pid });
   } catch (err) {
     console.error(`[agent] /prepare-capture: BRIDGE_READY failed: ${(err as Error).message}`);
     // Kill the failed armed bridge to avoid orphaned USB session

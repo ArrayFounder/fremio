@@ -1877,6 +1877,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           </div>
         )}
 
+        {/* Capture loading overlay — shows while DSLR is downloading the photo */}
+        {captureInProgressRef.current && cdState === "COUNTING" && (
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="text-6xl animate-pulse">⏳</div>
+            <p className="mt-6 text-white font-bold text-2xl">Menyiapkan hasil…</p>
+          </div>
+        )}
+
         {/* Flash effect */}
         {cdState === "FLASH" && (
           <div className="absolute inset-0 bg-white animate-ping-once pointer-events-none" />
@@ -2135,6 +2143,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
               >
                 Coba Lagi
               </button>
+            </div>
+          )}
+
+          {/* Capture loading overlay — shows while DSLR is downloading the photo */}
+          {captureInProgressRef.current && (
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+              <div className="text-6xl animate-pulse">⏳</div>
+              <p className="mt-6 text-white font-bold text-2xl">Menyiapkan hasil…</p>
             </div>
           )}
 
