@@ -1728,6 +1728,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           return;
         }
         onCapture(dataUrl);
+        setCountdown(null); // hide countdown overlay after capture done
         // Video handling for DSLR
         if (livePhotoVideoEnabled && dslrMode) {
           void (async () => {
@@ -1762,15 +1763,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
           // Armed bridge pre-armed at count=1 (~1s ago) → BRIDGE_READY done.
           // FREEZE preview + FIRE SHUTTER immediately — no extra delay.
+          // Keep countdown at 1 so user sees the number (not hidden) while capture downloads.
           freezeDslrPreview(captureMirror);
           captureInProgressRef.current = true;
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
           }
 
-          // No setTimeout — captureAndDisplay runs synchronously on next microtask.
-          // bridge shootFn sends SHOOT instantly, no delay.
-          setCountdown(null);
+          // Countdown stays at 1. The overlay will show "1" during CAPTURING state.
+          // Only setCountdown(null) after capture completes (in onCapture).
+          setCountdown(1);
           captureAndDisplay();
           return;
         }
@@ -1893,7 +1895,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         )}
 
         {/* Countdown overlay — fullscreen center */}
-        {cdState === "COUNTING" && countdown !== null && (
+        {(cdState === "COUNTING" || cdState === "CAPTURING") && countdown !== null && (
           <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
             <span
               className="text-white font-black drop-shadow-2xl animate-bounce"

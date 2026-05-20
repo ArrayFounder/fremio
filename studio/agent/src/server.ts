@@ -70,6 +70,8 @@ let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped
 let captureInProgress = false; // Prevent preview auto-restart during capture
 let captureHandlerInFlight = false; // Prevent duplicate /capture calls (separate from captureInProgress)
 let shootFiredAt = 0; // Timestamp when SHOOT was sent — allows immediate preview restart
+/** Timestamp when armed bridge last exited. Used to ensure next capture waits for camera USB to be free. */
+let lastArmedBridgeExitedAt = 0;
 /**
  * Pending capture responses keyed by a session ID.
  * @deprecated — replaced by streamingJPEG mechanism.
@@ -404,13 +406,15 @@ function startSharedPreviewProcess() {
 
   child.on("error", (error) => {
     activePreviewStreams.delete(child);
-    const plannedRestart = plannedPreviewRestarts.has(child);
-    if (plannedRestart) plannedPreviewRestarts.delete(child);
+    const wasPlanned = plannedPreviewRestarts.has(child);
+    if (wasPlanned) plannedPreviewRestarts.delete(child);
     if (sharedPreviewProcess === child) {
       sharedPreviewProcess = null;
-      sharedPreviewBuffer = Buffer.alloc(0);
+      // Only clear buffer if NO planned restart — new process will fill it.
+      // Keep last good frame so browser sees no black gap.
+      if (!wasPlanned) sharedPreviewBuffer = Buffer.alloc(0);
     }
-    if (plannedRestart) return;
+    if (wasPlanned) return;
     failPreviewFrameWaiters(error instanceof Error ? error : new Error(String(error)));
     if (hasPreviewDemand()) {
       restartSharedPreviewProcess("preview process error");
@@ -419,13 +423,15 @@ function startSharedPreviewProcess() {
 
   child.on("exit", (code, signal) => {
     activePreviewStreams.delete(child);
-    const plannedRestart = plannedPreviewRestarts.has(child);
-    if (plannedRestart) plannedPreviewRestarts.delete(child);
+    const wasPlanned = plannedPreviewRestarts.has(child);
+    if (wasPlanned) plannedPreviewRestarts.delete(child);
     if (sharedPreviewProcess === child) {
       sharedPreviewProcess = null;
-      sharedPreviewBuffer = Buffer.alloc(0);
+      // Only clear buffer if NOT a planned restart — the replacement process will fill it.
+      // Keep last good frame so browser sees no black gap.
+      if (!wasPlanned) sharedPreviewBuffer = Buffer.alloc(0);
     }
-    if (plannedRestart) {
+    if (wasPlanned) {
       if (hasPreviewDemand()) {
         armPreviewStallMonitor(200);
       }
@@ -1058,6 +1064,19 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
   const t0 = Date.now();
   const hadPreviewSession = isPreviewSessionActive();
 
+  // FIX: Wait for camera USB to be free after previous capture bridge exited.
+  // Camera may not be ready for a new session immediately (USB handle still releasing).
+  // Wait up to 3s for USB to settle.
+  const USB_SETTLE_MS = 2000;
+  if (lastArmedBridgeExitedAt > 0) {
+    const elapsed = Date.now() - lastArmedBridgeExitedAt;
+    if (elapsed < USB_SETTLE_MS) {
+      const waitMs = USB_SETTLE_MS - elapsed;
+      console.log(`[agent] /prepare-capture: waiting ${waitMs}ms for camera USB settle`);
+      await new Promise<void>((r) => setTimeout(r, waitMs));
+    }
+  }
+
   // Kill preview — give bridge 400ms to call EdsCloseSession() cleanly before hard kill.
   // With 50ms (previous value), hard-kill prevented EdsCloseSession → camera USB session
   // stayed "open" → armed bridge hit CommPortIsAlreadyOpen (0xC0) on ALL 8 retries → 2s+ delay.
@@ -1129,6 +1148,9 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     if (code === 0) {
       completionResolve!(tmpFile);
       // Camera is now free after bridge exits.
+      // Reset captureInProgress so preview can restart and next capture can proceed.
+      captureInProgress = false;
+      lastArmedBridgeExitedAt = Date.now();
       // Restart preview if we had one before pre-arm stopped it.
       if (hadPreviewSession) {
         setTimeout(() => {
@@ -1193,14 +1215,14 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
   try {
     await readyPromise; // timeout is 15s in the bridge's SHOOT wait, but we trust the bridge
     console.log(`[agent] /prepare-capture: BRIDGE_READY confirmed, responding at ${Date.now()-t0}ms`);
+    captureInProgress = false; // Reset so preview can restart if needed
     res.json({ ok: true, stopped, armedBridgePid: armedProcess.pid });
   } catch (err) {
     console.error(`[agent] /prepare-capture: BRIDGE_READY failed: ${(err as Error).message}`);
     // Kill the failed armed bridge to avoid orphaned USB session
     try { armedProcess.kill(); } catch { /* ignore */ }
     if (armedCapture?.process === armedProcess) armedCapture = null;
-    // FIX: Reset captureInProgress so preview can restart and the wait loop in /capture exits early
-    captureInProgress = false;
+    captureInProgress = false; // Reset so preview can restart
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
   }
 });
@@ -1211,13 +1233,22 @@ app.post("/capture", async (req: Request, res: Response) => {
   const wantsBinary = req.query.format === "binary" || String(req.get("accept") || "").includes("image/jpeg");
   const hadPreviewSession = isPreviewSessionActive();
 
-  // FIX 5: Prevent duplicate /capture calls from racing (e.g. double-trigger).
-  // Uses captureHandlerInFlight (not captureInProgress) so it doesn't false-reject
-  // the legitimate /capture call that runs simultaneously with /prepare-capture.
+  // FIX 5: Prevent concurrent /capture calls from racing.
+  // If capture is in flight, queue this request and wait for it to complete.
+  // This replaces the immediate 409 rejection with a proper wait+retry.
   if (captureHandlerInFlight) {
-    console.warn("[agent] /capture: rejected (capture already in progress)");
-    res.status(409).json({ ok: false, error: "Capture sedang berlangsung — tunggu beberapa saat" });
-    return;
+    console.warn("[agent] /capture: capture in flight, waiting for completion...");
+    const waitDeadline = Date.now() + 30000;
+    while (captureHandlerInFlight && Date.now() < waitDeadline) {
+      await new Promise<void>((r) => setTimeout(r, 200));
+    }
+    if (captureHandlerInFlight) {
+      console.error("[agent] /capture: timed out waiting for previous capture");
+      res.status(409).json({ ok: false, error: "Capture sebelumnya terlalu lama — coba lagi" });
+      return;
+    }
+    // Previous capture finished (success or error) — reset state and proceed.
+    // Fall through to this capture.
   }
 
   captureHandlerInFlight = true;
