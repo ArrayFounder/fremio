@@ -1697,21 +1697,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
 
-      const MIN_COUNTDOWN_1_MS = 1500; // minimum duration user sees "1" before capture starts
       const captureAndDisplay = async () => {
         const bs = boothMirrorSettingRef.current;
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
         console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
 
-        // Transition to CAPTURING state — keep showing "1" in the overlay while we wait
-        // for Canon to capture and deliver the image. The loading spinner below the
-        // countdown gives visual feedback that work is happening.
-        setCdState("CAPTURING");
-
-        // DSLR capture: fire SHOOT via /capture, preview resumes immediately after SHOOT.
-        // The agent returns { ok: true, pending: true } right after SHOOT.
-        // The bridge downloads and exits, then delivers the actual image via pending response.
-        // captureFromAgent awaits the pending promise → resolves when image arrives.
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
           try {
@@ -1751,11 +1741,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (count > 0) {
         setCountdown(count);
 
-        // PRE-ARM at count=2 (not count=1): fire /prepare-capture so the C# bridge has
-        // ~2.5s to open session + complete CaptureArmedToFile setup (vs ~1s at count=1).
+        // PRE-ARM at count=2: fire /prepare-capture so the C# bridge has ~2.5s
+        // to open session + complete CaptureArmedToFile setup.
         // BRIDGE_READY fires before trigger → SHOOT fires immediately at count=1.
-        // Always fire prepare-capture when DSLR/Auto mode regardless of dslrAvailable
-        // (dslrAvailable may be stale due to sessionStorage from previous sessions).
         if ((captureSource === "dslr" || captureSource === "auto") && count === 2) {
           const base = agentBaseRef.current;
           if (base) {
@@ -1764,27 +1752,20 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
         }
 
-        // Trigger shutter at count=1: capture AND display result.
-        if (willUseAgentCapture && count === 1) {
+        // FREEZE preview at count=2 (user sees the frozen "2" image briefly)
+        if (willUseAgentCapture && count === 2) {
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
-
-          // Armed bridge was pre-armed at count=2 (~2s ago) → BRIDGE_READY should be done.
-          // FREEZE preview + FIRE SHUTTER immediately — no extra delay.
-          // Keep countdown at 1 so user sees the number (not hidden) while capture downloads.
           freezeDslrPreview(captureMirror);
-          captureInProgressRef.current = true;
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
           }
+        }
 
-          // Show "1" for at least MIN_COUNTDOWN_1_MS so user actually sees it.
-          // During this window, setCdState("CAPTURING") keeps the overlay visible
-          // with a loading spinner beneath the countdown number.
-          setCountdown(1);
-          setTimeout(() => {
-            captureAndDisplay();
-          }, MIN_COUNTDOWN_1_MS);
+        // Trigger shutter at count=1: capture immediately, countdown naturally shows "1"
+        if (willUseAgentCapture && count === 1) {
+          captureInProgressRef.current = true;
+          captureAndDisplay();
           return;
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
@@ -1906,20 +1887,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         )}
 
         {/* Countdown overlay — fullscreen center */}
-        {(cdState === "COUNTING" || cdState === "CAPTURING") && countdown !== null && (
-          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none">
+        {cdState === "COUNTING" && countdown !== null && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
             <span
               className="text-white font-black drop-shadow-2xl animate-bounce"
               style={{ fontSize: "20vw", lineHeight: 1, color: accentColor }}
             >
               {countdown}
             </span>
-            {/* Loading indicator — clearly shows capture is in progress */}
-            {cdState === "CAPTURING" && (
-              <span className="text-white text-3xl mt-6 font-bold animate-pulse" style={{ animationDuration: "1.2s" }}>
-                ⏳ Mengambil foto…
-              </span>
-            )}
           </div>
         )}
 
@@ -2257,19 +2232,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           )}
 
           {/* Countdown overlay */}
-          {(cdState === "COUNTING" || cdState === "CAPTURING") && countdown !== null && (
-            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none">
+          {cdState === "COUNTING" && countdown !== null && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
               <span
                 className="text-white font-black drop-shadow-2xl animate-bounce"
                 style={{ fontSize: "20vw", lineHeight: 1, color: accentColor }}
               >
                 {countdown}
               </span>
-              {cdState === "CAPTURING" && (
-                <span className="text-white text-2xl mt-4 font-bold animate-pulse" style={{ animationDuration: "1.2s" }}>
-                  ⏳ Mengambil foto…
-                </span>
-              )}
             </div>
           )}
 
