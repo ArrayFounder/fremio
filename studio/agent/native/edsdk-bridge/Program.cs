@@ -859,11 +859,10 @@ internal sealed class EdsdkSession : IDisposable
         staleCutoffUtc = DateTime.UtcNow.AddSeconds(-2);
         Console.Error.WriteLine("[bridge-armed] SHOOT received — firing TakePicture");
 
-        // Extra stabilisation after EVF disable: some Canon models (especially 2000D / T7)
-        // need 200–300ms before TakePicture is accepted after switching SaveTo to Host.
-        // Without this, the first TakePicture can return 0x8D01 (StoreNotReady).
-        PumpSdkEvents(2, 80);
-        Thread.Sleep(200);
+        // Minimal post-SHOOT stabilisation — just enough for the camera hardware
+        // to latch the shutter command before we poll for the download event.
+        PumpSdkEvents(1, 60);
+        Thread.Sleep(40);
 
         try
         {
@@ -1285,13 +1284,11 @@ internal sealed class EdsdkSession : IDisposable
 
     private void SendTakePictureWithRetry()
     {
-        // Extended stabilisation before first TakePicture attempt.
-        // Canon 2000D/T7 needs more time after EVF disable + SaveTo switch
-        // to accept shutter commands. Without enough prep, first TakePicture
-        // returns 0x8D01 (StoreNotReady) and all 10 retries fail.
-        PumpSdkEvents(3, 80); // 240ms — doubled from 1×60=60ms
+        // Minimal pre-shutter stabilisation — camera is already configured (EVF disabled,
+        // SaveTo=Host, JPEG quality set). 80ms is enough for EDSDK to accept the command.
+        PumpSdkEvents(1, 60); // 60ms
         NativeMethods.PumpWindowsMessages();
-        Thread.Sleep(150);
+        Thread.Sleep(20);   // 20ms — total 80ms vs previous 390ms
 
         uint lastErr = 0;
         for (var attempt = 1; attempt <= 10; attempt++)
@@ -1306,12 +1303,10 @@ internal sealed class EdsdkSession : IDisposable
             }
 
             Console.Error.WriteLine($"[bridge] TakePicture retry {attempt}/10 after error 0x{err:X8}");
-            // Do NOT call TryDisableEvf() here — EVF is already disabled. Calling it again
-            // adds up to 2-3 seconds per retry (6×220ms × 2 props = ~2640ms worst case),
-            // which causes the 30-second browser timeout when multiple retries are needed.
-            PumpSdkEvents(3, 80); // 240ms — increased from 2×80=160ms for 0x8D01 recovery
+            // Retry stabilization: faster polling for card write completion
+            PumpSdkEvents(2, 80); // 160ms — reduced from 240ms
             NativeMethods.PumpWindowsMessages();
-            Thread.Sleep(300); // doubled from 150ms — more time for card to finish writing
+            Thread.Sleep(100);    // reduced from 300ms
         }
 
         Check(lastErr, "Gagal trigger shutter Canon");

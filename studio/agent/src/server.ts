@@ -1066,9 +1066,10 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     console.log(`[agent] Preview confirmed dead, waited=${previewExitWaitMs}ms`);
   }
 
-  // Extra wait: give EDSDK time to fully release the USB session after preview exit.
-  // This is the minimum reliable USB release time for EOS cameras between processes.
-  await new Promise<void>((r) => setTimeout(r, 300));
+  // Minimal USB release time — camera session freed almost instantly after
+  // preview bridge exit (C# bridge does its own EdsCloseSession cleanup).
+  // 100ms is enough for EDSDK internal state to settle.
+  await new Promise<void>((r) => setTimeout(r, 100));
   previewPreStoppedAt = Date.now();
 
   // Clean up any previous armed bridge that wasn't used
