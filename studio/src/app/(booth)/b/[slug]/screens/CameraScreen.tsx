@@ -1741,40 +1741,19 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (count > 0) {
         setCountdown(count);
 
-        if (willUseAgentCapture && count === 3) {
+        if (willUseAgentCapture && count === 2) {
           const bs = boothMirrorSettingRef.current;
-          const captureMirror3 = typeof bs === "boolean" ? bs : mirrorRef.current;
+          const captureMirror2 = typeof bs === "boolean" ? bs : mirrorRef.current;
 
-          // PRE-ARM at count=3: kill preview and spawn the armed C# bridge NOW,
+          // PRE-ARM at count=2: kill preview and spawn the armed C# bridge NOW,
           // giving it 2 full seconds to complete EnsureCameraReady() + CaptureArmedToFile().
-          // By count=1 the armed bridge has already printed BRIDGE_READY and is waiting,
-          // so captureFromAgent sends SHOOT immediately — near-zero delay at the trigger moment.
+          // BRIDGE_READY fires before count=1, so SHOOT fires immediately at "1".
           const base = agentBaseRef.current;
           if (base) {
             fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
               .catch((e) => console.warn("[CameraScreen] prepare-capture error (pre-arm):", e));
           }
 
-          // Stop preview polling immediately via ref (synchronous, no render-cycle delay).
-          captureInProgressRef.current = true;
-
-          // Freeze the live preview frame — poster captured now so count=2..1 shows a still.
-          freezeDslrPreview(captureMirror3);
-
-          // Mark frozen timestamp for live recording zoom effect (starts from count=3).
-          if (livePhotoVideoEnabled && dslrMode) {
-            dslrFrozenAtRef.current = Date.now();
-          }
-
-          countdownTimerRef.current = setTimeout(tick, 1000); // continue to count=2
-          return;
-        }
-
-        if (willUseAgentCapture && count === 2) {
-          // Armed bridge was pre-armed at count=3 (2 seconds ago).
-          // By now it should have printed BRIDGE_READY → captureFromAgent sends SHOOT
-          // immediately when readyPromise resolves. No extra action needed here —
-          // just advance to count=1 so the user sees the final countdown number.
           countdownTimerRef.current = setTimeout(tick, 1000); // continue to count=1
           return;
         }
@@ -1783,15 +1762,26 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
 
-          // Armed bridge was pre-armed at count=3 (2 seconds ago).
-          // BRIDGE_READY should have fired by now → captureFromAgent sends SHOOT
-          // immediately when readyPromise resolves. Shutter fires at the "1" display.
-          // skipFreeze=true: poster already frozen at count=3 by freezeDslrPreview above.
+          // Armed bridge was pre-armed at count=2 (2 seconds ago).
+          // BRIDGE_READY should have fired → captureFromAgent sends SHOOT immediately.
+          // Shutter fires at the "1" display — no delay.
+
+          // Freeze the live preview frame at "1" (last possible moment).
+          // User sees live view during countdown 5-4-3-2, freeze at "1".
+          freezeDslrPreview(captureMirror);
+
+          // Stop preview polling immediately (synchronous, no render delay).
+          captureInProgressRef.current = true;
+
+          // Mark frozen timestamp for live recording zoom effect.
+          if (livePhotoVideoEnabled && dslrMode) {
+            dslrFrozenAtRef.current = Date.now();
+          }
+
+          // Fire capture — SHOOT sent immediately since BRIDGE_READY is already done.
           preCapturePromiseRef.current = captureFromAgent(captureMirror, true);
 
-          // Show "1" briefly then capture — no artificial delay needed since
-          // capture is already in-flight (shutter fires within ~100ms of this call).
-          // The 1000ms setTimeout was the main source of the "several seconds" delay.
+          // Show "1" then transition — capture is already in-flight.
           countdownTimerRef.current = setTimeout(() => {
             setCountdown(null);
             captureAndDisplay();
