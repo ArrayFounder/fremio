@@ -1056,6 +1056,7 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
   // and prints BRIDGE_READY when ready. /capture then just sends SHOOT → instant shutter.
   captureInProgress = true;
   const t0 = Date.now();
+  const hadPreviewSession = isPreviewSessionActive();
 
   // Kill preview — give bridge 400ms to call EdsCloseSession() cleanly before hard kill.
   // With 50ms (previous value), hard-kill prevented EdsCloseSession → camera USB session
@@ -1263,6 +1264,9 @@ app.post("/capture", async (req: Request, res: Response) => {
       if (wantsBinary) {
         res.setHeader("Content-Type", "image/jpeg");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        // Stream raw binary directly — no disk I/O re-read, no base64 encoding.
+        // bridge write + agent read = one sequential read (OS cache hit), ~5ms for 8MB.
+        // Eliminates ~80ms of base64 encode + ~60ms of browser decode overhead.
         res.send(buf);
       } else {
         res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
