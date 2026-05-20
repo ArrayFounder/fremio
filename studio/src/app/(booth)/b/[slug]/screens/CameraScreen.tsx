@@ -1752,19 +1752,15 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
         }
 
-        // FREEZE preview at count=2 (user sees the frozen "2" image briefly)
-        if (willUseAgentCapture && count === 2) {
+        // FREEZE preview at count=1: user sees frozen "1" momentarily
+        if (willUseAgentCapture && count === 1) {
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
           freezeDslrPreview(captureMirror);
+          captureInProgressRef.current = true;
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
           }
-        }
-
-        // Trigger shutter at count=1: capture immediately, countdown naturally shows "1"
-        if (willUseAgentCapture && count === 1) {
-          captureInProgressRef.current = true;
           captureAndDisplay();
           return;
         }
