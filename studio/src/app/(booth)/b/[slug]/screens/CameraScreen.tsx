@@ -1326,7 +1326,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
-          signal: AbortSignal.timeout(15000), // OPTIMIZED: was 30000ms — capture now completes in ~3-6s
+          signal: AbortSignal.timeout(30000), // Canon EDSDK cold start can take up to 10s (EnsureCameraReady retries)
         });
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({})) as { error?: string };
@@ -1741,50 +1741,62 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (count > 0) {
         setCountdown(count);
 
-        if (willUseAgentCapture && count === 1) {
+        if (willUseAgentCapture && count === 3) {
           const bs = boothMirrorSettingRef.current;
-          const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
+          const captureMirror3 = typeof bs === "boolean" ? bs : mirrorRef.current;
 
-          // Fire /prepare-capture immediately at count=1 (concurrent with /capture).
-          // The server kills preview, waits for USB release, spawns the armed bridge,
-          // disables EVF, and signals BRIDGE_READY. /capture polls for the armed bridge
-          // (up to 3s) then sends SHOOT the instant BRIDGE_READY arrives.
-          // This keeps the camera in live preview right up to count=1, minimising the
-          // visible gap between "preview stops" and "shutter fires".
+          // PRE-ARM at count=3: kill preview and spawn the armed C# bridge NOW,
+          // giving it 2 full seconds to complete EnsureCameraReady() + CaptureArmedToFile().
+          // By count=1 the armed bridge has already printed BRIDGE_READY and is waiting,
+          // so captureFromAgent sends SHOOT immediately — near-zero delay at the trigger moment.
           const base = agentBaseRef.current;
           if (base) {
-            fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(8000) })
-              .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
+            fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
+              .catch((e) => console.warn("[CameraScreen] prepare-capture error (pre-arm):", e));
           }
 
-          // ── IMMEDIATELY stop the preview RAF loop ─────────────────────────
-          // React state (setDslrPreviewPaused) has a render-cycle delay.
-          // captureInProgressRef is checked synchronously so no new preview
-          // HTTP requests are fired while the capture command is in flight.
+          // Stop preview polling immediately via ref (synchronous, no render-cycle delay).
           captureInProgressRef.current = true;
 
-          // Freeze live preview at count=1 (visual effect only — pauses the MJPEG stream).
-          // We don't use the return value; the real result comes from the Canon JPEG.
-          freezeDslrPreview(captureMirror);
+          // Freeze the live preview frame — poster captured now so count=2..1 shows a still.
+          freezeDslrPreview(captureMirror3);
 
-          // Mark frozen timestamp for live recording zoom effect
+          // Mark frozen timestamp for live recording zoom effect (starts from count=3).
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
           }
 
-          // Pre-fire the capture so it runs in parallel with the 1-second "1" display.
-          // The agent will: kill any active preview, wait for Canon USB release,
-          // disable EOS viewfinder, then fire the shutter.
-          // skipFreeze=true: poster already frozen synchronously by freezeDslrPreview above.
+          countdownTimerRef.current = setTimeout(tick, 1000); // continue to count=2
+          return;
+        }
+
+        if (willUseAgentCapture && count === 2) {
+          // Armed bridge was pre-armed at count=3 (2 seconds ago).
+          // By now it should have printed BRIDGE_READY → captureFromAgent sends SHOOT
+          // immediately when readyPromise resolves. No extra action needed here —
+          // just advance to count=1 so the user sees the final countdown number.
+          countdownTimerRef.current = setTimeout(tick, 1000); // continue to count=1
+          return;
+        }
+
+        if (willUseAgentCapture && count === 1) {
+          const bs = boothMirrorSettingRef.current;
+          const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
+
+          // Armed bridge was pre-armed at count=3 (2 seconds ago).
+          // BRIDGE_READY should have fired by now → captureFromAgent sends SHOOT
+          // immediately when readyPromise resolves. Shutter fires at the "1" display.
+          // skipFreeze=true: poster already frozen at count=3 by freezeDslrPreview above.
           preCapturePromiseRef.current = captureFromAgent(captureMirror, true);
 
-          // Show "1" for a full 1 second, then call captureAndDisplay which
-          // awaits the already-in-flight capture promise.
+          // Show "1" briefly then capture — no artificial delay needed since
+          // capture is already in-flight (shutter fires within ~100ms of this call).
+          // The 1000ms setTimeout was the main source of the "several seconds" delay.
           countdownTimerRef.current = setTimeout(() => {
             setCountdown(null);
             captureAndDisplay();
-          }, 1000);
-          return; // Don't schedule another tick — capture is the final action
+          }, 0);
+          return; // capture is the final action
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
       } else {
