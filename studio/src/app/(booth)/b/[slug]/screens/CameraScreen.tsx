@@ -1704,25 +1704,25 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
         console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
 
-        // Show "Menyiapkan hasil…" immediately — user just saw the camera flash.
-        // This means "downloading/transferring the photo from camera to computer".
-        setCapturePhase("preparing");
-        setCountdown(null);
-
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
           try {
-            // Capture fires here — user sees Canon flash on camera
+            // captureFromAgent waits until JPEG is received from agent (= image imported from camera).
+            // Only AFTER this resolves do we show "Menyiapkan hasil…" loading overlay.
             dataUrl = await captureFromAgent(captureMirrorSnapshot);
             console.log("[CameraScreen] DSLR captured, mirror applied:", captureMirrorSnapshot);
           } catch (err) {
             captureInProgressRef.current = false;
             setCdState("READY");
-            setCapturePhase("idle"); // clear loading overlay on error
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
             return;
           }
         }
+
+        // "Menyiapkan hasil…" shows AFTER camera shot is done + image imported.
+        // At this point JPEG data has been received from agent (captureFromAgent resolved).
+        setCapturePhase("preparing");
+        setCountdown(null);
 
         setCdState("DONE");
         captureInProgressRef.current = false;
