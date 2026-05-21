@@ -69,6 +69,7 @@ const plannedPreviewRestarts = new Set<ReturnType<typeof spawn>>();
 let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped preview
 let captureInProgress = false; // Prevent preview auto-restart during capture
 let captureHandlerInFlight = false; // Prevent duplicate /capture calls (separate from captureInProgress)
+let preArmedCaptureInFlight: ArmedCaptureState | null = null; // Guard: prevent second SHOOT during BRIDGE_READY wait
 let shootFiredAt = 0; // Timestamp when SHOOT was sent — allows immediate preview restart
 /** Timestamp when armed bridge last exited. Used to ensure next capture waits for camera USB to be free. */
 let lastArmedBridgeExitedAt = 0;
@@ -1283,13 +1284,18 @@ app.post("/capture", async (req: Request, res: Response) => {
     // IMMEDIATELY try the armed bridge (set by /prepare-capture from CameraScreen).
     // If not available, do prepare inline — same timing regardless.
     const armed = armedCapture;
-    if (armed) {
+    if (armed && preArmedCaptureInFlight !== armed) {
+      // Mark this armed capture as "in flight" BEFORE awaiting readyPromise.
+      // This prevents a second concurrent /capture call from falling through
+      // to inline mode and firing a second SHOOT while we wait for BRIDGE_READY.
+      preArmedCaptureInFlight = armed;
       armedCapture = null;
       const tmpFile = armed.outputPath;
       captureInProgress = true;
       await armed.readyPromise;
       armed.shootFn();
       const outputPath = await armed.completionPromise;
+      preArmedCaptureInFlight = null; // Release lock after shoot completes
       if (!fs.existsSync(outputPath)) {
         res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
         return;
@@ -1306,6 +1312,15 @@ app.post("/capture", async (req: Request, res: Response) => {
       if (hadPreviewSession) {
         setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
       }
+      return;
+    }
+
+    // A second /capture call arrived while we were waiting for BRIDGE_READY.
+    // Don't fire a second SHOOT — return conflict so caller retries.
+    if (preArmedCaptureInFlight !== null) {
+      captureHandlerInFlight = false;
+      captureInProgress = false;
+      res.status(409).json({ ok: false, error: "Capture sedang diproses — tunggu sebentar" });
       return;
     }
 
