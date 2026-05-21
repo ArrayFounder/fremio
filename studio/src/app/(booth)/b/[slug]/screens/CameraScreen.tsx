@@ -1749,22 +1749,20 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (count > 0) {
         setCountdown(count);
 
-        // PRE-ARM at count=2: fire /prepare-capture so the C# bridge has ~2.5s
-        // to open session + complete CaptureArmedToFile setup.
-        // BRIDGE_READY fires before trigger → SHOOT fires immediately at count=1.
-        if ((captureSource === "dslr" || captureSource === "auto") && count === 2) {
-          const base = agentBaseRef.current;
-          if (base) {
-            fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
-              .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
-          }
-        }
-
         // FREEZE preview at count=1: user sees frozen "1" briefly, then capture fires
         if (willUseAgentCapture && count === 1) {
           setCountdown(1);
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
+
+          // PRE-ARM capture at count=1 — camera switches to capture mode HERE,
+          // so live preview stops at countdown=1, not earlier (5,4,3,2 still show live)
+          const base = agentBaseRef.current;
+          if (base) {
+            fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
+              .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
+          }
+
           freezeDslrPreview(captureMirror);
           captureInProgressRef.current = true;
           if (livePhotoVideoEnabled && dslrMode) {
