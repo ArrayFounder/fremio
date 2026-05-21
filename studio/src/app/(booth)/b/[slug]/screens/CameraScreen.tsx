@@ -1704,34 +1704,34 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
         console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
 
-        // Show "Menyiapkan hasil…" immediately while waiting for Canon shutter
-        setCapturePhase("preparing");
-        setCountdown(null); // hide countdown number
-
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
           try {
+            // Capture fires here — Canon shutter + flash happens BEFORE "Menyiapkan hasil"
             dataUrl = await captureFromAgent(captureMirrorSnapshot);
             console.log("[CameraScreen] DSLR captured, mirror applied:", captureMirrorSnapshot);
           } catch (err) {
-            captureInProgressRef.current = false; // allow preview polling to resume on error
+            captureInProgressRef.current = false;
             setCdState("READY");
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
-            setCapturePhase("idle"); // hide "Menyiapkan hasil" overlay on error
             return;
           }
         }
 
+        // Show "Menyiapkan hasil…" AFTER camera captured (user already saw flash)
+        // This overlay means "downloading/transferring the photo from camera"
+        setCapturePhase("preparing");
+        setCountdown(null);
+
         setCdState("DONE");
-        captureInProgressRef.current = false; // allow preview polling to resume
+        captureInProgressRef.current = false;
         if (!dataUrl) {
           setCaptureError("Foto gagal diambil. Pastikan kamera siap lalu coba lagi.");
           return;
         }
         onCapture(dataUrl);
-        setCountdown(null); // hide countdown overlay after capture done
-        setCapturePhase("idle"); // hide "Menyiapkan hasil" overlay
-        // Video handling for DSLR
+        setCountdown(null);
+        setCapturePhase("idle");
         if (livePhotoVideoEnabled && dslrMode) {
           void (async () => {
             await new Promise<void>((r) => setTimeout(r, 150));
