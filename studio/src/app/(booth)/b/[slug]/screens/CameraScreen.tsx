@@ -1714,14 +1714,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             captureInProgressRef.current = false;
             setCdState("READY");
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
+            setCapturePhase("idle"); // clear loading overlay on error
             return;
           }
         }
 
-        // Show "Menyiapkan hasil…" AFTER camera captured (user already saw flash)
-        // This overlay means "downloading/transferring the photo from camera"
-        setCapturePhase("preparing");
-        setCountdown(null);
+        // Note: setCapturePhase("preparing") is already set BEFORE capture fires
+        // (see count=1 setTimeout above), so overlay shows immediately when camera fires.
+        // It stays visible while capture downloads, then clears when onCapture() is called.
 
         setCdState("DONE");
         captureInProgressRef.current = false;
@@ -1771,6 +1771,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           // Brief pause so "1" is visible, then clear it and fire capture in one step
           countdownTimerRef.current = setTimeout(() => {
             setCountdown(null); // clear "1" — prevents repeated display
+            // Show "Menyiapkan hasil…" loading overlay BEFORE camera fires,
+            // so user knows capture is in progress on the stream screen
+            setCapturePhase("preparing");
             captureAndDisplay();
           }, 300);
           return;
