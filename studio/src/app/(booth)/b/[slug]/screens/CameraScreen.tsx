@@ -1704,6 +1704,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
         console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
 
+        // Show "Menyiapkan hasil…" immediately — user just saw the camera flash.
+        // This means "downloading/transferring the photo from camera to computer".
+        setCapturePhase("preparing");
+        setCountdown(null);
+
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
           try {
@@ -1713,15 +1718,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           } catch (err) {
             captureInProgressRef.current = false;
             setCdState("READY");
+            setCapturePhase("idle"); // clear loading overlay on error
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
             return;
           }
         }
-
-        // Show "Menyiapkan hasil…" AFTER shutter fired — camera is now
-        // downloading/transferring the photo from camera to computer
-        setCapturePhase("preparing");
-        setCountdown(null);
 
         setCdState("DONE");
         captureInProgressRef.current = false;
