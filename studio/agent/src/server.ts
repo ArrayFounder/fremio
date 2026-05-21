@@ -1281,15 +1281,18 @@ app.post("/capture", async (req: Request, res: Response) => {
   captureInProgress = true;
 
   try {
-    // IMMEDIATELY try the armed bridge (set by /prepare-capture from CameraScreen).
-    // If not available, do prepare inline — same timing regardless.
     const armed = armedCapture;
+
+    // CRITICAL: null out armedCapture BEFORE any async work — prevents the second
+    // /capture call (which arrives before preArmedCaptureInFlight is set) from
+    // also falling through to the inline path and sending a second SHOOT.
+    // The old guard (preArmedCaptureInFlight check) races: second call arrives
+    // before flag is set, sees flag=null, falls through → double shot.
+    // By nulling armedCapture here, we atomically "claim" this capture slot.
+    if (armed) { armedCapture = null; }
+
     if (armed && preArmedCaptureInFlight !== armed) {
-      // Mark this armed capture as "in flight" BEFORE awaiting readyPromise.
-      // This prevents a second concurrent /capture call from falling through
-      // to inline mode and firing a second SHOOT while we wait for BRIDGE_READY.
       preArmedCaptureInFlight = armed;
-      armedCapture = null;
       const tmpFile = armed.outputPath;
       captureInProgress = true;
       await armed.readyPromise;

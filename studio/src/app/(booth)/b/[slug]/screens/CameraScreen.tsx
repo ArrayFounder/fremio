@@ -1715,27 +1715,24 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         const bs = boothMirrorSettingRef.current;
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
 
-        // ✅ NYALAKAN LOADING SEBELUM shot fires — covering entire shot + download time
-        setCapturePhase("preparing");
-        setCountdown(null);
-        setCdState("DONE");
-
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
           try {
-            // captureFromAgent fires shot + waits for JPEG download
-            // Loading visible the ENTIRE time: shot fires → JPEG download → browser receives
             dataUrl = await captureFromAgent(captureMirrorSnapshot);
           } catch (err) {
             captureInFlightRef.current = false;
             captureInProgressRef.current = false;
             setCdState("READY");
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
-            setCapturePhase("idle");
             return;
           }
         }
 
+        // "Menyiapkan hasil…" shows after the shot fired and JPEG was received.
+        setCapturePhase("preparing");
+        setCountdown(null);
+
+        setCdState("DONE");
         captureInFlightRef.current = false;
         captureInProgressRef.current = false;
         if (!dataUrl) {
