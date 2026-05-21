@@ -1437,6 +1437,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   type CapturePhase = "idle" | "preparing";
   const [capturePhase, setCapturePhase] = useState<CapturePhase>("idle");
   const countdownTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref-based guard: prevent captureAndDisplay from running twice even if tick() fires
+  // or React re-renders while a capture is already in flight. Checked synchronously
+  // (no render-cycle delay) before any async work.
+  const captureInFlightRef            = useRef<boolean>(false);
   const preCapturePromiseRef            = useRef<Promise<string> | null>(null); // Canon: pre-fired capture promise
   // Ref-based flag checked synchronously in the RAF preview poll loop.
   // React state (dslrPreviewPaused) has a render-cycle delay; this ref stops
@@ -1700,34 +1704,43 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
 
       const captureAndDisplay = async () => {
+        // Double-shot guard: if capture is already in flight (timer fired twice,
+        // React re-rendered, or stale closure), bail out immediately.
+        if (captureInFlightRef.current) {
+          console.warn("[CameraScreen] captureAndDisplay: already in flight, ignoring");
+          return;
+        }
+        captureInFlightRef.current = true;
+
         const bs = boothMirrorSettingRef.current;
         const captureMirrorSnapshot = typeof bs === "boolean" ? bs : mirrorRef.current;
-        console.log("[CameraScreen] captureMirrorSnapshot:", captureMirrorSnapshot, { boothMirrorSetting: bs, mirrorRef: mirrorRef.current });
+
+        // ✅ NYALAKAN LOADING SEBELUM shot fires — covering entire shot + download time
+        setCapturePhase("preparing");
+        setCountdown(null);
+        setCdState("DONE");
 
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
           try {
-            // captureFromAgent waits until JPEG is received from agent (= image imported from camera).
-            // Only AFTER this resolves do we show "Menyiapkan hasil…" loading overlay.
+            // captureFromAgent fires shot + waits for JPEG download
+            // Loading visible the ENTIRE time: shot fires → JPEG download → browser receives
             dataUrl = await captureFromAgent(captureMirrorSnapshot);
-            console.log("[CameraScreen] DSLR captured, mirror applied:", captureMirrorSnapshot);
           } catch (err) {
+            captureInFlightRef.current = false;
             captureInProgressRef.current = false;
             setCdState("READY");
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
+            setCapturePhase("idle");
             return;
           }
         }
 
-        // "Menyiapkan hasil…" shows AFTER camera shot is done + image imported.
-        // At this point JPEG data has been received from agent (captureFromAgent resolved).
-        setCapturePhase("preparing");
-        setCountdown(null);
-
-        setCdState("DONE");
+        captureInFlightRef.current = false;
         captureInProgressRef.current = false;
         if (!dataUrl) {
           setCaptureError("Foto gagal diambil. Pastikan kamera siap lalu coba lagi.");
+          setCapturePhase("idle");
           return;
         }
         onCapture(dataUrl);
@@ -1768,6 +1781,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           captureInProgressRef.current = true;
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
+          }
+          // Clear the pending tick timer so count never reaches 0 (which would fire captureAndDisplay again → double shot).
+          if (countdownTimerRef.current) {
+            clearTimeout(countdownTimerRef.current);
+            countdownTimerRef.current = null;
           }
           // Brief pause so "1" is visible, then clear it and fire capture in one step
           countdownTimerRef.current = setTimeout(() => {
