@@ -1749,9 +1749,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (count > 0) {
         setCountdown(count);
 
-        // FREEZE preview at count=1: show "1" briefly, then clear it, then fire capture
+        // FREEZE preview at count=1: user sees frozen "1" briefly, then capture fires
         if (willUseAgentCapture && count === 1) {
-          setCountdown(1); // show "1" so user knows countdown reached end
+          setCountdown(1);
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
 
@@ -1768,12 +1768,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
           }
-          // Brief pause: "1" shows, then immediately cleared, then camera fires.
-          // User sees "1" flash and disappear, then camera flash, then "Menyiapkan hasil".
-          setTimeout(() => {
-            setCountdown(null); // clear "1" so it doesn't repeat
+          // Brief pause so "1" is visible, then clear it and fire capture in one step
+          countdownTimerRef.current = setTimeout(() => {
+            setCountdown(null); // clear "1" — prevents repeated display
             captureAndDisplay();
-          }, 200);
+          }, 300);
           return;
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
