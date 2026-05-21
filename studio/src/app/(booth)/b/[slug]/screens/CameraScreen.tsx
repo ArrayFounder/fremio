@@ -1768,10 +1768,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           if (livePhotoVideoEnabled && dslrMode) {
             dslrFrozenAtRef.current = Date.now();
           }
-          // Brief pause so user sees "1" frozen, then fire capture
-          countdownTimerRef.current = setTimeout(() => {
-            captureAndDisplay();
-          }, 500);
+          // Fire capture immediately — user sees "1" briefly, then "1" disappears
+          // and camera shutter fires (user sees flash from camera)
+          captureAndDisplay();
           return;
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
