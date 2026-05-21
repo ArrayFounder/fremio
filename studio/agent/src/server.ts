@@ -73,6 +73,8 @@ let preArmedCaptureInFlight: ArmedCaptureState | null = null; // Guard: prevent 
 let shootFiredAt = 0; // Timestamp when SHOOT was sent — allows immediate preview restart
 /** Timestamp when armed bridge last exited. Used to ensure next capture waits for camera USB to be free. */
 let lastArmedBridgeExitedAt = 0;
+/** Timestamp when an inline capture bridge last exited. Used to prevent USB conflicts. */
+let lastInlineCaptureBridgeExitedAt = 0;
 /**
  * Pending capture responses keyed by a session ID.
  * @deprecated — replaced by streamingJPEG mechanism.
@@ -1218,10 +1220,23 @@ async function doPrepareCaptureInline(): Promise<{ process: ReturnType<typeof sp
   const t0 = Date.now();
   captureInProgress = true;
 
-  // No explicit USB settle wait needed — the bridge's EnsureCameraReady retry loop
-  // handles any brief CommPortAlreadyOpen from the previous session (~500ms per retry).
-  await stopActivePreviewStreams();
-  await new Promise<void>((r) => setTimeout(r, 50));
+  // Kill any previous inline capture bridge that might be lingering.
+  // This handles the race: /capture inline path spawns bridge → user presses
+  // capture again → new /capture arrives → old bridge still holding USB → 0xC0.
+  const INLINE_KILL_DELAY_MS = 400;
+  await stopActivePreviewStreams(INLINE_KILL_DELAY_MS);
+
+  // Wait for USB settle after any previous inline capture bridge exited.
+  // Without this, a fast second capture can hit CommPortIsAlreadyOpen (0xC0).
+  const INLINE_USB_SETTLE_MS = 2500;
+  if (lastInlineCaptureBridgeExitedAt > 0) {
+    const elapsed = Date.now() - lastInlineCaptureBridgeExitedAt;
+    if (elapsed < INLINE_USB_SETTLE_MS) {
+      const waitMs = INLINE_USB_SETTLE_MS - elapsed;
+      console.log(`[agent] doPrepareCaptureInline: waiting ${waitMs}ms for USB settle`);
+      await new Promise<void>((r) => setTimeout(r, waitMs));
+    }
+  }
 
   const tmpFile = path.join(os.tmpdir(), `fremio-capture-${Date.now()}.jpg`);
   const bridgePath = resolveEdsdkBridgePath();
@@ -1249,7 +1264,10 @@ async function doPrepareCaptureInline(): Promise<{ process: ReturnType<typeof sp
     if (stderrBuf) { console.log(`[agent] /capture inline: ${stderrBuf}`); stderrBuf = ""; }
     if (!bridgeReady) readyReject(new Error(`Armed bridge exited before BRIDGE_READY (code ${code})`));
     lastArmedBridgeExitedAt = Date.now();
+    lastInlineCaptureBridgeExitedAt = Date.now();
     captureInProgress = false;
+    // Clean up any stale armed capture from failed inline attempts
+    if (armedCapture?.process === armedProcess) armedCapture = null;
   });
   armedProcess.on("error", (err) => {
     readyReject(err instanceof Error ? err : new Error(String(err)));
