@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from "react";
 const FILLER_HINTS = ["Smile!", "Cheese!", "Freeze!", "Strike a pose!", "Look pretty!"];
 const TYPING_SPEED_MS = 70;  // ms per character
 const HOLD_DURATION   = 2000; // ms after fully typed
-const EXIT_DURATION   = 400;  // ms for slide-out animation
+const EXIT_DURATION   = 400;   // ms for slide-out animation
 const CYCLE_GAP       = 150;   // ms pause before next filler starts typing
 
 type FillerState = "typing" | "hold" | "exit" | "hidden";
@@ -17,137 +17,176 @@ interface CaptureHintOverlayProps {
 }
 
 export function CaptureHintOverlay({ visible, phase }: CaptureHintOverlayProps) {
-  const [displayText,  setDisplayText]  = useState("");
-  const [hintKey,      setHintKey]       = useState(0);
-  const [text,         setText]           = useState("");  // current displayed word
+  const [displayText, setDisplayText] = useState("");
+  const [hintKey,      setHintKey]     = useState(0);
+  const [text,         setText]          = useState(""); // current word
+
+  // Filler-specific state
   const [fillerState,  setFillerState]   = useState<FillerState>("hidden");
+
+  // Refs for timer + state access in callbacks
   const charIdxRef     = useRef(0);
   const hintWordRef    = useRef("");
-  const prevPhaseRef  = useRef<CaptureHintPhase | null>(null);
   const fillerStateRef = useRef<FillerState>("hidden");
+  const phaseRef       = useRef<CaptureHintPhase | null>(null);
   const timerRef       = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const animKeyRef     = useRef(0); // separate key for CSS animation restart
+  const activeKeyRef   = useRef(0); // increments each cycle to cancel stale timers
 
   fillerStateRef.current = fillerState;
 
-  // ── Main effect: handles phase changes and filler cycles ──────────────
+  const clearTimer = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+  };
+
+  const pickNextFiller = (): string => {
+    let next = FILLER_HINTS[Math.floor(Math.random() * FILLER_HINTS.length)];
+    if (next === hintWordRef.current && FILLER_HINTS.length > 1) {
+      const others = FILLER_HINTS.filter((h) => h !== next);
+      next = others[Math.floor(Math.random() * others.length)];
+    }
+    return next;
+  };
+
+  // ── Main effect: reacts to phase changes + manages filler cycles ─────────
   useEffect(() => {
+    clearTimer();
+    activeKeyRef.current += 1;
+    const myKey = activeKeyRef.current;
+
     if (!visible) {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
       setFillerState("hidden");
       setDisplayText("");
       setText("");
-      prevPhaseRef.current = null;
+      phaseRef.current = null;
       return;
     }
 
-    const prev = prevPhaseRef.current;
+    const prev = phaseRef.current;
+    phaseRef.current = phase;
 
-    // Transition from filler → preparing: run exit animation, then show preparing text
+    // ── Transition: filler → preparing ──────────────────────────────────────
+    // Run exit animation on current filler, then show preparing text
     if (prev === "filler" && phase === "preparing") {
-      // Hide filler immediately, keep container for seamless transition
-      setFillerState("exit");
-      timerRef.current = setTimeout(() => {
-        if (fillerStateRef.current !== "exit") return;
-        setFillerState("hidden");
-        // Start preparing text with typing animation
+      if (fillerStateRef.current !== "hidden") {
+        setFillerState("exit");
         timerRef.current = setTimeout(() => {
-          animKeyRef.current += 1;
-          setHintKey((k) => k + 1);
-          setText("Menyiapkan hasil…");
-          charIdxRef.current = 0;
+          if (activeKeyRef.current !== myKey) return; // stale
+          clearTimer();
+          setFillerState("hidden");
           setDisplayText("");
-          setFillerState("typing");
+          setText("");
+          // Show preparing text with typing animation
+          timerRef.current = setTimeout(() => {
+            if (activeKeyRef.current !== myKey) return;
+            const PREPARING = "Menyiapkan hasil…";
+            charIdxRef.current = 0;
+            setText(PREPARING);
+            setHintKey((k) => k + 1);
+            setDisplayText("");
+            setFillerState("typing");
 
-          const PREPARING_TEXT = "Menyiapkan hasil…";
-          const typePrepChar = () => {
-            charIdxRef.current += 1;
-            setDisplayText(PREPARING_TEXT.slice(0, charIdxRef.current));
-            if (charIdxRef.current < PREPARING_TEXT.length) {
-              timerRef.current = setTimeout(typePrepChar, TYPING_SPEED_MS);
-            } else {
-              setFillerState("hold");
-            }
-          };
-          timerRef.current = setTimeout(typePrepChar, 100);
-        }, EXIT_DURATION + CYCLE_GAP);
-      }, EXIT_DURATION);
-      prevPhaseRef.current = phase;
+            const typeChar = () => {
+              if (activeKeyRef.current !== myKey) return;
+              charIdxRef.current += 1;
+              setDisplayText(PREPARING.slice(0, charIdxRef.current));
+              if (charIdxRef.current < PREPARING.length) {
+                timerRef.current = setTimeout(typeChar, TYPING_SPEED_MS);
+              } else {
+                // Preparing text done typing — STAY in hold until photo appears
+                setFillerState("hold");
+              }
+            };
+            timerRef.current = setTimeout(typeChar, 100);
+          }, EXIT_DURATION + CYCLE_GAP);
+        }, EXIT_DURATION);
+      } else {
+        // No active filler — show preparing directly
+        const PREPARING = "Menyiapkan hasil…";
+        charIdxRef.current = 0;
+        setText(PREPARING);
+        setHintKey((k) => k + 1);
+        setDisplayText("");
+        setFillerState("typing");
+
+        const typeChar = () => {
+          if (activeKeyRef.current !== myKey) return;
+          charIdxRef.current += 1;
+          setDisplayText(PREPARING.slice(0, charIdxRef.current));
+          if (charIdxRef.current < PREPARING.length) {
+            timerRef.current = setTimeout(typeChar, TYPING_SPEED_MS);
+          } else {
+            setFillerState("hold");
+          }
+        };
+        timerRef.current = setTimeout(typeChar, 100);
+      }
       return;
     }
 
-    prevPhaseRef.current = phase;
+    // ── Direct entry to preparing (no filler before) ──────────────────────
+    if (phase === "preparing") {
+      const PREPARING = "Menyiapkan hasil…";
+      charIdxRef.current = 0;
+      setText(PREPARING);
+      setHintKey((k) => k + 1);
+      setDisplayText("");
+      setFillerState("typing");
 
-    // ── Filler cycle (only when in filler phase) ──────────────────────────
-    if (phase === "filler") {
-      const pickNext = (): string => {
-        let next = FILLER_HINTS[Math.floor(Math.random() * FILLER_HINTS.length)];
-        if (next === hintWordRef.current && FILLER_HINTS.length > 1) {
-          const others = FILLER_HINTS.filter((h) => h !== next);
-          next = others[Math.floor(Math.random() * others.length)];
+      const typeChar = () => {
+        if (activeKeyRef.current !== myKey) return;
+        charIdxRef.current += 1;
+        setDisplayText(PREPARING.slice(0, charIdxRef.current));
+        if (charIdxRef.current < PREPARING.length) {
+          timerRef.current = setTimeout(typeChar, TYPING_SPEED_MS);
+        } else {
+          setFillerState("hold");
         }
-        return next;
       };
+      timerRef.current = setTimeout(typeChar, 100);
+      return;
+    }
 
+    // ── Filler cycle ──────────────────────────────────────────────────────
+    if (phase === "filler") {
       const startCycle = () => {
+        if (activeKeyRef.current !== myKey) return;
         if (fillerStateRef.current !== "hidden") return;
-        const word = pickNext();
-        hintWordRef.current = word;
-        charIdxRef.current  = 0;
-        setText(word);
-        animKeyRef.current += 1;
-        setHintKey((k) => k + 1);
-        setFillerState("typing");
-        setDisplayText("");
 
-        const typeNextChar = () => {
+        const word = pickNextFiller();
+        hintWordRef.current = word;
+        charIdxRef.current = 0;
+        setText(word);
+        setHintKey((k) => k + 1);
+        setDisplayText("");
+        setFillerState("typing");
+
+        const typeChar = () => {
+          if (activeKeyRef.current !== myKey) return;
           charIdxRef.current += 1;
           setDisplayText(word.slice(0, charIdxRef.current));
           if (charIdxRef.current < word.length) {
-            timerRef.current = setTimeout(typeNextChar, TYPING_SPEED_MS);
+            timerRef.current = setTimeout(typeChar, TYPING_SPEED_MS);
           } else {
             setFillerState("hold");
             timerRef.current = setTimeout(() => {
-              if (fillerStateRef.current !== "hold") return;
+              if (activeKeyRef.current !== myKey) return;
               setFillerState("exit");
               timerRef.current = setTimeout(() => {
-                if (fillerStateRef.current !== "exit") return;
+                if (activeKeyRef.current !== myKey) return;
                 setFillerState("hidden");
                 timerRef.current = setTimeout(startCycle, CYCLE_GAP);
               }, EXIT_DURATION);
             }, HOLD_DURATION);
           }
         };
-        timerRef.current = setTimeout(typeNextChar, 100);
+        timerRef.current = setTimeout(typeChar, 100);
       };
 
       startCycle();
-      return;
-    }
-
-    // Preparing phase (direct entry — no filler before it)
-    if (phase === "preparing") {
-      animKeyRef.current += 1;
-      setHintKey((k) => k + 1);
-      setText("Menyiapkan hasil…");
-      charIdxRef.current = 0;
-      setDisplayText("");
-      setFillerState("typing");
-
-      const PREPARING_TEXT = "Menyiapkan hasil…";
-      const typePrepChar = () => {
-        charIdxRef.current += 1;
-        setDisplayText(PREPARING_TEXT.slice(0, charIdxRef.current));
-        if (charIdxRef.current < PREPARING_TEXT.length) {
-          timerRef.current = setTimeout(typePrepChar, TYPING_SPEED_MS);
-        } else {
-          setFillerState("hold");
-        }
-      };
-      timerRef.current = setTimeout(typePrepChar, 100);
     }
   }, [visible, phase]);
 
+  // ── Don't render if nothing to show ─────────────────────────────────────
   if (fillerState === "hidden" && phase !== "preparing") return null;
 
   return (
@@ -158,15 +197,11 @@ export function CaptureHintOverlay({ visible, phase }: CaptureHintOverlayProps) 
           relative font-black drop-shadow-2xl select-none text-white whitespace-nowrap
           ${fillerState === "typing" ? "animate-typein" : ""}
           ${fillerState === "hold"   ? "animate-float-hold" : ""}
-          ${fillerState === "exit"   ? "animate-slide-out"  : ""}
+          ${fillerState === "exit"   ? "animate-slide-out" : ""}
         `}
-        style={{
-          fontSize: "clamp(1.8rem, 8vw, 6rem)",
-          lineHeight: 1,
-          color: "#deb7a6",
-        }}
+        style={{ fontSize: phase === "preparing" ? "clamp(1.4rem, 6vw, 4.5rem)" : "clamp(1.8rem, 8vw, 6rem)", lineHeight: 1, color: "#deb7a6" }}
       >
-        {displayText || (text && text.slice(0, 1)) || ""}
+        {displayText || (text ? text.slice(0, 1) : "")}
       </div>
     </div>
   );
