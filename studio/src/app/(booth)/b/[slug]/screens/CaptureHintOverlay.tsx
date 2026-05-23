@@ -117,12 +117,19 @@ export function CaptureHintOverlay({ capturePhase, mode }: CaptureHintOverlayPro
   // fullscreen → line 1956; live_view → line 2220; NEVER at line 2324
   if (mode !== "fullscreen" && mode !== "live_view") return null;
 
+  const isDarkening = capturePhase === "preparing";
+
   return (
     <div
       key={key}
       suppressHydrationWarning
       className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none overflow-hidden"
     >
+      {/* Dark backdrop — only during preparing phase so the text stands out */}
+      {isDarkening && (
+        <div className="absolute inset-0 bg-black/50" />
+      )}
+
       <div
         className={`relative font-black drop-shadow-2xl select-none text-white whitespace-nowrap ${animClass}`}
         style={{
