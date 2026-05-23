@@ -232,7 +232,8 @@ function reducer(state: State, action: Action): State {
       }
       const done = state.session.capturedPhotos.length >= totalNeeded;
       if (done) {
-        return { ...state, screen: "CAMERA", allPhotosDone: true };
+        // Semua foto sudah ter-capture → langsung ke preview
+        return { ...state, screen: "PREVIEW", allPhotosDone: true, retakeSlotIndex: null };
       }
       return { ...state, screen: "CAMERA" };
     }
@@ -559,65 +560,83 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     if (!frame) return;
 
     const totalNeeded = totalCaptures(frame);
+    const photosLen = session.capturedPhotos.length;
+    const videosLen = session.capturedVideos.length;
 
     // Hanya mulai pada review foto terakhir
-    if (session.capturedPhotos.length < totalNeeded) return;
-    // Jika semua video null (browser tidak support rekaman), langsung set error
-    // supaya UI tetap menampilkan kolom video dengan pesan "tidak tersedia"
-    if (!session.capturedVideos.some(Boolean)) {
-      const errKey = `${session.sessionId ?? ""}_${session.capturedPhotos.length}_novid`;
-      if (composeKeyRef.current === errKey) return;
-      composeKeyRef.current = errKey;
-      dispatch({ type: "LIVE_VIDEO_DONE", payload: null }); // → liveVideoState = "error"
+    if (photosLen < totalNeeded) {
+      console.log("[BoothClient] compositing skip: photos", photosLen, "< totalNeeded", totalNeeded);
       return;
     }
 
     // Cek apakah canvas.captureStream tersedia (tidak ada di iOS Safari/Chrome)
     // Jika tidak, gunakan raw video blob langsung tanpa compositing
-    const captureStreamSupported = (() => {
-      try {
-        const el = document.createElement("canvas") as HTMLCanvasElement & { captureStream?: () => MediaStream };
-        return typeof el.captureStream === "function";
-      } catch { return false; }
-    })();
-    console.log("[BoothClient] live video effect: captureStreamSupported=", captureStreamSupported, "videos=", session.capturedVideos.map(v => v ? `Blob(${v.size})` : null));
+    let captureStreamSupported = false;
+    try {
+      const el = document.createElement("canvas") as HTMLCanvasElement & { captureStream?: () => MediaStream };
+      captureStreamSupported = typeof el.captureStream === "function";
+    } catch { captureStreamSupported = false; }
+
+    const rawBlob = videosLen > 0 ? session.capturedVideos.find(Boolean) ?? null : null;
+    console.log("[BoothClient] live video effect: photos=", photosLen, "videos=", videosLen, "rawBlob=", rawBlob ? `Blob(${rawBlob.size})` : null, "captureStreamSupported=", captureStreamSupported, "sessionId=", session.sessionId);
+
+    // Jika semua video null (browser tidak support rekaman), langsung set error
+    // supaya UI tetap menampilkan kolom video dengan pesan "tidak tersedia"
+    if (!session.capturedVideos.some(Boolean)) {
+      const errKey = `${session.sessionId ?? ""}_${photosLen}_novid`;
+      if (composeKeyRef.current === errKey) return;
+      composeKeyRef.current = errKey;
+      console.log("[BoothClient] compositing: all videos null, setting error state");
+      dispatch({ type: "LIVE_VIDEO_DONE", payload: null }); // → liveVideoState = "error"
+      return;
+    }
+
     if (!captureStreamSupported) {
-      const rawBlob = session.capturedVideos.find(Boolean) ?? null;
-      const rawKey = `${session.sessionId ?? ""}_${session.capturedPhotos.length}_raw`;
+      const rawKey = `${session.sessionId ?? ""}_${photosLen}_raw`;
       if (composeKeyRef.current === rawKey) return;
       composeKeyRef.current = rawKey;
-      console.log("[BoothClient] Using raw video blob (no captureStream):", rawBlob ? `Blob(${rawBlob.size})` : null);
+      console.log("[BoothClient] compositing: no captureStream, using raw blob:", rawBlob ? `Blob(${rawBlob.size})` : null);
       dispatch({ type: "LIVE_VIDEO_DONE", payload: rawBlob });
       return;
     }
 
     // Unique key: jangan double-trigger untuk set foto yang sama
-    const key = `${session.sessionId ?? ""}_${session.capturedPhotos.length}`;
+    const key = `${session.sessionId ?? ""}_${photosLen}`;
     if (composeKeyRef.current === key) return;
     composeKeyRef.current = key;
 
     let cancelled = false;
+    console.log("[BoothClient] compositing: STARTING composeVideoLive for", photosLen, "photos,", videosLen, "videos");
     dispatch({ type: "LIVE_VIDEO_COMPOSITING" });
 
     const effectiveSlots = getEffectiveSlots(frame);
     const resolvedEffectiveSlots = mapSlotsToCaptureIndexes(effectiveSlots, isEffectiveDuplicateMode(frame));
 
-    composeVideoLive(session.capturedVideos, frame.assetUrl, {
-      canvasWidth:     frame.canvasWidth  || 1080,
-      canvasHeight:    frame.canvasHeight || 1920,
-      slots:           resolvedEffectiveSlots,
-      backgroundColor: frame.backgroundColor || "#ffffff",
-      overlayUrl:      frame.overlayUrl ?? undefined,
-      sceneElements:   frame.sceneElements ?? undefined,
-      duration:        4000,
-      fps:             30,
-      mirror:          hwSettings.cameraMirror,
-    })
+    const compositingTimeout = new Promise<Blob | null>((_, reject) => {
+      setTimeout(() => reject(new Error("Compositing timeout (30s)")), 30000);
+    });
+
+    Promise.race([
+      composeVideoLive(session.capturedVideos, frame.assetUrl, {
+        canvasWidth:     frame.canvasWidth  || 1080,
+        canvasHeight:    frame.canvasHeight || 1920,
+        slots:           resolvedEffectiveSlots,
+        backgroundColor: frame.backgroundColor || "#ffffff",
+        overlayUrl:      frame.overlayUrl ?? undefined,
+        sceneElements:   frame.sceneElements ?? undefined,
+        duration:        4000,
+        fps:             30,
+        mirror:          hwSettings.cameraMirror,
+      }),
+      compositingTimeout,
+    ])
       .then((blob) => {
+        console.log("[BoothClient] compositing: DONE, blob size:", blob?.size);
         if (!cancelled) dispatch({ type: "LIVE_VIDEO_DONE", payload: blob });
       })
-      .catch(() => {
-        if (!cancelled) dispatch({ type: "LIVE_VIDEO_DONE", payload: null });
+      .catch((err) => {
+        console.error("[BoothClient] compositing: FAILED, using raw blob:", err instanceof Error ? err.message : err, "rawBlob=", rawBlob ? `Blob(${rawBlob.size})` : null);
+        if (!cancelled) dispatch({ type: "LIVE_VIDEO_DONE", payload: rawBlob });
       });
 
     return () => { cancelled = true; };
