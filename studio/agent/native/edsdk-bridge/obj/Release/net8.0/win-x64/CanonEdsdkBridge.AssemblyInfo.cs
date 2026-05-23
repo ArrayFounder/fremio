@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("edsdk-bridge-native")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+394c6e6bfd338c503de69f936170ce308f8bda51")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6acc7c04362dac71a73de4503e56e8511b0d971e")]
 [assembly: System.Reflection.AssemblyProductAttribute("edsdk-bridge-native")]
 [assembly: System.Reflection.AssemblyTitleAttribute("edsdk-bridge-native")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -1,0 +1,15 @@
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Debug\net8.0\edsdk-bridge-native.exe
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Debug\net8.0\edsdk-bridge-native.deps.json
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Debug\net8.0\edsdk-bridge-native.runtimeconfig.json
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Debug\net8.0\edsdk-bridge-native.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Debug\net8.0\edsdk-bridge-native.pdb
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\CanonEdsdkBridge.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\CanonEdsdkBridge.AssemblyInfoInputs.cache
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\CanonEdsdkBridge.AssemblyInfo.cs
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\CanonEdsdkBridge.csproj.CoreCompileInputs.cache
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\CanonEdsdkBridge.sourcelink.json
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\edsdk-bridge-native.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\refint\edsdk-bridge-native.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\edsdk-bridge-native.pdb
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\CanonEdsdkBridge.genruntimeconfig.cache
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Debug\net8.0\ref\edsdk-bridge-native.dll

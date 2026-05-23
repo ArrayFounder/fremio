@@ -8,19 +8,19 @@
     "net8.0": []
   },
   "packageFolders": {
-    "/Users/salwa/.nuget/packages/": {}
+    "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/CanonEdsdkBridge.csproj",
+      "projectUniqueName": "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
       "projectName": "edsdk-bridge-native",
-      "projectPath": "/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/CanonEdsdkBridge.csproj",
-      "packagesPath": "/Users/salwa/.nuget/packages/",
-      "outputPath": "/Users/salwa/Documents/fremio copy/studio/agent/native/edsdk-bridge/obj/",
+      "projectPath": "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
+      "packagesPath": "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/Users/salwa/.nuget/NuGet/NuGet.Config"
+        "C:\\Users\\A.r.r.a.y.19\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
@@ -43,8 +43,7 @@
         "enableAudit": "true",
         "auditLevel": "low",
         "auditMode": "direct"
-      },
-      "SdkAnalysisLevel": "10.0.200"
+      }
     },
     "frameworks": {
       "net8.0": {
@@ -60,26 +59,12 @@
         ],
         "assetTargetFallback": true,
         "warn": true,
-        "downloadDependencies": [
-          {
-            "name": "Microsoft.AspNetCore.App.Ref",
-            "version": "[8.0.26, 8.0.26]"
-          },
-          {
-            "name": "Microsoft.NETCore.App.Host.osx-arm64",
-            "version": "[8.0.26, 8.0.26]"
-          },
-          {
-            "name": "Microsoft.NETCore.App.Ref",
-            "version": "[8.0.26, 8.0.26]"
-          }
-        ],
         "frameworkReferences": {
           "Microsoft.NETCore.App": {
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/10.0.203/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.421/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

@@ -1,0 +1,2 @@
+c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\publish\win-x64\edsdk-bridge-native.pdb
+c:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\publish\win-x64\edsdk-bridge-native.exe

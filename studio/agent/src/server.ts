@@ -655,6 +655,9 @@ function getAgentRuntimeRoots(): string[] {
     path.resolve(path.dirname(process.execPath), ".."),
     path.dirname(process.execPath),
     path.resolve(path.dirname(process.execPath), "resources", "embedded-agent", "agent"),
+    // Development: native/edsdk-bridge/bin/Release/net8.0/win-x64/edsdk-bridge-native.exe
+    path.resolve(__dirname, "..", "native", "edsdk-bridge", "bin", "Release", "net8.0", "win-x64"),
+    path.resolve(__dirname, "..", "native", "edsdk-bridge", "bin", "Release", "net8.0"),
   ];
   return Array.from(new Set(roots));
 }
@@ -666,8 +669,10 @@ function resolveEdsdkBridgePath(): string {
   const isWindowsExe = process.platform === "win32" ? "edsdk-bridge-native.exe" : "edsdk-bridge-native";
   for (const root of getAgentRuntimeRoots()) {
     const candidates = [
+      // Check root directly (for native/.../win-x64/ structure)
+      path.join(root, isWindowsExe),
+      // Check root/bin/ (for bin/edsdk-bridge-native.exe structure)
       path.join(root, "bin", isWindowsExe),
-      path.join(root, "bin", "edsdk-bridge"),
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) return candidate;
@@ -1122,50 +1127,36 @@ app.get("/printers", async (_req: Request, res: Response) => {
   res.json({ ok: true, printers });
 });
 
-app.post("/prepare-capture", async (_req: Request, res: Response) => {
-  // Pre-arm capture: do NOT stop preview here — CameraScreen stops it at countdown=1
-  // for the freeze effect. We just spawn the armed bridge so /capture fires instantly.
-  // Preview is already dead by the time /capture fires in the freeze branch.
-  captureInProgress = true;
+app.post("/arm-capture", async (_req: Request, res: Response) => {
+  // ARMS the camera for capture — does NOT stop preview.
+  // Called at count=3 so the armed bridge is ready by count=1.
+  // Preview stays alive for counts 5,4,3,2,1. Preview is stopped by /trigger-capture at count=1.
+  console.log("[agent] /arm-capture: arming capture (preview stays alive)");
   const t0 = Date.now();
-  const hadPreviewSession = isPreviewSessionActive();
 
-  // FIX: Wait for camera USB to be free after previous capture bridge exited.
-  // Camera may not be ready for a new session immediately (USB handle still releasing).
-  // Wait up to 3s for USB to settle.
-  const USB_SETTLE_MS = 2000;
+  // RESET capture guards for new session — camera is starting a fresh capture cycle.
+  // Without this, imageCapturedAt from the previous session (60s window) blocks new captures.
+  imageCapturedAt = 0;
+  preArmedShootFired = false;
+  shootLastFiredAt = 0;
+  captureLockFiredAt = 0;
+  preArmedCaptureInFlight = null;
+
+  // Wait for camera USB to be free from previous capture.
+  const USB_SETTLE_MS = 1500;
   if (lastArmedBridgeExitedAt > 0) {
     const elapsed = Date.now() - lastArmedBridgeExitedAt;
     if (elapsed < USB_SETTLE_MS) {
-      const waitMs = USB_SETTLE_MS - elapsed;
-      console.log(`[agent] /prepare-capture: waiting ${waitMs}ms for camera USB settle`);
-      await new Promise<void>((r) => setTimeout(r, waitMs));
+      console.log(`[agent] /arm-capture: waiting ${USB_SETTLE_MS - elapsed}ms for USB settle`);
+      await new Promise<void>((r) => setTimeout(r, USB_SETTLE_MS - elapsed));
     }
   }
 
-  // Kill preview — give bridge 200ms (was 400ms) to call EdsCloseSession() cleanly before hard kill.
-  // OPTIMIZED: reduced killDelay from 400ms to 200ms for faster prepare-capture response.
-  await stopActivePreviewStreams(200);
-  // After graceful kill (stdin end + 200ms hard kill), process exits in ~250ms.
-  // Give extra 800ms (was 1000ms) for the Canon USB driver on Windows to fully release the handle.
-  // OPTIMIZED: reduced from 1000ms to 800ms.
-  await new Promise<void>((r) => setTimeout(r, 800));
-  lastPreviewBridgeExitedAt = Date.now(); // Mark settle as complete
-
-  // Block preview restart for 10 seconds — prevents zombie preview from re-grabbing USB
-  // if /prepare-capture is abandoned and the armed bridge is still trying to open session.
-  previewRestartBlockedUntil = Date.now() + 10_000;
-
-  previewPreStoppedAt = Date.now();
-
-  // Clean up any previous armed bridge that wasn't used — send NOCAPTURE so it exits
-  // without firing TakePicture, then kill it.
+  // Clean up any previous armed bridge that wasn't used.
   if (armedCapture) {
-    console.log("[agent] /prepare-capture: killing previous armed bridge");
+    console.log("[agent] /arm-capture: killing previous armed bridge");
     try { armedCapture.process.stdin?.write("NOCAPTURE\n"); } catch { /* ignore */ }
-    setTimeout(() => {
-      try { armedCapture!.process.kill(); } catch { /* ignore */ }
-    }, 100);
+    setTimeout(() => { try { armedCapture!.process.kill(); } catch { /* ignore */ } }, 100);
     armedCapture = null;
   }
 
@@ -1194,7 +1185,7 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
       console.log(`[armed-bridge] ${line}`);
       if (!bridgeReady && line.includes("BRIDGE_READY")) {
         bridgeReady = true;
-        console.log(`[agent] BRIDGE_READY received at ${Date.now()-t0}ms after prepare-capture`);
+        console.log(`[agent] BRIDGE_READY received at ${Date.now()-t0}ms after arm-capture`);
         readyResolve!();
       }
     }
@@ -1203,32 +1194,19 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
   armedProcess.on("exit", (code) => {
     if (stderrBuf) { console.log(`[armed-bridge] ${stderrBuf}`); stderrBuf = ""; }
     console.log(`[agent] Armed bridge exited code=${code}`);
-    if (!bridgeReady) readyReject!(new Error(`Armed bridge exited before BRIDGE_READY (code ${code})`));
-
-    if (code === 0) {
-      completionResolve!(tmpFile);
-      // Camera is now free after bridge exits.
-      // Reset captureInProgress so preview can restart and next capture can proceed.
-      captureInProgress = false;
-      lastArmedBridgeExitedAt = Date.now();
-      // Restart preview if we had one before pre-arm stopped it.
-      if (hadPreviewSession) {
-        setTimeout(() => {
-          try {
-            startSharedPreviewProcess();
-            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(1000)).catch(() => scheduleSharedPreviewStop(800));
-          } catch { /* ignore */ }
-        }, 30);
+    if (!bridgeReady) { readyReject!(new Error(`Armed bridge exited before BRIDGE_READY (code ${code})`)); }
+    // Only resolve completion if the bridge actually captured an image (file exists).
+    // If bridge exited via NOCAPTURE/timeout/cancelled, no image was taken → reject.
+    // We detect this by checking: file exists + bridge exited with code=0.
+    if (code === 0 && bridgeReady) {
+      if (fs.existsSync(tmpFile)) {
+        completionResolve!(tmpFile);
+        lastArmedBridgeExitedAt = Date.now();
+      } else {
+        completionReject!(new Error("Armed bridge exited without capture (NOCAPTURE or timeout)"));
       }
     } else {
-      completionReject!(new Error(`Armed bridge exited with code ${code}`));
-      if (hadPreviewSession) {
-        setTimeout(() => {
-          try {
-            startSharedPreviewProcess();
-          } catch { /* ignore */ }
-        }, 30);
-      }
+      completionReject!(new Error(`Armed bridge exited without capture (code ${code})`));
     }
     if (armedCapture?.process === armedProcess) armedCapture = null;
   });
@@ -1245,7 +1223,7 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     readyPromise,
     shootFn: () => {
       console.log(`[agent] Sending SHOOT to armed bridge`);
-      preArmedShootFired = true; // Atomic — must be set before stdin write
+      preArmedShootFired = true;
       shootLastFiredAt = Date.now();
       captureLockFiredAt = Date.now();
       armedProcess.stdin?.write("SHOOT\n");
@@ -1253,24 +1231,155 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     completionPromise,
   };
 
-  // Suppress unhandled rejections — these are caught in /capture
   readyPromise.catch(() => {});
   completionPromise.catch(() => {});
 
-  // FIX 4: Wait for BRIDGE_READY before responding to client.
-  // This ensures /capture (fired simultaneously) always finds armedCapture fully initialized.
-  // If BRIDGE_READY never comes (camera busy / USB conflict), return error instead of success.
+  // Wait for BRIDGE_READY before responding so /trigger-capture always finds armedCapture ready.
   try {
-    await readyPromise; // timeout is 15s in the bridge's SHOOT wait, but we trust the bridge
-    console.log(`[agent] /prepare-capture: BRIDGE_READY confirmed, responding at ${Date.now()-t0}ms`);
-    captureInProgress = false; // Reset so preview can restart if needed
+    await readyPromise;
+    console.log(`[agent] /arm-capture: BRIDGE_READY confirmed at ${Date.now()-t0}ms`);
     res.json({ ok: true, armedBridgePid: armedProcess.pid });
   } catch (err) {
-    console.error(`[agent] /prepare-capture: BRIDGE_READY failed: ${(err as Error).message}`);
-    // Kill the failed armed bridge to avoid orphaned USB session
+    console.error(`[agent] /arm-capture: BRIDGE_READY failed: ${(err as Error).message}`);
     try { armedProcess.kill(); } catch { /* ignore */ }
     if (armedCapture?.process === armedProcess) armedCapture = null;
-    captureInProgress = false; // Reset so preview can restart
+    res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
+  }
+});
+
+app.post("/trigger-capture", async (_req: Request, res: Response) => {
+  // TRIGGERS the pre-armed shot at count=1. Stops preview THEN sends SHOOT to armed bridge.
+  // Called at count=1. Preview has been alive for counts 5,4,3,2 — now we stop it and fire.
+  console.log("[agent] /trigger-capture: triggering shot (stopping preview first)");
+  const t0 = Date.now();
+  captureInProgress = true;
+  const hadPreviewSession = isPreviewSessionActive();
+
+  // STOP PREVIEW at count=1 — this is the ONLY time we stop preview.
+  // Camera can only be in one mode: live preview OR capture. Now switch to capture.
+  await stopActivePreviewStreams(200);
+  await new Promise<void>((r) => setTimeout(r, 800)); // USB settle
+  lastPreviewBridgeExitedAt = Date.now();
+  previewRestartBlockedUntil = 0; // Clear block — we're done with capture prep
+
+  // Capture armed bridge reference. NOTE: we do NOT send NOCAPTURE here.
+  // /arm-capture already handles killing previous armed bridges when a new arm starts.
+  // Sending NOCAPTURE here would kill the NEW armed bridge before we can fire SHOOT!
+  const armed = armedCapture;
+
+  // Now send SHOOT — bridge is already armed from /arm-capture.
+  // CRITICAL: Wait for BRIDGE_READY before sending SHOOT. Without this, SHOOT can
+  // race with the bridge still starting up (USB lock 0xC0 → session busy → exit without capture).
+  if (armed) {
+    preArmedCaptureInFlight = armed;
+    console.log(`[agent] /trigger-capture: waiting for BRIDGE_READY before SHOOT... t=${Date.now()-t0}ms`);
+    try {
+      await armed.readyPromise; // Wait for bridge to be fully initialized
+    } catch (err) {
+      // Bridge died before BRIDGE_READY — fall through to inline path
+      console.error(`[agent] /trigger-capture: armed bridge died early: ${(err as Error).message}`);
+      preArmedCaptureInFlight = null;
+      armedCapture = null;
+      // Fall through to inline fallback below
+    }
+  }
+
+  if (armed && preArmedCaptureInFlight === armed) {
+    // Armed bridge is confirmed ready — fire SHOOT
+    console.log(`[agent] /trigger-capture: BRIDGE_READY confirmed, firing SHOOT at ${Date.now()-t0}ms`);
+    armed.shootFn();
+    try {
+      const outputPath = await armed.completionPromise;
+      console.log(`[agent] /trigger-capture: done in ${Date.now()-t0}ms`);
+      preArmedCaptureInFlight = null;
+      preArmedShootFired = false;
+      if (!fs.existsSync(outputPath)) {
+        res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
+        captureInProgress = false;
+        return;
+      }
+      const buf = fs.readFileSync(outputPath);
+      imageCapturedAt = Date.now();
+      captureInProgress = false;
+      // CLEAR previewRestartBlockedUntil so camera returns to live view
+      previewRestartBlockedUntil = 0;
+      lastArmedBridgeExitedAt = Date.now();
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.send(buf);
+      if (hadPreviewSession) {
+        setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
+      }
+      return;
+    } catch (err) {
+      console.error(`[agent] /trigger-capture: error: ${(err as Error).message}`);
+      preArmedCaptureInFlight = null;
+      captureInProgress = false;
+      previewRestartBlockedUntil = 0;
+      res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
+      return;
+    }
+  }
+
+  // No armed bridge — fallback to inline (should not happen if /arm-capture worked)
+  console.warn("[agent] /trigger-capture: no armed bridge, falling back to inline");
+  captureHandlerInFlight = true;
+  captureInProgress = true;
+  const SHOOT_WINDOW_MS = 60000;
+  const alreadyShot = (shootLastFiredAt > 0 && Date.now() - shootLastFiredAt < SHOOT_WINDOW_MS)
+                    || (imageCapturedAt > 0 && Date.now() - imageCapturedAt < SHOOT_WINDOW_MS);
+  if (alreadyShot) {
+    captureHandlerInFlight = false;
+    captureInProgress = false;
+    res.status(409).json({ ok: false, error: "Capture sudah dilakukan sesi lain" });
+    return;
+  }
+
+  try {
+    const { process: armedProcess, readyPromise, tmpFile } = await doPrepareCaptureInline();
+    await readyPromise;
+    if (Date.now() - shootLastFiredAt < SHOOT_WINDOW_MS || Date.now() - imageCapturedAt < SHOOT_WINDOW_MS) {
+      console.warn("[agent] /trigger-capture: SHOOT fired during bridge startup — skipping");
+      await new Promise<void>((resolve) => { armedProcess.on("exit", () => resolve()); });
+      captureHandlerInFlight = false;
+      captureInProgress = false;
+      previewRestartBlockedUntil = 0;
+      if (fs.existsSync(tmpFile)) {
+        const buf = fs.readFileSync(tmpFile);
+        res.setHeader("Content-Type", "image/jpeg");
+        res.send(buf);
+      } else {
+        res.status(500).json({ ok: false, error: "SHOOT sudah dilakukan bridge lain" });
+      }
+      return;
+    }
+    preArmedShootFired = true;
+    shootLastFiredAt = Date.now();
+    captureLockFiredAt = Date.now();
+    armedProcess.stdin?.write("SHOOT\n");
+    await new Promise<void>((resolve) => { armedProcess.on("exit", () => resolve()); });
+    if (!fs.existsSync(tmpFile)) {
+      res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
+      captureInProgress = false;
+      previewRestartBlockedUntil = 0;
+      return;
+    }
+    const buf = fs.readFileSync(tmpFile);
+    imageCapturedAt = Date.now();
+    captureInProgress = false;
+    previewRestartBlockedUntil = 0;
+    lastArmedBridgeExitedAt = Date.now();
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.send(buf);
+    if (hadPreviewSession) {
+      setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
+    }
+  } catch (err) {
+    console.error(`[agent] /trigger-capture inline error: ${(err as Error).message}`);
+    captureHandlerInFlight = false;
+    captureInProgress = false;
+    previewRestartBlockedUntil = 0;
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
   }
 });
@@ -1379,20 +1488,21 @@ app.post("/capture", async (req: Request, res: Response) => {
     const armed = armedCapture;
     console.log(`[agent] /capture: armed=${!!armed} t=${Date.now()-t0}ms`);
 
-    // CRITICAL: null out armedCapture BEFORE any async work — prevents the second
-    // /capture call (which arrives before preArmedCaptureInFlight is set) from
-    // also falling through to the inline path and sending a second SHOOT.
-    // The old guard (preArmedCaptureInFlight check) races: second call arrives
-    // before flag is set, sees flag=null, falls through → double shot.
-    // By nulling armedCapture here, we atomically "claim" this capture slot.
-    if (armed) { armedCapture = null; }
-
-    if (armed && preArmedCaptureInFlight !== armed) {
-      // ── PRE-ARMED PATH ────────────────────────────────────────────────────────
-      // This is the NORMAL path when /prepare-capture was called at countdown=1.
+    if (armed) {
+      // CRITICAL: set preArmedCaptureInFlight BEFORE nulling armedCapture and BEFORE any await.
+      // This prevents a second /capture call from racing into the inline path and firing
+      // a second SHOOT while we wait for BRIDGE_READY from the pre-armed bridge.
       preArmedCaptureInFlight = armed;
+      armedCapture = null; // Atomically claim this capture slot
+
+      if (preArmedCaptureInFlight !== armed) {
+        // Should never happen, but guard against stale state
+        console.warn("[agent] /capture: preArmedCaptureInFlight race detected");
+        preArmedCaptureInFlight = null;
+      }
+
+      // ── PRE-ARMED PATH ────────────────────────────────────────────────────────
       const tmpFile = armed.outputPath;
-      captureInProgress = true;
       console.log(`[agent] /capture: pre-armed path, awaiting readyPromise... t=${Date.now()-t0}ms`);
       await armed.readyPromise;
       const tAfterReady = Date.now();
@@ -1402,14 +1512,16 @@ app.post("/capture", async (req: Request, res: Response) => {
       const outputPath = await armed.completionPromise;
       console.log(`[agent] /capture: completionPromise resolved in ${Date.now()-t0}ms (took ${Date.now()-tAfterReady}ms)`);
       preArmedCaptureInFlight = null; // Release lock after shoot completes
-      preArmedShootFired = false; // Reset for next session
+      preArmedShootFired = false;
       if (!fs.existsSync(outputPath)) {
         res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
         return;
       }
       const buf = fs.readFileSync(outputPath);
-      imageCapturedAt = Date.now(); // Mark image as captured — prevents inline path from double-shot
+      imageCapturedAt = Date.now();
       console.log(`[agent] /capture: pre-armed done in ${Date.now()-t0}ms`);
+      // Clear preview restart block so camera can return to live view
+      previewRestartBlockedUntil = 0;
       if (wantsBinary) {
         res.setHeader("Content-Type", "image/jpeg");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -1417,14 +1529,14 @@ app.post("/capture", async (req: Request, res: Response) => {
       } else {
         res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
       }
+      // Restart preview immediately so camera returns to live view
       if (hadPreviewSession) {
         setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
       }
       return;
     }
 
-    // A second /capture call arrived while we were waiting for BRIDGE_READY.
-    // Don't fire a second SHOOT — return conflict so caller retries.
+    // Armed bridge was already claimed by another /capture call — return conflict.
     if (preArmedCaptureInFlight !== null) {
       captureHandlerInFlight = false;
       captureInProgress = false;
@@ -1435,6 +1547,17 @@ app.post("/capture", async (req: Request, res: Response) => {
     // ── INLINE SHOOT PATH ───────────────────────────────────────────────────────
     // No pre-armed bridge available (e.g., /prepare-capture was too slow or cancelled).
     // Fallback that takes longer but guarantees a single shot.
+
+    // GUARD: If preArmedCaptureInFlight is set, another /capture already claimed the slot.
+    // Don't fire inline SHOOT — return conflict so caller handles it.
+    if (preArmedCaptureInFlight !== null) {
+      console.warn("[agent] /capture: preArmedCaptureInFlight set, skipping inline SHOOT");
+      captureHandlerInFlight = false;
+      captureInProgress = false;
+      preArmedShootFired = false;
+      res.status(409).json({ ok: false, error: "Capture sedang diproses — tunggu sebentar" });
+      return;
+    }
 
     // DEFENSIVE DOUBLE-SHOT GUARD — check BEFORE any await:
     // If a SHOOT was already fired within the last 60s (covers TakePicture + download),

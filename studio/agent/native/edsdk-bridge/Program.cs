@@ -809,8 +809,14 @@ internal sealed class EdsdkSession : IDisposable
         Console.Error.WriteLine("BRIDGE_READY");
         Console.Error.Flush();
 
-        // Wait for SHOOT signal from Node.js via stdin (max 15s)
+        // Wait for SHOOT signal from Node.js via stdin (max 60s).
+        // This replaces the 15s timeout that caused unintended auto-fire shots.
+        // CameraScreen fires /capture at countdown=0; the 60s window accommodates
+        // any network latency or retry from the booth UI.
         var shootSignal = new ManualResetEventSlim(false);
+        var timedOut = false;
+        var cancelled = false;
+        var shootReceived = false;
         var stdinReader = new Thread(() =>
         {
             try
@@ -818,9 +824,18 @@ internal sealed class EdsdkSession : IDisposable
                 string? line;
                 while ((line = Console.In.ReadLine()) != null)
                 {
-                    Console.Error.WriteLine($"[bridge-armed] stdin: '{line.Trim()}'");
-                    if (line.Trim().Equals("SHOOT", StringComparison.OrdinalIgnoreCase))
+                    var trimmed = line.Trim();
+                    Console.Error.WriteLine($"[bridge-armed] stdin: '{trimmed}'");
+                    if (trimmed.Equals("SHOOT", StringComparison.OrdinalIgnoreCase))
                     {
+                        shootReceived = true;
+                        shootSignal.Set();
+                        return;
+                    }
+                    // NOCAPTURE = countdown was cancelled — exit gracefully without shooting.
+                    if (trimmed.Equals("NOCAPTURE", StringComparison.OrdinalIgnoreCase))
+                    {
+                        cancelled = true;
                         shootSignal.Set();
                         return;
                     }
@@ -830,15 +845,36 @@ internal sealed class EdsdkSession : IDisposable
             {
                 Console.Error.WriteLine($"[bridge-armed] stdin reader error: {ex.Message}");
             }
-            // stdin closed without SHOOT — fire anyway to avoid hang
-            shootSignal.Set();
+            // stdin closed without SHOOT — this is a genuine timeout (not normal for normal flow).
+            // timedOut stays false; the timeout wait below will set it.
         }) { IsBackground = true, Name = "ArmedShootSignalReader" };
         stdinReader.Start();
 
         Console.Error.WriteLine("[bridge-armed] Waiting for SHOOT signal...");
-        if (!shootSignal.Wait(15000))
+        if (!shootSignal.Wait(60000))
         {
-            Console.Error.WriteLine("[bridge-armed] SHOOT timed out — firing anyway");
+            Console.Error.WriteLine("[bridge-armed] SHOOT timed out — firing anyway (60s limit reached)");
+            timedOut = true;
+        }
+
+        // CRITICAL: Use shootReceived to decide whether to fire, not timedOut.
+        // timedOut can be set by BOTH timeout AND NOCAPTURE/EOF (race condition).
+        // shootReceived is only set when SHOOT is actually received on stdin.
+        if (!shootReceived)
+        {
+            if (cancelled)
+            {
+                Console.Error.WriteLine("[bridge-armed] NOCAPTURE received — cancelling capture, exiting");
+                return;
+            }
+            if (timedOut)
+            {
+                Console.Error.WriteLine("[bridge-armed] Arm expired, exiting without firing (timed out)");
+                return;
+            }
+            // Should not reach here normally — but if stdin closed immediately, treat as cancelled.
+            Console.Error.WriteLine("[bridge-armed] stdin closed without signal — exiting gracefully");
+            return;
         }
 
         var t0 = System.Diagnostics.Stopwatch.StartNew();
@@ -848,6 +884,7 @@ internal sealed class EdsdkSession : IDisposable
         // Fire immediately to minimize lag. Retries handle any brief hardware busy state.
         try
         {
+            Console.Error.WriteLine($"[bridge-armed] TakePicture start t={t0.ElapsedMilliseconds}ms");
             SendTakePictureWithRetry();
             var captureMs = t0.ElapsedMilliseconds;
             Console.Error.WriteLine($"[bridge-armed] TakePicture fired in <{captureMs}ms, polling for download event...");
