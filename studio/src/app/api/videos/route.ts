@@ -11,6 +11,8 @@ export async function POST(req: Request) {
   const sessionId = formData.get("sessionId") as string;
   const file      = formData.get("video") as File | null;
 
+  console.log("[POST /api/videos] sessionId =", sessionId, "file =", file ? `File(${file.name}, ${file.size} bytes)` : null);
+
   if (!sessionId || !file) {
     return NextResponse.json<ApiResponse>(
       { success: false, error: "sessionId dan video wajib diisi" },
@@ -23,6 +25,8 @@ export async function POST(req: Request) {
     select: { id: true, status: true },
   });
 
+  console.log("[POST /api/videos] session found:", session?.id, "status:", session?.status);
+
   if (!session) {
     return NextResponse.json<ApiResponse>(
       { success: false, error: "Sesi tidak ditemukan" },
@@ -32,13 +36,16 @@ export async function POST(req: Request) {
 
   const key       = buildVideoKey(sessionId);
   const buffer    = Buffer.from(await file.arrayBuffer());
+  console.log("[POST /api/videos] uploading buffer:", buffer.length, "bytes, key:", key);
   const publicUrl = await uploadPhoto(key, buffer, "video/webm");
+  console.log("[POST /api/videos] upload done, publicUrl:", publicUrl);
 
   const updated = await prisma.boothSession.update({
     where: { id: sessionId },
     data:  { videoUrl: publicUrl },
     select: { id: true, videoUrl: true },
   });
+  console.log("[POST /api/videos] updated session videoUrl:", updated.videoUrl);
 
   return NextResponse.json<ApiResponse>({ success: true, data: { videoUrl: updated.videoUrl } }, { status: 201 });
 }

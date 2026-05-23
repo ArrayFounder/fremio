@@ -1084,15 +1084,19 @@ export async function uploadVideo(blob: Blob, sessionId: string): Promise<string
   form.append("sessionId", sessionId);
   // Browser MediaRecorder menghasilkan WebM container (VP8/VP9/H.264).
   // Gunakan .webm agar file valid dan nginx serve dengan content-type video/webm.
-  form.append("video", new File([blob], "live.webm", { type: "video/webm" }), "live.webm");
+  const file = new File([blob], "live.webm", { type: "video/webm" });
+  form.append("video", file, "live.webm");
+  console.log("[uploadVideo] uploading blob size =", blob.size, "type =", blob.type, "sessionId =", sessionId);
 
   const res = await fetch("/api/videos", {
     method: "POST",
     body: form,
   });
 
+  console.log("[uploadVideo] /api/videos response status =", res.status);
   if (!res.ok) {
-    throw new Error("Upload video gagal");
+    const text = await res.text().catch(() => "");
+    throw new Error("Upload video gagal: " + res.status + " " + text);
   }
 
   const body = await res.json() as { success: boolean; data?: { videoUrl: string }; error?: string };
@@ -1101,6 +1105,7 @@ export async function uploadVideo(blob: Blob, sessionId: string): Promise<string
     throw new Error(body.error ?? "Upload video gagal");
   }
 
+  console.log("[uploadVideo] videoUrl =", body.data.videoUrl);
   return body.data.videoUrl;
 }
 

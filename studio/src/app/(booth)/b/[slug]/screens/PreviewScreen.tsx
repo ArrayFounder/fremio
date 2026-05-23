@@ -430,15 +430,22 @@ export function PreviewScreen({
       const [photoUrl, videoUrl, gifUrl, rawPhotoUrls] = await Promise.all([
         uploadToR2(filteredBlob, sessionId),
         // Always upload the composite video blob directly.
-        // BoohClient already re-renders with filters via the compositing effect,
+        // BoothClient already re-renders with filters via the compositing effect,
         // so we don't re-compose here (that would be a second render with different timing).
         // If liveVideoCompositeBlob is null (render failed or device doesn't support),
         // this resolves to null and video is skipped.
         livePhotoVideoEnabled && liveVideoCompositeBlob
-          ? uploadVideo(liveVideoCompositeBlob, sessionId).catch((err) => {
-              console.error("[PreviewScreen handleSave] video upload failed:", err instanceof Error ? err.message : err);
-              return null;
-            })
+          ? (async () => {
+              console.log("[PreviewScreen handleSave] video upload: blob size =", liveVideoCompositeBlob.size, "type =", liveVideoCompositeBlob.type, "sessionId =", sessionId);
+              try {
+                const url = await uploadVideo(liveVideoCompositeBlob, sessionId);
+                console.log("[PreviewScreen handleSave] video upload SUCCESS:", url?.slice(0, 80));
+                return url;
+              } catch (err) {
+                console.error("[PreviewScreen handleSave] video upload FAILED:", err instanceof Error ? err.message : String(err));
+                return null;
+              }
+            })()
           : Promise.resolve<string | null>(null),
         // GIF slideshow — encode & upload; jika gagal, abaikan (non-fatal)
         encodeGif(capturedPhotos, {
