@@ -1814,6 +1814,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             const videoBlob = await stopDslrLiveRecording();
             onVideoReady(videoBlob, currentCaptureIndex);
           })();
+        } else if (livePhotoVideoEnabled) {
+          // Webcam: stop the MediaRecorder and pass the blob
+          void (async () => {
+            const videoBlob = await stopRecording();
+            console.log("[CameraScreen] webcam videoBlob:", videoBlob ? `Blob(${videoBlob.size})` : "null", "captureIndex:", currentCaptureIndex);
+            onVideoReady(videoBlob, currentCaptureIndex);
+          })();
         } else {
           onVideoReady(null, currentCaptureIndex);
         }
