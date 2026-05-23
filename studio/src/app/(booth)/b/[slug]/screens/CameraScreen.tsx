@@ -1337,17 +1337,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     return frozenDataUrl;
   }, []);
 
-  const captureFromAgent = useCallback(async (captureMirror = mirrorRef.current, skipFreeze = false): Promise<string> => {
+  const captureFromAgent = useCallback(async (captureMirror = mirrorRef.current): Promise<string> => {
     const base = agentBaseRef.current;
     if (!base && !(useIpcAgentRef.current && window.fremioBooth?.agentCapture)) {
       throw new Error("Agent lokal tidak terdeteksi. Pastikan Fremio Studio sudah dibuka.");
     }
 
-    // Only freeze if not already frozen (e.g. by pre-capture at count=1).
-    // Double-freeze causes race conditions and crashes.
-    if (!skipFreeze) {
-      freezeDslrPreview(captureMirror);
-    }
+    // /trigger-capture handles preview stop internally — no need to freeze here.
+    // Removing freeze avoids race conditions with /trigger-capture's own stopActivePreviewStreams.
 
     try {
       let photoDataUrl: string;
@@ -1361,13 +1358,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         if (!ipcData.image) throw new Error("Capture gagal: agent IPC tidak mengembalikan gambar.");
         photoDataUrl = `data:${ipcData.image.mimeType};base64,${ipcData.image.base64}`;
       } else if (base) {
-        // Request binary JPEG directly — no base64 encoding in agent, no base64
-        // decode in browser. Saves ~120-240ms per capture vs JSON+base64 path.
-        const res = await fetch(`${base}/capture`, {
+        // Call /trigger-capture — stops preview THEN fires SHOOT to pre-armed bridge.
+        // Returns raw JPEG binary — no base64 encode/decode overhead.
+        const res = await fetch(`${base}/trigger-capture`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Accept": "image/jpeg",        // agent returns raw binary, not JSON+base64
+            "Accept": "image/jpeg",
           },
           body: JSON.stringify({}),
           signal: AbortSignal.timeout(30000),
@@ -1376,7 +1373,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           const errBody = await res.json().catch(() => ({})) as { error?: string };
           throw new Error(errBody.error || `Capture gagal (HTTP ${res.status})`);
         }
-        // Response is raw JPEG binary — convert to data URL for cross-browser compatibility
+        // Response is raw JPEG binary
         const blob = await res.blob();
         photoDataUrl = await blobToDataUrl(blob);
       } else {
@@ -1393,12 +1390,12 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       setDslrPosterSrc(null);
       throw err instanceof Error ? err : new Error(String(err));
     } finally {
-      // Resume live preview immediately — no artificial delay needed.
+      // Resume live preview — /trigger-capture already cleared previewRestartBlockedUntil.
       // Canon USB release time (~2.2s) is handled by DSLR_PREVIEW_ERROR_GRACE_MS in pollPreview.
       captureInProgressRef.current = false;
       setDslrPreviewPaused(false);
     }
-  }, [freezeDslrPreview, dslrPosterSrc, useIpcAgentRef]);
+  }, [dslrPosterSrc, useIpcAgentRef]);
 
   const { videoRef, stream, isReady, permissionError, devices, start, stop, capture, startRecording, stopRecording } = useCamera({
     canvasWidth:  1920,
@@ -1771,10 +1768,12 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           // With pre-arm at count=3, bridge is ready ~2s before shot.
           // Preview stays live for counts 5,4,3,2,1.
           if (count === 3) {
+            // /arm-capture: arms camera WITHOUT stopping preview.
+            // Preview stays live for counts 5,4,3,2,1 — no preview stop until /trigger-capture at count=1.
             const base = agentBaseRef.current;
             if (base) {
-              fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
-                .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
+              fetch(`${base}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(15000) })
+                .catch((e) => console.warn("[CameraScreen] arm-capture error:", e));
             }
           }
 
@@ -1804,7 +1803,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
     countdownTimerRef.current = setTimeout(tick, 1000);
-  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, freezeDslrPreview, livePhotoVideoEnabled, onCapture, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
+  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, livePhotoVideoEnabled, onCapture, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
 
   // Viewfinder — landscape 16:9 di landscape, 4:3 di portrait
   const aspectStyle = isPortrait
