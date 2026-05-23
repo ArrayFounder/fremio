@@ -1945,16 +1945,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           </div>
         )}
 
-        {/* Capture Hint Overlay — filler animation or "Menyiapkan hasil…" */}
+        {/* Capture Hint Overlay — handles filler + preparing phases with smooth transitions */}
         <CaptureHintOverlay visible={capturePhase === "filler" || capturePhase === "preparing"} phase={capturePhase === "preparing" ? "preparing" : "filler"} />
-
-        {/* Capture loading overlay — shows while DSLR is downloading the photo */}
-        {capturePhase === "preparing" && (
-          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="text-6xl animate-pulse">⏳</div>
-            <p className="mt-6 text-white font-bold text-2xl">Menyiapkan hasil…</p>
-          </div>
-        )}
 
         {/* Flash effect */}
         {cdState === "FLASH" && (
@@ -2217,13 +2209,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             </div>
           )}
 
-          {/* Capture loading overlay — shows while DSLR is downloading the photo */}
-          {capturePhase === "preparing" && (
-            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
-              <div className="text-6xl animate-pulse">⏳</div>
-              <p className="mt-6 text-white font-bold text-2xl">Menyiapkan hasil…</p>
-            </div>
-          )}
+          {/* Capture Hint Overlay — handles filler + preparing with smooth transition (live_view mode) */}
+          <CaptureHintOverlay visible={capturePhase === "filler" || capturePhase === "preparing"} phase={capturePhase === "preparing" ? "preparing" : "filler"} />
 
           {/* ── Toolbar kanan atas: settings ── */}
           <div className="absolute top-3 right-3 flex flex-col gap-2">
