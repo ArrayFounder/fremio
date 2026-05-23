@@ -96,7 +96,7 @@ export function CaptureHintOverlay({ visible }: { visible: boolean }) {
           ${state === "hold"   ? "animate-float-hold" : ""}
           ${state === "exit"   ? "animate-slide-out"  : ""}
         `}
-        style={{ fontSize: "clamp(2.5rem, 10vw, 8rem)", lineHeight: 1, color: "#d4a017" }}
+        style={{ fontSize: "clamp(1.8rem, 8vw, 6rem)", lineHeight: 1, color: "#deb7a6" }}
       >
         {displayText || hintWord.slice(0, 1)}
       </div>
