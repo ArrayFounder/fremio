@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { composePhoto, applyFilterToBlob, uploadToR2, uploadVideo, uploadGif, uploadRawPhoto, encodeGif, composeVideoLive, applyPixelFiltersToData, isOverlayFrame, applyTrialWatermarkToDataUrl } from "@/lib/frameEngine";
+import { composePhoto, applyFilterToBlob, uploadToR2, uploadVideo, uploadGif, uploadRawPhoto, encodeGif, applyPixelFiltersToData, isOverlayFrame, applyTrialWatermarkToDataUrl } from "@/lib/frameEngine";
 import { getAdaptiveColors } from "../colorUtils";
 import type { BoothConfigData, FrameData } from "../types";
 import { getEffectiveSlots, isEffectiveDuplicateMode, mapSlotsToCaptureIndexes } from "../frameSlotUtils";
@@ -429,33 +429,16 @@ export function PreviewScreen({
 
       const [photoUrl, videoUrl, gifUrl, rawPhotoUrls] = await Promise.all([
         uploadToR2(filteredBlob, sessionId),
+        // Always upload the composite video blob directly.
+        // BoohClient already re-renders with filters via the compositing effect,
+        // so we don't re-compose here (that would be a second render with different timing).
+        // If liveVideoCompositeBlob is null (render failed or device doesn't support),
+        // this resolves to null and video is skipped.
         livePhotoVideoEnabled && liveVideoCompositeBlob
-          ? (async () => {
-              if (!videoIsOriginal && capturedVideos.some(Boolean)) {
-                try {
-                  // Re-komposisi dari raw video clips dengan filter di-apply per-slot
-                  // (sebelum frame overlay digambar) — frame design tidak ikut terfilter
-                  const filteredVideoBlob = await composeVideoLive(
-                    capturedVideos,
-                    frame.assetUrl,
-                    {
-                      ...frameOpts,
-                      filters:  videoPreset.filters,
-                      mirror:   mirrorVideo,
-                      duration: 4000,
-                      fps:      30,
-                    },
-                  );
-                  return filteredVideoBlob
-                    ? uploadVideo(filteredVideoBlob, sessionId).catch(() => null)
-                    : uploadVideo(liveVideoCompositeBlob, sessionId).catch(() => null);
-                } catch (err) {
-                  console.warn("[PreviewScreen] Video filter gagal, upload unfiltered:", err);
-                  return uploadVideo(liveVideoCompositeBlob, sessionId).catch(() => null);
-                }
-              }
-              return uploadVideo(liveVideoCompositeBlob, sessionId).catch(() => null);
-            })()
+          ? uploadVideo(liveVideoCompositeBlob, sessionId).catch((err) => {
+              console.error("[PreviewScreen handleSave] video upload failed:", err instanceof Error ? err.message : err);
+              return null;
+            })
           : Promise.resolve<string | null>(null),
         // GIF slideshow — encode & upload; jika gagal, abaikan (non-fatal)
         encodeGif(capturedPhotos, {
