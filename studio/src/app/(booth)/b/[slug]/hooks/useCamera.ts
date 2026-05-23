@@ -185,52 +185,36 @@ export function useCamera({
     chunksRef.current = [];
 
     const mimeType = getBestVideoMime();
-    // Try multiple constructor options as fallback for cross-browser compatibility
     const tryCreate = (opts: MediaRecorderOptions) => {
       try { return new MediaRecorder(stream, opts); } catch { return null; }
     };
+    const tryStart = (opts: MediaRecorderOptions) => {
+      const r = tryCreate(opts);
+      if (!r) return null;
+      try {
+        r.start(1000);
+        if (r.state !== "recording") {
+          console.warn("[useCamera] MediaRecorder start failed: state =", r.state, "mimeType =", r.mimeType, "opts =", JSON.stringify(opts));
+          try { r.stop(); } catch {}
+          return null;
+        }
+        return r;
+      } catch (e) {
+        console.warn("[useCamera] MediaRecorder start threw:", e, "opts =", JSON.stringify(opts));
+        try { r.stop(); } catch {}
+        return null;
+      }
+    };
+
     const recorder =
-      tryCreate({ mimeType, videoBitsPerSecond: 2_500_000 }) ??
-      tryCreate({ mimeType }) ??
-      tryCreate({});   // last resort: let browser choose mimeType
+      tryStart({ mimeType, videoBitsPerSecond: 2_500_000 }) ??
+      tryStart({ mimeType }) ??
+      tryStart({});   // last resort: browser default
     if (!recorder) {
       console.warn("[useCamera] MediaRecorder tidak dapat dibuat di perangkat ini");
       return;
     }
-    // Verify recorder actually started — some browsers start but don't fire ondataavailable
-    const startAndVerify = (r: MediaRecorder) => {
-      try {
-        r.start(1000);
-        // Check if recorder is in "recording" state after start
-        if (r.state !== "recording") {
-          console.warn("[useCamera] MediaRecorder start failed: state =", r.state, "mimeType =", r.mimeType);
-          return false;
-        }
-        console.log("[useCamera] MediaRecorder started: state =", r.state, "mimeType =", r.mimeType);
-        return true;
-      } catch (e) {
-        console.warn("[useCamera] MediaRecorder start threw:", e);
-        return false;
-      }
-    };
-
-    if (!startAndVerify(recorder)) {
-      // Try without bitrate
-      const recorder2 = tryCreate({ mimeType });
-      if (recorder2 && startAndVerify(recorder2)) {
-        console.log("[useCamera] MediaRecorder started (no bitrate): state =", recorder2.state, "mimeType =", recorder2.mimeType);
-        // Fall through — recorder2 is used
-      } else {
-        // Try browser-default
-        const recorder3 = tryCreate({});
-        if (recorder3 && startAndVerify(recorder3)) {
-          console.log("[useCamera] MediaRecorder started (browser default): state =", recorder3.state, "mimeType =", recorder3.mimeType);
-        } else {
-          console.warn("[useCamera] MediaRecorder could not start in any mode");
-          return;
-        }
-      }
-    }
+    console.log("[useCamera] MediaRecorder started: state =", recorder.state, "mimeType =", recorder.mimeType);
 
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
@@ -239,20 +223,28 @@ export function useCamera({
       }
     };
     recorder.onerror = (e) => { console.warn("[useCamera] recorder error:", e); };
-    // Use 1000ms timeslice + periodic requestData for cross-browser compatibility
-    try { recorder.start(1000); } catch { try { recorder.start(); } catch { return; } }
-    // Also poll requestData every 1s as safety net (some browsers don't honor timeslice)
+    // Poll requestData every 1s as safety net (some browsers don't honor timeslice)
     reqDataTimerRef.current = setInterval(() => {
       if (recorderRef.current && recorderRef.current.state === "recording") {
-        try { recorderRef.current.requestData(); } catch { /* ignore */ }
+        try { recorderRef.current.requestData(); } catch {}
       }
     }, 1000);
     recorderRef.current = recorder;
   }, []);
 
+  // Shared ref for the fail-safe timer so stopRecording can cancel a stale one
+  // from a previous capture that may still be ticking. Prevents stale timer from
+  // clearing chunksRef.current and corrupting THIS capture's blob.
+  const failsafeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // ── stopRecording ─────────────────────────────────────────────────────────
   const stopRecording = useCallback((): Promise<Blob | null> => {
     return new Promise((resolve) => {
+      // Cancel any leftover failsafe from a PREVIOUS capture that may still be ticking.
+      // If we don't clear it, the old timer fires after this resolve and clears
+      // chunksRef.current, corrupting THIS capture's blob.
+      if (failsafeTimerRef.current) { clearTimeout(failsafeTimerRef.current); failsafeTimerRef.current = null; }
+
       // Stop periodic requestData timer
       if (reqDataTimerRef.current) { clearInterval(reqDataTimerRef.current); reqDataTimerRef.current = null; }
       const recorder = recorderRef.current;
@@ -271,18 +263,19 @@ export function useCamera({
       const finish = (r: MediaRecorder) => {
         if (settled) return;
         settled = true;
-        clearTimeout(failsafe);
+        clearTimeout(failsafeTimerRef.current!); // cancel self
+        failsafeTimerRef.current = null;
         const chunks = chunksRef.current;
+        chunksRef.current = []; // clear BEFORE resolve so stale failsafe can't corrupt
         const blob = chunks.length > 0
           ? new Blob(chunks, { type: r.mimeType || "video/mp4" })
           : null;
-        chunksRef.current = [];
         cleanup();
         console.log("[useCamera] stopRecording finish: blob =", blob ? `Blob(${blob.size})` : "null", "chunks collected =", chunks.length, "mimeType =", r.mimeType);
         resolve(blob);
       };
       // Failsafe: always resolve within 6 seconds even if onstop never fires
-      const failsafe = setTimeout(() => {
+      failsafeTimerRef.current = setTimeout(() => {
         console.warn("[useCamera] stopRecording: failsafe triggered! recorder.state =", recorder.state, "chunks =", chunksRef.current.length);
         finish(recorder);
       }, 6000);
