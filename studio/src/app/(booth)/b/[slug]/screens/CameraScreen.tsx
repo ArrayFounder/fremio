@@ -1769,9 +1769,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           setCountdown(null);
           try {
             dataUrl = await captureFromAgent(captureMirrorSnapshot);
-            // captureFromAgent's finally block handles:
-            // - captureInProgressRef.current = false (enables preview polling)
-            // - setDslrPreviewPaused(false) (resumes preview stream)
           } catch (err) {
             captureInFlightRef.current = false;
             setCapturePhase("idle");
@@ -1784,6 +1781,20 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           // Webcam path: capture immediately
           setCapturePhase("preparing");
           setCountdown(null);
+          // Fallback: use camera's built-in capture
+          try { dataUrl = capture(); } catch { /* ignore */ }
+        }
+
+        // Guard: if dataUrl is empty (e.g. DSLR blob conversion failed silently),
+        // abort before passing garbage to onCapture.
+        if (!dataUrl || dataUrl.length < 100) {
+          captureInFlightRef.current = false;
+          captureInProgressRef.current = false;
+          setCapturePhase("idle");
+          setCdState("READY");
+          setCaptureError("Foto kosong — gagal mengambil hasil dari Canon. Coba lagi.");
+          console.error("[CameraScreen] captureAndDisplay: dataUrl is empty or too short", dataUrl?.length);
+          return;
         }
 
         setCdState("DONE");

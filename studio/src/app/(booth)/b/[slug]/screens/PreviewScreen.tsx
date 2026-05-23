@@ -402,6 +402,10 @@ export function PreviewScreen({
     setIsUploading(true);
     setUploadError(null);
 
+    // Debug: log capturedPhotos before processing
+    console.log("[PreviewScreen handleSave] capturedPhotos:", capturedPhotos.length, capturedPhotos.map(p => `${p.substring(0, 30)}... (${p.length} chars)`));
+    console.log("[PreviewScreen handleSave] composite blob size:", blob?.size);
+
     try {
       // ── Filter foto: pixel-level manipulation (tidak pakai ctx.filter) ──────
       // Setiap foto diproses satu per satu menggunakan getImageData/putImageData.
@@ -418,7 +422,10 @@ export function PreviewScreen({
           )
         : capturedPhotos;
 
+      console.log("[PreviewScreen handleSave] rawPhotosForUpload:", rawPhotosForUpload.map(p => `${p.substring(0,30)}... (${p.length})`));
+      console.log("[PreviewScreen handleSave] calling composePhoto...");
       const filteredBlob = await composePhoto(photosForCompose, frame.assetUrl, frameOpts);
+      console.log("[PreviewScreen handleSave] composePhoto done, size:", filteredBlob.size);
 
       const [photoUrl, videoUrl, gifUrl, rawPhotoUrls] = await Promise.all([
         uploadToR2(filteredBlob, sessionId),
@@ -459,14 +466,23 @@ export function PreviewScreen({
         })
           .then((gifBlob) => uploadGif(gifBlob, sessionId))
           .catch(() => null),
-        // Foto mentah per-capture (tanpa frame) — upload semua, abaikan kegagalan individual
+        // Foto mentah per-capture (tanpa frame) — upload semua, log kegagalan individual
         Promise.all(
-          rawPhotosForUpload.map((dataUrl, i) =>
-            fetch(dataUrl)
-              .then((r) => r.blob())
-              .then((blob) => uploadRawPhoto(blob, sessionId, i))
-              .catch(() => null)
-          )
+          rawPhotosForUpload.map(async (dataUrl, i) => {
+            try {
+              const res = await fetch(dataUrl);
+              if (!res.ok) throw new Error(`fetch gagal HTTP ${res.status}`);
+              const blob = await res.blob();
+              if (!blob || blob.size === 0) throw new Error(`blob kosong (size=0)`);
+              const url = await uploadRawPhoto(blob, sessionId, i);
+              if (!url) throw new Error("uploadRawPhoto kosong");
+              console.log(`[handleSave] raw photo ${i} uploaded:`, url.slice(0, 60));
+              return url;
+            } catch (err) {
+              console.error(`[handleSave] raw photo ${i} gagal:`, err instanceof Error ? err.message : err);
+              return null;
+            }
+          })
         ),
       ]);
 
@@ -476,7 +492,9 @@ export function PreviewScreen({
       if (videoUrl) form.append("videoUrl", videoUrl);
       if (gifUrl)   form.append("gifUrl",   gifUrl);
       const validRawUrls = rawPhotoUrls.filter((u): u is string => u !== null);
+      console.log("[PreviewScreen handleSave] photoUrl:", photoUrl?.slice(0, 60), "validRawUrls:", validRawUrls.length);
       if (validRawUrls.length > 0) form.append("rawPhotoUrls", JSON.stringify(validRawUrls));
+      else console.warn("[PreviewScreen handleSave] PERINGATAN: validRawUrls KOSONG — foto asli tidak akan tampil di download page");
 
       const resp = await fetch(`/api/sessions/${sessionId}/complete`, {
         method: "POST",
