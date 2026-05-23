@@ -174,15 +174,20 @@ export function useCamera({
       console.warn("[useCamera] startRecording: no stream available");
       return;
     }
-    // Stop any previous recorder + interval
-    if (reqDataTimerRef.current) { clearInterval(reqDataTimerRef.current); reqDataTimerRef.current = null; }
+    // Stop any previous recorder + interval (also clear its old chunks)
     if (recorderRef.current && recorderRef.current.state !== "inactive") {
       try { recorderRef.current.stop(); } catch {}
     }
+    if (reqDataTimerRef.current) { clearInterval(reqDataTimerRef.current); reqDataTimerRef.current = null; }
     // Close any lingering AudioContext
     audioCtxRef.current?.close().catch(() => {});
     audioCtxRef.current = null;
-    chunksRef.current = [];
+    // ONLY clear chunks when actually stopping a recorder that was in use.
+    // Don't clear when just trying to start — that would erase previous capture chunks!
+    if (recorderRef.current) {
+      chunksRef.current = [];
+      recorderRef.current = null;
+    }
 
     const mimeType = getBestVideoMime();
     const tryCreate = (opts: MediaRecorderOptions) => {
