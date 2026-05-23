@@ -1286,10 +1286,12 @@ app.post("/trigger-capture", async (_req: Request, res: Response) => {
 
   if (armed && preArmedCaptureInFlight === armed) {
     // Armed bridge is confirmed ready — fire SHOOT
+    const shootFiredAt = Date.now();
     console.log(`[agent] /trigger-capture: BRIDGE_READY confirmed, firing SHOOT at ${Date.now()-t0}ms`);
     armed.shootFn();
     try {
       const outputPath = await armed.completionPromise;
+      const captureDoneAt = Date.now();
       console.log(`[agent] /trigger-capture: done in ${Date.now()-t0}ms`);
       preArmedCaptureInFlight = null;
       preArmedShootFired = false;
@@ -1304,9 +1306,9 @@ app.post("/trigger-capture", async (_req: Request, res: Response) => {
       // CLEAR previewRestartBlockedUntil so camera returns to live view
       previewRestartBlockedUntil = 0;
       lastArmedBridgeExitedAt = Date.now();
-      res.setHeader("Content-Type", "image/jpeg");
-      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-      res.send(buf);
+      // Return JSON with metadata so CameraScreen can transition UI at right moment
+      const base64 = buf.toString("base64");
+      res.json({ ok: true, image: base64, mimeType: "image/jpeg", shootFiredAt, captureDoneAt });
       if (hadPreviewSession) {
         setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
       }

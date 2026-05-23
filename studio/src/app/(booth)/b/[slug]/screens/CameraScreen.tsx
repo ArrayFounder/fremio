@@ -1360,12 +1360,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         photoDataUrl = `data:${ipcData.image.mimeType};base64,${ipcData.image.base64}`;
       } else if (base) {
         // Call /trigger-capture — stops preview THEN fires SHOOT to pre-armed bridge.
-        // Returns raw JPEG binary — no base64 encode/decode overhead.
+        // Returns JSON with shootFiredAt + captureDoneAt timestamps for UI timing.
+        const shootFiredAt = Date.now();
         const res = await fetch(`${base}/trigger-capture`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Accept": "image/jpeg",
+            "Accept": "application/json",
           },
           body: JSON.stringify({}),
           signal: AbortSignal.timeout(30000),
@@ -1374,9 +1375,19 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           const errBody = await res.json().catch(() => ({})) as { error?: string };
           throw new Error(errBody.error || `Capture gagal (HTTP ${res.status})`);
         }
-        // Response is raw JPEG binary
-        const blob = await res.blob();
-        photoDataUrl = await blobToDataUrl(blob);
+        const data = await res.json() as {
+          ok: boolean;
+          image?: string;
+          mimeType?: string;
+          shootFiredAt?: number;
+          captureDoneAt?: number;
+          error?: string;
+        };
+        if (!data.ok || !data.image) throw new Error(data.error || "Capture gagal");
+        // Calculate actual shutter vs download timings for UI
+        const actualShootMs = data.shootFiredAt ? data.shootFiredAt - shootFiredAt : 0;
+        const actualDownloadMs = data.captureDoneAt ? Date.now() - data.captureDoneAt : 0;
+        photoDataUrl = `data:${data.mimeType || "image/jpeg"};base64,${data.image}`;
       } else {
         throw new Error("Agent tidak tersedia.");
       }
@@ -1432,7 +1443,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   const [countdown, setCountdown]       = useState<number | null>(null);
   const [cdState, setCdState]           = useState<CountdownState>("READY");
-  type CapturePhase = "idle" | "capturing" | "preparing";
+  type CapturePhase = "idle" | "filler" | "preparing";
   const [capturePhase, setCapturePhase] = useState<CapturePhase>("idle");
 
   const countdownTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1716,8 +1727,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
-          // DSLR: show rotating capture hint while camera fires and downloads JPEG
-          setCapturePhase("capturing");
+          // DSLR: show filler animation (Smile!/Cheese!...) while Canon prepares + shoots.
+          // When /trigger-capture returns with shootFiredAt, CameraScreen switches to "preparing".
+          setCapturePhase("filler");
           setCountdown(null);
           try {
             dataUrl = await captureFromAgent(captureMirrorSnapshot);
@@ -1784,10 +1796,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
 
           if (count === 1) {
-            // Show rotating hint text IMMEDIATELY — don't wait for tick() to fire again.
+            // Show filler animation IMMEDIATELY — don't wait for tick() to fire again.
             // countdownTimerRef from count=2 will fire in ~1s, clear it to prevent flicker.
             setCountdown(null);
-            setCapturePhase("capturing");
+            setCapturePhase("filler");
             captureInProgressRef.current = true;
 
             // Clear timer — fire shot NOW, no more ticks.
@@ -1907,8 +1919,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           </div>
         )}
 
-        {/* Capture Hint Overlay — animated typing + float + slide-out */}
-        {capturePhase === "capturing" && <CaptureHintOverlay visible />}
+        {/* Capture Hint Overlay — filler animation or "Menyiapkan hasil…" */}
+        <CaptureHintOverlay visible={capturePhase === "filler" || capturePhase === "preparing"} phase={capturePhase === "preparing" ? "preparing" : "filler"} />
 
         {/* Capture loading overlay — shows while DSLR is downloading the photo */}
         {capturePhase === "preparing" && (
@@ -2288,8 +2300,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             </div>
           )}
 
-          {/* Capture Hint Overlay — animated typing + float + slide-out (live_view mode) */}
-          {capturePhase === "capturing" && <CaptureHintOverlay visible />}
+          {/* Capture Hint Overlay — filler or preparing (live_view mode) */}
+          <CaptureHintOverlay visible={capturePhase === "filler" || capturePhase === "preparing"} phase={capturePhase === "preparing" ? "preparing" : "filler"} />
 
           {/* Belum siap */}
           {!dslrMode && !isReady && !permissionError && (
