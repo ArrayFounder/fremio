@@ -328,23 +328,22 @@ function reducer(state: State, action: Action): State {
       };
 
     case "PHOTO_VIDEO_READY": {
+      // Expand capturedVideos to fit captureIndex (videos array may be shorter than photos array)
+      const rawVideos = state.session.capturedVideos;
       const idx = typeof action.payload.captureIndex === "number"
         ? action.payload.captureIndex
         : state.retakeSlotIndex !== null
         ? state.retakeSlotIndex
-        : state.session.capturedVideos.length - 1;
-      if (idx < 0 || idx >= state.session.capturedVideos.length) return state;
-      const newVids = [...state.session.capturedVideos];
-      newVids[idx] = action.payload.videoBlob;
-      const activeIdx = state.retakeSlotIndex !== null
-        ? state.retakeSlotIndex
-        : state.session.capturedVideos.length - 1;
+        : rawVideos.length; // new video goes at end
+      const newVideos = [...rawVideos];
+      // Grow array to accommodate idx if needed (first capture: idx=0, length=0)
+      while (newVideos.length <= idx) newVideos.push(null);
+      newVideos[idx] = action.payload.videoBlob;
       return {
         ...state,
-        // Trigger compositing effect when ANY video blob arrives (webcam or DSLR), regardless of screen.
-        // compositing effect runs via [currentVideoReady, session.capturedPhotos.length] dependency.
+        // compositing effect watches [currentVideoReady, capturedPhotos.length]
         currentVideoReady: action.payload.videoBlob != null ? true : state.currentVideoReady,
-        session: { ...state.session, capturedVideos: newVids },
+        session: { ...state.session, capturedVideos: newVideos },
       };
     }
 
