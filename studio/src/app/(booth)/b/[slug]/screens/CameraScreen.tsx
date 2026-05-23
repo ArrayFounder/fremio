@@ -1767,9 +1767,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         // PRE-ARM at count=2: call /prepare-capture here so the armed bridge is ready
         // before count=1. This keeps live preview running until count=1 (4s of live view).
         if (willUseAgentCapture) {
-          if (count === 2) {
-            // /prepare-capture: spawns armed bridge, bridge ready by count=1.
-            // DO NOT freeze preview yet — live view stays on for count=1.
+          // PRE-ARM at count=3: bridge takes ~3-4s to be BRIDGE_READY.
+          // With pre-arm at count=3, bridge is ready ~2s before shot.
+          // Preview stays live for counts 5,4,3,2,1.
+          if (count === 3) {
             const base = agentBaseRef.current;
             if (base) {
               fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
@@ -1778,26 +1779,17 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
 
           if (count === 1) {
+            // FIRE IMMEDIATELY at count=1 — no freeze, no delay.
+            // Bridge is ready from count=3 pre-arm. Fire SHOOT instantly.
             setCountdown(1);
-            const bs = boothMirrorSettingRef.current;
-            const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
-
-            // Preview freeze + capture fire — armed bridge is ready from count=2 pre-arm.
-            freezeDslrPreview(captureMirror);
             captureInProgressRef.current = true;
-            if (livePhotoVideoEnabled && dslrMode) {
-              dslrFrozenAtRef.current = Date.now();
-            }
-            // Clear the pending tick timer so count never reaches 0 (no double shot).
+
+            // Clear timer — fire shot NOW, no more ticks.
             if (countdownTimerRef.current) {
               clearTimeout(countdownTimerRef.current);
               countdownTimerRef.current = null;
             }
-            // Brief pause so "1" is visible, then fire capture
-            countdownTimerRef.current = setTimeout(() => {
-              setCountdown(null);
-              captureAndDisplay();
-            }, 300);
+            captureAndDisplay();
             return;
           }
         }
