@@ -340,7 +340,9 @@ function reducer(state: State, action: Action): State {
         : state.session.capturedVideos.length - 1;
       return {
         ...state,
-        currentVideoReady: state.screen === "PHOTO_REVIEW" && idx === activeIdx ? true : state.currentVideoReady,
+        // Trigger compositing effect when ANY video blob arrives (webcam or DSLR), regardless of screen.
+        // compositing effect runs via [currentVideoReady, session.capturedPhotos.length] dependency.
+        currentVideoReady: action.payload.videoBlob != null ? true : state.currentVideoReady,
         session: { ...state.session, capturedVideos: newVids },
       };
     }
@@ -578,11 +580,13 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         return typeof el.captureStream === "function";
       } catch { return false; }
     })();
+    console.log("[BoothClient] live video effect: captureStreamSupported=", captureStreamSupported, "videos=", session.capturedVideos.map(v => v ? `Blob(${v.size})` : null));
     if (!captureStreamSupported) {
       const rawBlob = session.capturedVideos.find(Boolean) ?? null;
       const rawKey = `${session.sessionId ?? ""}_${session.capturedPhotos.length}_raw`;
       if (composeKeyRef.current === rawKey) return;
       composeKeyRef.current = rawKey;
+      console.log("[BoothClient] Using raw video blob (no captureStream):", rawBlob ? `Blob(${rawBlob.size})` : null);
       dispatch({ type: "LIVE_VIDEO_DONE", payload: rawBlob });
       return;
     }

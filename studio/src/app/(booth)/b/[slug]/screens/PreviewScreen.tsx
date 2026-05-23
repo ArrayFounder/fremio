@@ -492,7 +492,7 @@ export function PreviewScreen({
       if (videoUrl) form.append("videoUrl", videoUrl);
       if (gifUrl)   form.append("gifUrl",   gifUrl);
       const validRawUrls = rawPhotoUrls.filter((u): u is string => u !== null);
-      console.log("[PreviewScreen handleSave] photoUrl:", photoUrl?.slice(0, 60), "validRawUrls:", validRawUrls.length);
+      console.log("[PreviewScreen handleSave] photoUrl:", photoUrl?.slice(0, 60), "videoUrl:", videoUrl?.slice(0, 60) ?? null, "gifUrl:", gifUrl?.slice(0, 60) ?? null, "validRawUrls:", validRawUrls.length);
       if (validRawUrls.length > 0) form.append("rawPhotoUrls", JSON.stringify(validRawUrls));
       else console.warn("[PreviewScreen handleSave] PERINGATAN: validRawUrls KOSONG — foto asli tidak akan tampil di download page");
 
