@@ -6,8 +6,8 @@ import { getAdaptiveColors } from "../colorUtils";
 import type { BoothConfigData, DraftSceneElement, FrameData, PhotoSlot } from "../types";
 import { getEffectiveCaptureCount, getEffectiveSlots, isEffectiveDuplicateMode } from "../frameSlotUtils";
 import { isOverlayFrame } from "@/lib/frameEngine";
-import { CaptureHintOverlay } from "./CaptureHintOverlay";
 
+import { CaptureHintOverlay } from "./CaptureHintOverlay";
 function useIsPortrait() {
   const [portrait, setPortrait] = useState(false);
   useEffect(() => {
@@ -1470,6 +1470,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [cdState, setCdState]           = useState<CountdownState>("READY");
   type CapturePhase = "idle" | "filler" | "preparing";
   const [capturePhase, setCapturePhase] = useState<CapturePhase>("idle");
+  // Immediately hide overlay once photo appears on screen — prevents stale preparing text
+  const overlayShownRef = useRef<boolean>(false);
 
   const countdownTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Ref-based guard: prevent captureAndDisplay from running twice even if tick() fires
