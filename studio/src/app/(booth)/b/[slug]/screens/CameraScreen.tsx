@@ -1153,20 +1153,21 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     }
 
     // When paused, we still want to keep the preview recovery running in background
-    // but with a longer delay so it doesn't interfere with capture flow
+    // but with a longer delay so it doesn't interfere with capture flow.
+    // After capture finishes, captureFromAgent sets booth_dslr_stream_release_until to
+    // a future timestamp so Canon has time to finish processing before preview resumes.
     if (dslrPreviewPaused) {
       // Check if we should start recovery based on sessionStorage timing
       const releaseUntil = typeof window === "undefined"
         ? 0
         : Number(sessionStorage.getItem("booth_dslr_stream_release_until") || 0);
       const delayMs = Math.max(0, releaseUntil - Date.now());
-      
+
       if (delayMs <= 0) {
-        // Recovery is due - start preview but don't block capture flow
-        setTimeout(() => {
-          setDslrPreviewPaused(false);
-        }, 50);
+        // Recovery is due - set paused to false so the effect re-runs and starts preview
+        setDslrPreviewPaused(false);
       }
+      // else: still within the release window — do nothing, keep paused
       return;
     }
 
@@ -1427,8 +1428,15 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       setDslrPosterSrc(null);
       throw err instanceof Error ? err : new Error(String(err));
     } finally {
-      // Resume live preview — /trigger-capture already cleared previewRestartBlockedUntil.
-      // Canon USB release time (~2.2s) is handled by DSLR_PREVIEW_ERROR_GRACE_MS in pollPreview.
+      // Give Canon time to finish post-capture processing before resuming live preview.
+      // The camera closes the USB session (EdsCloseSession) and releases the port
+      // after TakePicture + JPEG download — this takes ~2-4 seconds.
+      // Setting booth_dslr_stream_release_until delays the preview effect from
+      // restarting the MJPEG bridge until the camera is truly ready.
+      const RELEASE_DELAY_MS = 4000;
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + RELEASE_DELAY_MS));
+      }
       captureInProgressRef.current = false;
       setDslrPreviewPaused(false);
     }
