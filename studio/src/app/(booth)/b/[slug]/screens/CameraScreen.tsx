@@ -1953,7 +1953,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         )}
 
         {/* Capture Hint Overlay — filler + preparing with smooth typing animation */}
-        <CaptureHintOverlay capturePhase={capturePhase} />
+        {capturePhase !== "idle" && <CaptureHintOverlay capturePhase={capturePhase} />}
 
         {/* Flash effect */}
         {cdState === "FLASH" && (
@@ -2217,7 +2217,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           )}
 
           {/* Capture Hint Overlay — handles filler + preparing with smooth transition (live_view mode) */}
-          <CaptureHintOverlay capturePhase={capturePhase} />
+          {capturePhase !== "idle" && <CaptureHintOverlay capturePhase={capturePhase} />}
 
           {/* ── Toolbar kanan atas: settings ── */}
           <div className="absolute top-3 right-3 flex flex-col gap-2">
@@ -2321,7 +2321,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           )}
 
           {/* Capture Hint Overlay — filler or preparing (live_view mode) */}
-          <CaptureHintOverlay capturePhase={capturePhase} />
+          {capturePhase !== "idle" && <CaptureHintOverlay capturePhase={capturePhase} />}
 
           {/* Belum siap */}
           {!dslrMode && !isReady && !permissionError && (
