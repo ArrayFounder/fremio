@@ -1591,7 +1591,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     let stream: MediaStream;
     try {
-      stream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(30);
+      stream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(120);
     } catch {
       return;
     }
@@ -1601,7 +1601,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       try { return new MediaRecorder(stream, options); } catch { return null; }
     };
     const recorder =
-      createRecorder({ mimeType, videoBitsPerSecond: 2_000_000 }) ??
+      createRecorder({ mimeType, videoBitsPerSecond: 8_000_000 }) ??
       createRecorder({ mimeType }) ??
       createRecorder({});
     if (!recorder) return;
@@ -1652,7 +1652,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     dslrRecorderRef.current = recorder;
 
     let lastDrawTime = 0;
-    const targetInterval = 1000 / 30;
+    const targetInterval = 1000 / 120;
     const scheduleDraw = (time: number) => {
       if (time - lastDrawTime >= targetInterval) {
         drawFrame();
