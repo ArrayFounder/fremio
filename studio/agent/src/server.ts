@@ -27,6 +27,37 @@ const execAsync = promisify(exec);
 
 const PORT    = Number(process.env.AGENT_PORT ?? 3002);
 const VERSION = "1.0.14";
+const MAX_LOG_LINES = 500;
+
+// ── In-memory circular log buffer ─────────────────────────────────────────────
+// Captures all console output so user can retrieve via GET /logs
+const logBuffer: string[] = [];
+const startTime = Date.now();
+
+function captureLog(prefix: string, ...args: unknown[]) {
+  const ts = new Date().toISOString().substring(11, 23); // HH:mm:ss.SSS
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  logBuffer.push(`${ts} [${prefix}] ${msg}`);
+  if (logBuffer.length > MAX_LOG_LINES) logBuffer.shift();
+}
+
+// Monkey-patch console.log / console.error / console.warn to capture all output
+const origLog   = console.log;
+const origError = console.error;
+const origWarn  = console.warn;
+
+console.log = (...args: unknown[]) => {
+  captureLog('INFO', ...args);
+  origLog.apply(console, args);
+};
+console.error = (...args: unknown[]) => {
+  captureLog('ERROR', ...args);
+  origError.apply(console, args);
+};
+console.warn = (...args: unknown[]) => {
+  captureLog('WARN', ...args);
+  origWarn.apply(console, args);
+};
 
 // ── App setup ────────────────────────────────────────────────────────────────
 
@@ -66,11 +97,22 @@ let previewRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let previewRestartWindowStartedAt = 0;
 let previewRestartAttemptsInWindow = 0;
 const plannedPreviewRestarts = new Set<ReturnType<typeof spawn>>();
-let previewPreStoppedAt = 0; // Timestamp when /prepare-capture last pre-stopped preview
+/** Timestamp when the preview bridge last exited. Used to ensure camera USB port is fully released. */
+let lastPreviewBridgeExitedAt = 0;
+/** @deprecated — unused, kept for compatibility */
+let previewPreStoppedAt = 0;
 let captureInProgress = false; // Prevent preview auto-restart during capture
+let previewRestartBlockedUntil = 0; // Block preview restart for this window (timestamp). Prevents zombie preview bridge from grabbing USB between /prepare-capture and /capture.
 let captureHandlerInFlight = false; // Prevent duplicate /capture calls (separate from captureInProgress)
 let preArmedCaptureInFlight: ArmedCaptureState | null = null; // Guard: prevent second SHOOT during BRIDGE_READY wait
-let shootFiredAt = 0; // Timestamp when SHOOT was sent — allows immediate preview restart
+/** Atomic lock — set the moment pre-armed SHOOT fires. Prevents inline path from firing a second SHOOT. */
+let preArmedShootFired = false;
+/** Timestamp of last SHOOT — prevents double firing between pre-armed and inline paths */
+let shootLastFiredAt = 0;
+/** Timestamp of last image captured — prevents inline path from firing SHOOT if pre-armed already shot */
+let imageCapturedAt = 0;
+/** Set to Date.now() when SHOOT fires — prevents second SHOOT from timeout or inline path */
+let captureLockFiredAt = 0;
 /** Timestamp when armed bridge last exited. Used to ensure next capture waits for camera USB to be free. */
 let lastArmedBridgeExitedAt = 0;
 /** Timestamp when an inline capture bridge last exited. Used to prevent USB conflicts. */
@@ -354,6 +396,14 @@ function startSharedPreviewProcess() {
     return;
   }
 
+  // Block preview restart during the critical window between /prepare-capture and /capture.
+  // Without this, if /prepare-capture is abandoned (countdown cancelled), preview restarts
+  // while the armed bridge is still trying to open the USB session → 0xC0.
+  if (Date.now() < previewRestartBlockedUntil) {
+    console.log("[agent] startSharedPreviewProcess: blocked (previewRestartBlockedUntil)");
+    return;
+  }
+
   updateCameraStatusCache(buildPreviewActiveCameraStatus());
 
   const bridgePath = resolveEdsdkBridgePath();
@@ -430,6 +480,7 @@ function startSharedPreviewProcess() {
     if (wasPlanned) plannedPreviewRestarts.delete(child);
     if (sharedPreviewProcess === child) {
       sharedPreviewProcess = null;
+      lastPreviewBridgeExitedAt = Date.now();
       // Only clear buffer if NOT a planned restart — the replacement process will fill it.
       // Keep last good frame so browser sees no black gap.
       if (!wasPlanned) sharedPreviewBuffer = Buffer.alloc(0);
@@ -1054,6 +1105,18 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
+app.get("/logs", (_req: Request, res: Response) => {
+  const tail = Math.min(Number(_req.query.tail ?? MAX_LOG_LINES), MAX_LOG_LINES);
+  const lines = logBuffer.slice(-tail);
+  res.json({
+    ok: true,
+    version: VERSION,
+    uptime: Math.floor((Date.now() - startTime) / 1000),
+    lines,
+    total: logBuffer.length,
+  });
+});
+
 app.get("/printers", async (_req: Request, res: Response) => {
   const printers = await listPrinters();
   res.json({ ok: true, printers });
@@ -1080,19 +1143,29 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     }
   }
 
-  // Kill preview — give bridge 400ms to call EdsCloseSession() cleanly before hard kill.
-  // With 50ms (previous value), hard-kill prevented EdsCloseSession → camera USB session
-  // stayed "open" → armed bridge hit CommPortIsAlreadyOpen (0xC0) on ALL 8 retries → 2s+ delay.
-  // With 400ms, C# Dispose() completes (TryDisableEvfFast + EdsCloseSession ≈ 150-200ms),
-  // armed bridge opens session on first attempt.
+  // Kill preview — give bridge 200ms (was 400ms) to call EdsCloseSession() cleanly before hard kill.
+  // OPTIMIZED: reduced killDelay from 400ms to 200ms for faster prepare-capture response.
+  await stopActivePreviewStreams(200);
+  // After graceful kill (stdin end + 200ms hard kill), process exits in ~250ms.
+  // Give extra 800ms (was 1000ms) for the Canon USB driver on Windows to fully release the handle.
+  // OPTIMIZED: reduced from 1000ms to 800ms.
+  await new Promise<void>((r) => setTimeout(r, 800));
+  lastPreviewBridgeExitedAt = Date.now(); // Mark settle as complete
 
-  // Brief settle after process exit before spawning armed bridge.
-  await new Promise<void>((r) => setTimeout(r, 50));
+  // Block preview restart for 10 seconds — prevents zombie preview from re-grabbing USB
+  // if /prepare-capture is abandoned and the armed bridge is still trying to open session.
+  previewRestartBlockedUntil = Date.now() + 10_000;
+
   previewPreStoppedAt = Date.now();
 
-  // Clean up any previous armed bridge that wasn't used
+  // Clean up any previous armed bridge that wasn't used — send NOCAPTURE so it exits
+  // without firing TakePicture, then kill it.
   if (armedCapture) {
-    try { armedCapture.process.kill(); } catch { /* ignore */ }
+    console.log("[agent] /prepare-capture: killing previous armed bridge");
+    try { armedCapture.process.stdin?.write("NOCAPTURE\n"); } catch { /* ignore */ }
+    setTimeout(() => {
+      try { armedCapture!.process.kill(); } catch { /* ignore */ }
+    }, 100);
     armedCapture = null;
   }
 
@@ -1172,22 +1245,10 @@ app.post("/prepare-capture", async (_req: Request, res: Response) => {
     readyPromise,
     shootFn: () => {
       console.log(`[agent] Sending SHOOT to armed bridge`);
+      preArmedShootFired = true; // Atomic — must be set before stdin write
+      shootLastFiredAt = Date.now();
+      captureLockFiredAt = Date.now();
       armedProcess.stdin?.write("SHOOT\n");
-      shootFiredAt = Date.now();
-
-      // Restart preview IMMEDIATELY after SHOOT — camera is about to
-      // finish its shot, we don't need to wait for download to resume live view.
-      // The bridge keeps camera USB busy until it exits; startSharedPreviewProcess
-      // is blocked by captureInProgress guard, so no race on the camera.
-      if (hadPreviewSession) {
-        setTimeout(() => {
-          captureInProgress = false;
-          try {
-            startSharedPreviewProcess();
-            void getPreviewFrame(1200).then(() => scheduleSharedPreviewStop(1000)).catch(() => scheduleSharedPreviewStop(800));
-          } catch { /* ignore */ }
-        }, 30);
-      }
     },
     completionPromise,
   };
@@ -1225,6 +1286,21 @@ async function doPrepareCaptureInline(): Promise<{ process: ReturnType<typeof sp
   // capture again → new /capture arrives → old bridge still holding USB → 0xC0.
   const INLINE_KILL_DELAY_MS = 400;
   await stopActivePreviewStreams(INLINE_KILL_DELAY_MS);
+
+  // CRITICAL: Wait for camera USB port to be fully released after preview exits.
+  // The C# bridge calls EdsCloseSession on stdin close, but the Canon USB driver
+  // on Windows can take up to 1500ms to fully release the session handle.
+  // Starting the armed bridge too soon → 0xC0 CommPortIsAlreadyOpen on EVERY attempt.
+  // This 1500ms settle is the KEY FIX for the zombie-bridge scenario.
+  const PREVIEW_EXIT_SETTLE_MS = 1500;
+  if (lastPreviewBridgeExitedAt > 0) {
+    const elapsed = Date.now() - lastPreviewBridgeExitedAt;
+    if (elapsed < PREVIEW_EXIT_SETTLE_MS) {
+      const waitMs = PREVIEW_EXIT_SETTLE_MS - elapsed;
+      console.log(`[agent] doPrepareCaptureInline: waiting ${waitMs}ms for USB port release after preview exit`);
+      await new Promise<void>((r) => setTimeout(r, waitMs));
+    }
+  }
 
   // Wait for USB settle after any previous inline capture bridge exited.
   // Without this, a fast second capture can hit CommPortIsAlreadyOpen (0xC0).
@@ -1297,9 +1373,11 @@ app.post("/capture", async (req: Request, res: Response) => {
 
   captureHandlerInFlight = true;
   captureInProgress = true;
+  console.log(`[agent] /capture: start t=${Date.now()-t0}ms`);
 
   try {
     const armed = armedCapture;
+    console.log(`[agent] /capture: armed=${!!armed} t=${Date.now()-t0}ms`);
 
     // CRITICAL: null out armedCapture BEFORE any async work — prevents the second
     // /capture call (which arrives before preArmedCaptureInFlight is set) from
@@ -1310,18 +1388,27 @@ app.post("/capture", async (req: Request, res: Response) => {
     if (armed) { armedCapture = null; }
 
     if (armed && preArmedCaptureInFlight !== armed) {
+      // ── PRE-ARMED PATH ────────────────────────────────────────────────────────
+      // This is the NORMAL path when /prepare-capture was called at countdown=1.
       preArmedCaptureInFlight = armed;
       const tmpFile = armed.outputPath;
       captureInProgress = true;
+      console.log(`[agent] /capture: pre-armed path, awaiting readyPromise... t=${Date.now()-t0}ms`);
       await armed.readyPromise;
+      const tAfterReady = Date.now();
+      console.log(`[agent] /capture: readyPromise resolved in ${tAfterReady-t0}ms, calling shootFn...`);
       armed.shootFn();
+      console.log(`[agent] /capture: shootFn done, awaiting completionPromise... t=${Date.now()-t0}ms`);
       const outputPath = await armed.completionPromise;
+      console.log(`[agent] /capture: completionPromise resolved in ${Date.now()-t0}ms (took ${Date.now()-tAfterReady}ms)`);
       preArmedCaptureInFlight = null; // Release lock after shoot completes
+      preArmedShootFired = false; // Reset for next session
       if (!fs.existsSync(outputPath)) {
         res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
         return;
       }
       const buf = fs.readFileSync(outputPath);
+      imageCapturedAt = Date.now(); // Mark image as captured — prevents inline path from double-shot
       console.log(`[agent] /capture: pre-armed done in ${Date.now()-t0}ms`);
       if (wantsBinary) {
         res.setHeader("Content-Type", "image/jpeg");
@@ -1345,14 +1432,71 @@ app.post("/capture", async (req: Request, res: Response) => {
       return;
     }
 
-    // No pre-armed bridge available — do prepare inline (same timing every time).
-    // This replaces the old "fallback path" which was slow and inconsistent.
+    // ── INLINE SHOOT PATH ───────────────────────────────────────────────────────
+    // No pre-armed bridge available (e.g., /prepare-capture was too slow or cancelled).
+    // Fallback that takes longer but guarantees a single shot.
+
+    // DEFENSIVE DOUBLE-SHOT GUARD — check BEFORE any await:
+    // If a SHOOT was already fired within the last 60s (covers TakePicture + download),
+    // skip firing again and just wait for the existing result. This guards against:
+    // 1. Pre-armed bridge's 60s timeout auto-fired SHOOT → inline should not fire again
+    // 2. Inline path called twice (race condition)
+    // 3. Pre-armed SHOOT arrived moments before inline's check
+    const SHOOT_WINDOW_MS = 60000;
+    const alreadyShot = (shootLastFiredAt > 0 && Date.now() - shootLastFiredAt < SHOOT_WINDOW_MS)
+                      || (imageCapturedAt > 0 && Date.now() - imageCapturedAt < SHOOT_WINDOW_MS);
+
+    if (alreadyShot) {
+      // A SHOOT was already fired by someone — don't fire again.
+      // This is the safety net for: pre-armed timeout, double /capture call, etc.
+      const source = shootLastFiredAt > imageCapturedAt
+        ? `SHOOT fired ${Date.now()-shootLastFiredAt}ms ago`
+        : `Image captured ${Date.now()-imageCapturedAt}ms ago`;
+      console.warn(`[agent] /capture: skipping SHOOT (${source})`);
+      captureHandlerInFlight = false;
+      captureInProgress = false;
+      preArmedShootFired = false;
+      res.status(409).json({ ok: false, error: "Capture sudah dilakukan sesi lain" });
+      return;
+    }
+
     const { process: armedProcess, readyPromise, tmpFile } = await doPrepareCaptureInline();
+    console.log(`[agent] /capture: doPrepareCaptureInline done, awaiting readyPromise... t=${Date.now()-t0}ms`);
 
-    // Wait for BRIDGE_READY (up to 15s — generous for EnsureCameraReady cold start).
+    // Wait for BRIDGE_READY (up to 60s — generous for cold start or USB busy retries).
     await readyPromise;
+    console.log(`[agent] /capture: readyPromise resolved in ${Date.now()-t0}ms`);
 
-    // Send SHOOT
+    // Re-check after await: another SHOOT might have fired during the wait.
+    // If bridge 1's timeout fired SHOOT while bridge 2 was starting, we must not fire again.
+    if (Date.now() - shootLastFiredAt < SHOOT_WINDOW_MS || Date.now() - imageCapturedAt < SHOOT_WINDOW_MS) {
+      console.warn(`[agent] /capture: SHOOT fired during inline bridge startup — skipping inline SHOOT`);
+      await new Promise<void>((resolve) => { armedProcess.on("exit", () => resolve()); });
+      captureHandlerInFlight = false;
+      captureInProgress = false;
+      preArmedShootFired = false;
+      if (hadPreviewSession) {
+        setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
+      }
+      if (fs.existsSync(tmpFile)) {
+        const buf = fs.readFileSync(tmpFile);
+        if (wantsBinary) {
+          res.setHeader("Content-Type", "image/jpeg");
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          res.send(buf);
+        } else {
+          res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
+        }
+      } else {
+        res.status(500).json({ ok: false, error: "SHOOT sudah dilakukan bridge lain" });
+      }
+      return;
+    }
+
+    // Send SHOOT — inline path (no pre-armed bridge available)
+    preArmedShootFired = true;
+    shootLastFiredAt = Date.now();
+    captureLockFiredAt = Date.now();
     armedProcess.stdin?.write("SHOOT\n");
 
     // Wait for bridge to download JPEG and exit
@@ -1366,6 +1510,7 @@ app.post("/capture", async (req: Request, res: Response) => {
     }
 
     const buf = fs.readFileSync(tmpFile);
+    imageCapturedAt = Date.now(); // Mark after successful read
     console.log(`[agent] /capture: inline armed done in ${Date.now()-t0}ms`);
     if (wantsBinary) {
       res.setHeader("Content-Type", "image/jpeg");
@@ -1384,6 +1529,7 @@ app.post("/capture", async (req: Request, res: Response) => {
   } finally {
     captureHandlerInFlight = false;
     captureInProgress = false;
+    preArmedShootFired = false; // Reset for next session
   }
 });
 

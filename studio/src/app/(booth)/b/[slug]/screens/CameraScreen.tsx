@@ -1703,6 +1703,17 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
 
+    // ── PRE-ARM: call /prepare-capture NOW so armed bridge is ready by count=0 ──
+    // The bridge takes ~3-4s to become BRIDGE_READY. Starting early means when
+    // count=0 fires /capture, the readyPromise is already resolved → instant SHOOT.
+    if (willUseAgentCapture) {
+      const base = agentBaseRef.current;
+      if (base) {
+        fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
+          .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
+      }
+    }
+
       const captureAndDisplay = async () => {
         // Double-shot guard: if capture is already in flight (timer fired twice,
         // React re-rendered, or stale closure), bail out immediately.
@@ -1766,13 +1777,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           const bs = boothMirrorSettingRef.current;
           const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
 
-          // PRE-ARM capture at count=1 — camera switches to capture mode HERE,
-          // so live preview stops at countdown=1, not earlier (5,4,3,2 still show live)
-          const base = agentBaseRef.current;
-          if (base) {
-            fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
-              .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
-          }
+          // NOTE: /prepare-capture is now called at countdown START (count=5),
+          // so the armed bridge is already ready here. DO NOT call prepare-capture
+          // again — it would kill the armed bridge and restart from scratch.
 
           freezeDslrPreview(captureMirror);
           captureInProgressRef.current = true;
