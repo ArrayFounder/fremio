@@ -1379,11 +1379,12 @@ export async function composeVideoLive(
   if (!ctx) { cleanup(); return null; }
 
   const mimeType = getBestVideoMime();
+  console.log("[composeVideoLive] mimeType =", mimeType, "fps =", fps, "duration =", duration, "cw =", cw, "ch =", ch);
 
   // captureStream — check API availability first (Chrome Android supports this)
   const captureStreamFn = (canvas as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream }).captureStream;
   if (typeof captureStreamFn !== "function") {
-    console.warn("[liveMode] captureStream tidak tersedia di browser ini");
+    console.warn("[composeVideoLive] captureStream tidak tersedia di browser ini");
     cleanup();
     return null;
   }
@@ -1391,8 +1392,9 @@ export async function composeVideoLive(
   let stream: MediaStream;
   try {
     stream = captureStreamFn.call(canvas, fps);
+    console.log("[composeVideoLive] captureStream created, stream.active =", stream.active);
   } catch (err) {
-    console.warn("[liveMode] captureStream gagal:", err);
+    console.warn("[composeVideoLive] captureStream gagal:", err);
     cleanup();
     return null;
   }
@@ -1406,15 +1408,17 @@ export async function composeVideoLive(
     tryCreateRecorder({ mimeType }) ??
     tryCreateRecorder({});
   if (!recorder) {
-    console.warn("[liveMode] MediaRecorder tidak dapat dibuat");
+    console.warn("[composeVideoLive] MediaRecorder tidak dapat dibuat");
     cleanup();
     return null;
   }
+  console.log("[composeVideoLive] MediaRecorder created: mimeType =", recorder.mimeType, "state =", recorder.state);
 
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-  // Mulai dengan 200ms timeslice; fallback tanpa timeslice jika gagal
-  try { recorder.start(200); } catch { try { recorder.start(); } catch (e) { console.warn("[liveMode] recorder.start gagal:", e); cleanup(); return null; } }
+  // Start with 500ms timeslice (more reliable than 200ms for captureStream)
+  try { recorder.start(500); } catch { try { recorder.start(); } catch (e) { console.warn("[composeVideoLive] recorder.start gagal:", e); cleanup(); return null; } }
+  console.log("[composeVideoLive] recorder started: state =", recorder.state);
 
   // ── 6. Draw loop via requestAnimationFrame (throttled ke target fps) ─────
   const endTime = performance.now() + duration;
@@ -1464,6 +1468,7 @@ export async function composeVideoLive(
       if (performance.now() < endTime) {
         rafId = requestAnimationFrame(scheduleDraw);
       } else {
+        console.log("[composeVideoLive] draw loop ended, requesting data + stopping");
         try { recorder.requestData(); } catch { /* ignore */ }
         recorder.stop();
       }
@@ -1473,12 +1478,16 @@ export async function composeVideoLive(
 
     recorder.onstop = () => {
       cancelAnimationFrame(rafId);
+      console.log("[composeVideoLive] recorder.onstop: chunks.length =", chunks.length, "recorder.mimeType =", recorder.mimeType);
       cleanup();
-      if (chunks.length === 0) { resolve(null); return; }
-      resolve(new Blob(chunks, { type: recorder.mimeType || mimeType }));
+      if (chunks.length === 0) { console.warn("[composeVideoLive] no chunks collected"); resolve(null); return; }
+      const blob = new Blob(chunks, { type: recorder.mimeType || mimeType });
+      console.log("[composeVideoLive] blob created: size =", blob.size, "type =", blob.type);
+      resolve(blob);
     };
 
-    recorder.onerror = () => {
+    recorder.onerror = (e) => {
+      console.error("[composeVideoLive] recorder.onerror:", e);
       cancelAnimationFrame(rafId);
       cleanup();
       resolve(null);
