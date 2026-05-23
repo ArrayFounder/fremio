@@ -342,7 +342,8 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         // compositing effect watches [currentVideoReady, capturedPhotos.length]
-        currentVideoReady: action.payload.videoBlob != null ? true : state.currentVideoReady,
+        // Always set true so "Lanjut" button works even if video is null (device doesn't support recording)
+        currentVideoReady: true,
         session: { ...state.session, capturedVideos: newVideos },
       };
     }
@@ -2457,10 +2458,16 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
                         </button>
                         <button
                           onClick={() => dispatch({ type: "PHOTO_REVIEW_CONFIRM" })}
-                          className={`flex-1 rounded-2xl font-black active:scale-95 transition-all ${useStackedVerticalPreview ? "py-3 text-lg" : "py-4 text-xl"}`}
-                          style={{ backgroundColor: accentColor, color: primaryColor }}
+                          disabled={!currentVideoReady}
+                          style={{
+                            backgroundColor: currentVideoReady ? accentColor : `${accentColor}55`,
+                            color: primaryColor,
+                          }}
+                          className={`flex-1 rounded-2xl font-black active:scale-95 transition-all disabled:cursor-not-allowed ${useStackedVerticalPreview ? "py-3 text-lg" : "py-4 text-xl"}`}
                         >
-                          {isLast ? "✅ Lanjut" : "👍 Foto Berikutnya"}
+                          {!currentVideoReady
+                            ? "⌛ Menyiapkan…"
+                            : isLast ? "✅ Lanjut" : "👍 Foto Berikutnya"}
                         </button>
                       </div>
                     </div>
