@@ -1822,10 +1822,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
 
           if (count === 1) {
-            // Show filler animation IMMEDIATELY — don't wait for tick() to fire again.
-            // countdownTimerRef from count=2 will fire in ~1s, clear it to prevent flicker.
-            setCountdown(null);
-            setCapturePhase("filler");
+            // Show "1" briefly (150ms) — then switch to filler animation.
+            // This prevents jarring snap from countdown to filler.
+            setCountdown(1);
             captureInProgressRef.current = true;
 
             // Clear timer — fire shot NOW, no more ticks.
@@ -1833,7 +1832,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
               clearTimeout(countdownTimerRef.current);
               countdownTimerRef.current = null;
             }
-            captureAndDisplay();
+
+            // Brief delay so "1" is visible for one frame before filler starts
+            setTimeout(() => {
+              setCountdown(null);
+              setCapturePhase("filler");
+              captureAndDisplay();
+            }, 150);
             return;
           }
         }

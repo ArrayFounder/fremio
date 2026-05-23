@@ -8,7 +8,7 @@ const HOLD_DURATION   = 2000; // ms after fully typed
 const EXIT_DURATION   = 400;   // ms for slide-out animation
 const CYCLE_GAP       = 150;   // ms pause before next filler starts typing
 
-type FillerState = "typing" | "hold" | "exit" | "hidden";
+type FillerState = "hidden" | "typing" | "hold" | "exit";
 export type CaptureHintPhase = "filler" | "preparing";
 
 interface CaptureHintOverlayProps {
@@ -19,26 +19,21 @@ interface CaptureHintOverlayProps {
 export function CaptureHintOverlay({ visible, phase }: CaptureHintOverlayProps) {
   const [displayText, setDisplayText] = useState("");
   const [hintKey,      setHintKey]     = useState(0);
-  const [text,         setText]          = useState(""); // current word
-
-  // Filler-specific state
+  const [text,         setText]          = useState("");
   const [fillerState,  setFillerState]   = useState<FillerState>("hidden");
 
-  // Refs for timer + state access in callbacks
   const charIdxRef     = useRef(0);
   const hintWordRef    = useRef("");
-  const fillerStateRef = useRef<FillerState>("hidden");
-  const phaseRef       = useRef<CaptureHintPhase | null>(null);
   const timerRef       = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeKeyRef   = useRef(0); // increments each cycle to cancel stale timers
-
-  fillerStateRef.current = fillerState;
+  const cycleRef       = useRef(0);          // increments each cycle — stale timers ignore
+  const startedRef     = useRef(false);     // guards against double-start within same effect run
+  const prevPhaseRef   = useRef<CaptureHintPhase | null>(null);
 
   const clearTimer = () => {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
   };
 
-  const pickNextFiller = (): string => {
+  const pickNext = (): string => {
     let next = FILLER_HINTS[Math.floor(Math.random() * FILLER_HINTS.length)];
     if (next === hintWordRef.current && FILLER_HINTS.length > 1) {
       const others = FILLER_HINTS.filter((h) => h !== next);
@@ -47,37 +42,40 @@ export function CaptureHintOverlay({ visible, phase }: CaptureHintOverlayProps) 
     return next;
   };
 
-  // ── Main effect: reacts to phase changes + manages filler cycles ─────────
+  // ── Single effect: all phase transitions + filler cycles ──────────────────
   useEffect(() => {
     clearTimer();
-    activeKeyRef.current += 1;
-    const myKey = activeKeyRef.current;
+    cycleRef.current += 1;
+    const myCycle = cycleRef.current;
+    startedRef.current = false;
 
     if (!visible) {
       setFillerState("hidden");
       setDisplayText("");
       setText("");
-      phaseRef.current = null;
+      prevPhaseRef.current = null;
       return;
     }
 
-    const prev = phaseRef.current;
-    phaseRef.current = phase;
+    const prev = prevPhaseRef.current;
+    prevPhaseRef.current = phase;
 
-    // ── Transition: filler → preparing ──────────────────────────────────────
-    // Run exit animation on current filler, then show preparing text
+    // ── filler → preparing: exit current filler, then show preparing ─────────
     if (prev === "filler" && phase === "preparing") {
-      if (fillerStateRef.current !== "hidden") {
+      if (!startedRef.current) {
+        startedRef.current = true;
+        // Run exit animation, then switch to preparing text
         setFillerState("exit");
         timerRef.current = setTimeout(() => {
-          if (activeKeyRef.current !== myKey) return; // stale
+          if (cycleRef.current !== myCycle) return;
           clearTimer();
           setFillerState("hidden");
           setDisplayText("");
           setText("");
-          // Show preparing text with typing animation
+
           timerRef.current = setTimeout(() => {
-            if (activeKeyRef.current !== myKey) return;
+            if (cycleRef.current !== myCycle) return;
+            // Show "Menyiapkan hasil…" with typing animation
             const PREPARING = "Menyiapkan hasil…";
             charIdxRef.current = 0;
             setText(PREPARING);
@@ -86,44 +84,23 @@ export function CaptureHintOverlay({ visible, phase }: CaptureHintOverlayProps) 
             setFillerState("typing");
 
             const typeChar = () => {
-              if (activeKeyRef.current !== myKey) return;
+              if (cycleRef.current !== myCycle) return;
               charIdxRef.current += 1;
               setDisplayText(PREPARING.slice(0, charIdxRef.current));
               if (charIdxRef.current < PREPARING.length) {
                 timerRef.current = setTimeout(typeChar, TYPING_SPEED_MS);
               } else {
-                // Preparing text done typing — STAY in hold until photo appears
                 setFillerState("hold");
               }
             };
             timerRef.current = setTimeout(typeChar, 100);
           }, EXIT_DURATION + CYCLE_GAP);
         }, EXIT_DURATION);
-      } else {
-        // No active filler — show preparing directly
-        const PREPARING = "Menyiapkan hasil…";
-        charIdxRef.current = 0;
-        setText(PREPARING);
-        setHintKey((k) => k + 1);
-        setDisplayText("");
-        setFillerState("typing");
-
-        const typeChar = () => {
-          if (activeKeyRef.current !== myKey) return;
-          charIdxRef.current += 1;
-          setDisplayText(PREPARING.slice(0, charIdxRef.current));
-          if (charIdxRef.current < PREPARING.length) {
-            timerRef.current = setTimeout(typeChar, TYPING_SPEED_MS);
-          } else {
-            setFillerState("hold");
-          }
-        };
-        timerRef.current = setTimeout(typeChar, 100);
       }
       return;
     }
 
-    // ── Direct entry to preparing (no filler before) ──────────────────────
+    // ── Direct entry to preparing ───────────────────────────────────────────
     if (phase === "preparing") {
       const PREPARING = "Menyiapkan hasil…";
       charIdxRef.current = 0;
@@ -131,9 +108,10 @@ export function CaptureHintOverlay({ visible, phase }: CaptureHintOverlayProps) 
       setHintKey((k) => k + 1);
       setDisplayText("");
       setFillerState("typing");
+      startedRef.current = true;
 
       const typeChar = () => {
-        if (activeKeyRef.current !== myKey) return;
+        if (cycleRef.current !== myCycle) return;
         charIdxRef.current += 1;
         setDisplayText(PREPARING.slice(0, charIdxRef.current));
         if (charIdxRef.current < PREPARING.length) {
@@ -146,51 +124,60 @@ export function CaptureHintOverlay({ visible, phase }: CaptureHintOverlayProps) 
       return;
     }
 
-    // ── Filler cycle ──────────────────────────────────────────────────────
+    // ── Filler cycle ────────────────────────────────────────────────────────
     if (phase === "filler") {
-      const startCycle = () => {
-        if (activeKeyRef.current !== myKey) return;
-        if (fillerStateRef.current !== "hidden") return;
+      if (!startedRef.current) {
+        startedRef.current = true;
 
-        const word = pickNextFiller();
-        hintWordRef.current = word;
-        charIdxRef.current = 0;
-        setText(word);
-        setHintKey((k) => k + 1);
-        setDisplayText("");
-        setFillerState("typing");
+        const startCycle = () => {
+          if (cycleRef.current !== myCycle) return;
+          if (fillerState !== "hidden" && fillerState !== "exit") return; // debounce
+          // Actually we need to check via ref — check against current state
+          if (cycleRef.current !== myCycle) return;
 
-        const typeChar = () => {
-          if (activeKeyRef.current !== myKey) return;
-          charIdxRef.current += 1;
-          setDisplayText(word.slice(0, charIdxRef.current));
-          if (charIdxRef.current < word.length) {
-            timerRef.current = setTimeout(typeChar, TYPING_SPEED_MS);
-          } else {
-            setFillerState("hold");
-            timerRef.current = setTimeout(() => {
-              if (activeKeyRef.current !== myKey) return;
-              setFillerState("exit");
+          const word = pickNext();
+          hintWordRef.current = word;
+          charIdxRef.current = 0;
+          setText(word);
+          setHintKey((k) => k + 1);
+          setDisplayText("");
+          setFillerState("typing");
+
+          const typeChar = () => {
+            if (cycleRef.current !== myCycle) return;
+            charIdxRef.current += 1;
+            setDisplayText(word.slice(0, charIdxRef.current));
+            if (charIdxRef.current < word.length) {
+              timerRef.current = setTimeout(typeChar, TYPING_SPEED_MS);
+            } else {
+              setFillerState("hold");
               timerRef.current = setTimeout(() => {
-                if (activeKeyRef.current !== myKey) return;
-                setFillerState("hidden");
-                timerRef.current = setTimeout(startCycle, CYCLE_GAP);
-              }, EXIT_DURATION);
-            }, HOLD_DURATION);
-          }
+                if (cycleRef.current !== myCycle) return;
+                setFillerState("exit");
+                timerRef.current = setTimeout(() => {
+                  if (cycleRef.current !== myCycle) return;
+                  setFillerState("hidden");
+                  timerRef.current = setTimeout(() => {
+                    if (cycleRef.current !== myCycle) return;
+                    startCycle();
+                  }, CYCLE_GAP);
+                }, EXIT_DURATION);
+              }, HOLD_DURATION);
+            }
+          };
+          timerRef.current = setTimeout(typeChar, 100);
         };
-        timerRef.current = setTimeout(typeChar, 100);
-      };
 
-      startCycle();
+        startCycle();
+      }
     }
   }, [visible, phase]);
 
-  // ── Don't render if nothing to show ─────────────────────────────────────
+  // Guard: only render when fillerState is not hidden OR preparing
   if (fillerState === "hidden" && phase !== "preparing") return null;
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none overflow-hidden">
+    <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none overflow-hidden">
       <div
         key={hintKey}
         className={`
@@ -199,7 +186,13 @@ export function CaptureHintOverlay({ visible, phase }: CaptureHintOverlayProps) 
           ${fillerState === "hold"   ? "animate-float-hold" : ""}
           ${fillerState === "exit"   ? "animate-slide-out" : ""}
         `}
-        style={{ fontSize: phase === "preparing" ? "clamp(1.4rem, 6vw, 4.5rem)" : "clamp(1.8rem, 8vw, 6rem)", lineHeight: 1, color: "#deb7a6" }}
+        style={{
+          fontSize: phase === "preparing"
+            ? "clamp(1.2rem, 5vw, 3.8rem)"
+            : "clamp(1.8rem, 8vw, 6rem)",
+          lineHeight: 1,
+          color: "#deb7a6",
+        }}
       >
         {displayText || (text ? text.slice(0, 1) : "")}
       </div>
