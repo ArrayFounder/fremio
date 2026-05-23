@@ -1703,17 +1703,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
 
-    // ── PRE-ARM: call /prepare-capture NOW so armed bridge is ready by count=0 ──
-    // The bridge takes ~3-4s to become BRIDGE_READY. Starting early means when
-    // count=0 fires /capture, the readyPromise is already resolved → instant SHOOT.
-    if (willUseAgentCapture) {
-      const base = agentBaseRef.current;
-      if (base) {
-        fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
-          .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
-      }
-    }
-
       const captureAndDisplay = async () => {
         // Double-shot guard: if capture is already in flight (timer fired twice,
         // React re-rendered, or stale closure), bail out immediately.
@@ -1730,9 +1719,12 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
           try {
             dataUrl = await captureFromAgent(captureMirrorSnapshot);
+            // captureFromAgent's finally block handles:
+            // - captureInProgressRef.current = false (enables preview polling)
+            // - setDslrPreviewPaused(false) (resumes preview stream)
           } catch (err) {
             captureInFlightRef.current = false;
-            captureInProgressRef.current = false;
+            // captureFromAgent already reset captureInProgressRef in its finally
             setCdState("READY");
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
             return;
@@ -1745,7 +1737,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
         setCdState("DONE");
         captureInFlightRef.current = false;
-        captureInProgressRef.current = false;
+        captureInProgressRef.current = false; // Allow preview polling to restart
         if (!dataUrl) {
           setCaptureError("Foto gagal diambil. Pastikan kamera siap lalu coba lagi.");
           setCapturePhase("idle");
@@ -1771,42 +1763,48 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (count > 0) {
         setCountdown(count);
 
-        // FREEZE preview at count=1: user sees frozen "1" briefly, then capture fires
-        if (willUseAgentCapture && count === 1) {
-          setCountdown(1);
-          const bs = boothMirrorSettingRef.current;
-          const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
-
-          // NOTE: /prepare-capture is now called at countdown START (count=5),
-          // so the armed bridge is already ready here. DO NOT call prepare-capture
-          // again — it would kill the armed bridge and restart from scratch.
-
-          freezeDslrPreview(captureMirror);
-          captureInProgressRef.current = true;
-          if (livePhotoVideoEnabled && dslrMode) {
-            dslrFrozenAtRef.current = Date.now();
+        // FREEZE preview + start capture at count=1: user sees frozen "1", then shot fires.
+        // PRE-ARM at count=2: call /prepare-capture here so the armed bridge is ready
+        // before count=1. This keeps live preview running until count=1 (4s of live view).
+        if (willUseAgentCapture) {
+          if (count === 2) {
+            // /prepare-capture: spawns armed bridge, bridge ready by count=1.
+            // DO NOT freeze preview yet — live view stays on for count=1.
+            const base = agentBaseRef.current;
+            if (base) {
+              fetch(`${base}/prepare-capture`, { method: "POST", signal: AbortSignal.timeout(10000) })
+                .catch((e) => console.warn("[CameraScreen] prepare-capture error:", e));
+            }
           }
-          // Clear the pending tick timer so count never reaches 0 (which would fire captureAndDisplay again → double shot).
-          if (countdownTimerRef.current) {
-            clearTimeout(countdownTimerRef.current);
-            countdownTimerRef.current = null;
+
+          if (count === 1) {
+            setCountdown(1);
+            const bs = boothMirrorSettingRef.current;
+            const captureMirror = typeof bs === "boolean" ? bs : mirrorRef.current;
+
+            // Preview freeze + capture fire — armed bridge is ready from count=2 pre-arm.
+            freezeDslrPreview(captureMirror);
+            captureInProgressRef.current = true;
+            if (livePhotoVideoEnabled && dslrMode) {
+              dslrFrozenAtRef.current = Date.now();
+            }
+            // Clear the pending tick timer so count never reaches 0 (no double shot).
+            if (countdownTimerRef.current) {
+              clearTimeout(countdownTimerRef.current);
+              countdownTimerRef.current = null;
+            }
+            // Brief pause so "1" is visible, then fire capture
+            countdownTimerRef.current = setTimeout(() => {
+              setCountdown(null);
+              captureAndDisplay();
+            }, 300);
+            return;
           }
-          // Brief pause so "1" is visible, then clear it and fire capture in one step
-          countdownTimerRef.current = setTimeout(() => {
-            setCountdown(null); // clear "1" — prevents repeated display
-            captureAndDisplay();
-          }, 300);
-          return;
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
       } else {
-        // count === 0 - This code is NOT reached for DSLR capture (we captured at count=1)
-        // This block only handles non-DSLR webcam capture
-        if (willUseAgentCapture) {
-          setCountdown(null);
-          // Fallback: should not happen for DSLR, but keep for safety
-          countdownTimerRef.current = setTimeout(captureAndDisplay, 0);
-        } else {
+        // count === 0 - Webcam path only (DSLR captured at count=1 via pre-arm).
+        if (!willUseAgentCapture) {
           setCountdown(null);
           setCdState("FLASH");
           countdownTimerRef.current = setTimeout(captureAndDisplay, 0);
