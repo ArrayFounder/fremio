@@ -84,21 +84,39 @@ export function CaptureHintOverlay({ capturePhase, mode }: CaptureHintOverlayPro
     const runPreparingCycle = () => {
       if (stop) return;
       const PREP = "Menyiapkan hasil…";
-      runStep("typing", PREP, typingDuration(PREP), () => {
+
+      // Type character-by-character, then hold, exit, repeat
+      let charIndex = 0;
+      setWord("");
+      setAnimClass("");
+
+      const typeNext = () => {
         if (stop) return;
-        runStep("hold", PREP, PREP_HOLD_MS, () => {
-          if (stop) return;
-          runStep("exit", PREP, EXIT_MS, () => {
+        charIndex++;
+        const partial = PREP.slice(0, charIndex);
+        setWord(partial);
+        if (charIndex < PREP.length) {
+          setTimeout(typeNext, TYPING_SPEED_MS);
+        } else {
+          // Full word typed — hold 1s, then exit
+          setAnimClass("animate-float-hold");
+          setTimeout(() => {
             if (stop) return;
-            setWord("");
-            setAnimClass("");
+            setAnimClass("animate-slide-out");
             setTimeout(() => {
               if (stop) return;
-              if (capturePhase === "preparing") runPreparingCycle();
-            }, PREP_GAP_MS);
-          });
-        });
-      });
+              setWord("");
+              setAnimClass("");
+              setTimeout(() => {
+                if (stop) return;
+                if (capturePhase === "preparing") runPreparingCycle();
+              }, PREP_GAP_MS);
+            }, EXIT_MS);
+          }, 1000);
+        }
+      };
+
+      setTimeout(typeNext, TYPING_SPEED_MS);
     };
 
     if (capturePhase === "preparing") {
