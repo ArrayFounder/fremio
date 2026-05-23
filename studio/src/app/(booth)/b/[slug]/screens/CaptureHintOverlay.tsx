@@ -16,9 +16,10 @@ function typingDuration(word: string): number {
 
 interface CaptureHintOverlayProps {
   capturePhase: "idle" | "filler" | "preparing";
+  mode: "fullscreen" | "live_view";
 }
 
-export function CaptureHintOverlay({ capturePhase }: CaptureHintOverlayProps) {
+export function CaptureHintOverlay({ capturePhase, mode }: CaptureHintOverlayProps) {
   const [word,      setWord]      = useState("");
   const [animClass, setAnimClass]  = useState("");
   const [visible,   setVisible]   = useState(false);
@@ -112,8 +113,16 @@ export function CaptureHintOverlay({ capturePhase }: CaptureHintOverlayProps) {
 
   if (!visible) return null;
 
+  // Guard: only render in the correct mode to prevent multiple overlays
+  // fullscreen → line 1956; live_view → line 2220; NEVER at line 2324
+  if (mode !== "fullscreen" && mode !== "live_view") return null;
+
   return (
-    <div key={key} className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none overflow-hidden">
+    <div
+      key={key}
+      suppressHydrationWarning
+      className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none overflow-hidden"
+    >
       <div
         className={`relative font-black drop-shadow-2xl select-none text-white whitespace-nowrap ${animClass}`}
         style={{

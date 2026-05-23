@@ -1953,7 +1953,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         )}
 
         {/* Capture Hint Overlay — filler + preparing with smooth typing animation */}
-        {capturePhase !== "idle" && <CaptureHintOverlay capturePhase={capturePhase} />}
+        {capturePhase !== "idle" && <CaptureHintOverlay capturePhase={capturePhase} mode="fullscreen" />}
 
         {/* Flash effect */}
         {cdState === "FLASH" && (
@@ -2217,7 +2217,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           )}
 
           {/* Capture Hint Overlay — handles filler + preparing with smooth transition (live_view mode) */}
-          {capturePhase !== "idle" && <CaptureHintOverlay capturePhase={capturePhase} />}
+          {capturePhase !== "idle" && <CaptureHintOverlay capturePhase={capturePhase} mode="live_view" />}
 
           {/* ── Toolbar kanan atas: settings ── */}
           <div className="absolute top-3 right-3 flex flex-col gap-2">
@@ -2320,8 +2320,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             </div>
           )}
 
-          {/* Capture Hint Overlay — filler or preparing (live_view mode) */}
-          {capturePhase !== "idle" && <CaptureHintOverlay capturePhase={capturePhase} />}
+          {/* Nope — NOT the third overlay. Only two overlays: line 1956 (fullscreen) + line 2220 (live_view). */}
 
           {/* Belum siap */}
           {!dslrMode && !isReady && !permissionError && (
