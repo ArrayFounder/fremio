@@ -187,7 +187,7 @@ cd studio/agent && npm start
 | studio/src/app/(dashboard)/agent/page.tsx | Agent download page at /agent |
 | studio/src/app/(booth)/b/[slug]/screens/BoothSetupScreen.tsx | Hardware setup before booth session |
 | studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx | Booth camera + countdown UI |
-| studio/src/app/(booth)/b/[slug]/screens/CaptureHintOverlay.tsx | Animated "Smile!/Cheese!" overlay during Canon capture |
+| studio/src/app/(booth)/b/[slug]/screens/CaptureHintOverlay.tsx | Animated overlay during Canon capture — filler text (Smile!/Cheese!) + preparing text (Menyiapkan hasil…) with char-by-char typing animation |
 | studio/agent/src/server.ts | ✅ AKTIF — Agent TypeScript/EDSDK (port 3002), MJPEG `/preview-stream` |
 | studio/agent/native/edsdk-bridge/Program.cs | C# wrapper Canon EDSDK — `EnsureCameraReady()`, retry logic |
 | agent/src/camera.js | ⚠️ LEGACY gphoto2 — TIDAK DIGUNAKAN, jangan edit |
