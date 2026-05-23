@@ -1357,6 +1357,9 @@ app.get("/get-capture-result", async (_req: Request, res: Response) => {
 
 // ─── Legacy combined endpoint (still used for inline fallback / IPC) ────────
 app.post("/trigger-capture", async (_req: Request, res: Response) => {
+  const t0 = Date.now();
+  const hadPreviewSession = isPreviewSessionActive();
+  const captureDoneAt = Date.now();
 
   // STOP PREVIEW at count=1 — this is the ONLY time we stop preview.
   // Camera can only be in one mode: live preview OR capture. Now switch to capture.
