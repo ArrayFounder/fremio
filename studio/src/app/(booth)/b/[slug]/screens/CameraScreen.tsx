@@ -1348,7 +1348,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     // Removing freeze avoids race conditions with /trigger-capture's own stopActivePreviewStreams.
 
     try {
-      let photoDataUrl: string;
+      let photoDataUrl: string = "";
       if (window.fremioBooth?.agentCapture) {
         const ipcRes = await window.fremioBooth.agentCapture();
         if (!ipcRes.ok) {
@@ -1359,35 +1359,60 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         if (!ipcData.image) throw new Error("Capture gagal: agent IPC tidak mengembalikan gambar.");
         photoDataUrl = `data:${ipcData.image.mimeType};base64,${ipcData.image.base64}`;
       } else if (base) {
-        // Call /trigger-capture — stops preview THEN fires SHOOT to pre-armed bridge.
-        // Returns JSON with shootFiredAt + captureDoneAt timestamps for UI timing.
+        // SPLIT FLOW: POST /trigger-shot (non-blocking) → switch to "preparing" → poll /get-capture-result
+        // Step 1: Fire SHOOT — returns shootFiredAt immediately after shutter fires
         const shootFiredAt = Date.now();
-        const res = await fetch(`${base}/trigger-capture`, {
+        const triggerRes = await fetch(`${base}/trigger-shot`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-          },
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
           body: JSON.stringify({}),
           signal: AbortSignal.timeout(30000),
         });
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({})) as { error?: string };
-          throw new Error(errBody.error || `Capture gagal (HTTP ${res.status})`);
+        if (!triggerRes.ok) {
+          const errBody = await triggerRes.json().catch(() => ({})) as { error?: string };
+          throw new Error(errBody.error || `Capture gagal (HTTP ${triggerRes.status})`);
         }
-        const data = await res.json() as {
-          ok: boolean;
-          image?: string;
-          mimeType?: string;
-          shootFiredAt?: number;
-          captureDoneAt?: number;
-          error?: string;
-        };
-        if (!data.ok || !data.image) throw new Error(data.error || "Capture gagal");
-        // Calculate actual shutter vs download timings for UI
-        const actualShootMs = data.shootFiredAt ? data.shootFiredAt - shootFiredAt : 0;
-        const actualDownloadMs = data.captureDoneAt ? Date.now() - data.captureDoneAt : 0;
-        photoDataUrl = `data:${data.mimeType || "image/jpeg"};base64,${data.image}`;
+        const triggerData = await triggerRes.json() as { ok: boolean; shootFiredAt?: number; error?: string };
+        if (!triggerData.ok) throw new Error(triggerData.error || "Trigger shot gagal");
+
+        // Shot fired! Switch to "preparing" immediately
+        setCapturePhase("preparing");
+        setCountdown(null);
+
+        // Step 2: Poll /get-capture-result until image is ready
+        const pollStart = Date.now();
+        const POLL_INTERVAL_MS = 150;
+        const POLL_TIMEOUT_MS  = 25000;
+        let pollRes: Response | null = null;
+
+        while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
+          await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+          try {
+            pollRes = await fetch(`${base}/get-capture-result`, {
+              signal: AbortSignal.timeout(5000),
+            });
+            if (pollRes.status === 200) {
+              // JPEG ready!
+              const blob = await pollRes.blob();
+              photoDataUrl = await blobToDataUrl(blob);
+              break;
+            } else if (pollRes.status === 202) {
+              // Still downloading — keep polling
+              continue;
+            } else {
+              const errBody = await pollRes.json().catch(() => ({})) as { error?: string };
+              throw new Error(errBody.error || `Poll gagal (HTTP ${pollRes.status})`);
+            }
+          } catch (pollErr) {
+            if (pollErr instanceof Error && pollErr.name === "AbortError") {
+              // Timeout on poll request — retry
+              continue;
+            }
+            throw pollErr;
+          }
+        }
+
+        if (!photoDataUrl) throw new Error("Gagal mengambil hasil foto dari Canon.");
       } else {
         throw new Error("Agent tidak tersedia.");
       }
@@ -1727,8 +1752,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
         let dataUrl: string | null = null;
         if (captureSource === "dslr" || (captureSource === "auto" && dslrAvailable)) {
-          // DSLR: show filler animation (Smile!/Cheese!...) while Canon prepares + shoots.
-          // When /trigger-capture returns with shootFiredAt, CameraScreen switches to "preparing".
+          // DSLR: filler animation (Smile!/Cheese!...) while Canon prepares + fires SHOOT.
+          // captureFromAgent() switches to "preparing" when /trigger-shot returns shootFiredAt,
+          // then polls /get-capture-result until JPEG is ready.
           setCapturePhase("filler");
           setCountdown(null);
           try {
@@ -1744,11 +1770,11 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             setCaptureError(err instanceof Error ? err.message : "Gagal ambil foto dari Canon.");
             return;
           }
+        } else {
+          // Webcam path: capture immediately
+          setCapturePhase("preparing");
+          setCountdown(null);
         }
-
-        // "Menyiapkan hasil…" shows after the shot fired and JPEG was received.
-        setCapturePhase("preparing");
-        setCountdown(null);
 
         setCdState("DONE");
         captureInFlightRef.current = false;

@@ -107,6 +107,10 @@ let captureHandlerInFlight = false; // Prevent duplicate /capture calls (separat
 let preArmedCaptureInFlight: ArmedCaptureState | null = null; // Guard: prevent second SHOOT during BRIDGE_READY wait
 /** Atomic lock — set the moment pre-armed SHOOT fires. Prevents inline path from firing a second SHOOT. */
 let preArmedShootFired = false;
+/** Latest capture result — filled after shootFn() fires, consumed by GET /get-capture-result */
+let latestCaptureResult: { path: string; shootFiredAt: number; captureDoneAt: number } | null = null;
+/** Pending result resolver — resolves the GET /get-capture-result response */
+let pendingCaptureResultResolver: ((path: string) => void) | null = null;
 /** Timestamp of last SHOOT — prevents double firing between pre-armed and inline paths */
 let shootLastFiredAt = 0;
 /** Timestamp of last image captured — prevents inline path from firing SHOOT if pre-armed already shot */
@@ -1247,13 +1251,112 @@ app.post("/arm-capture", async (_req: Request, res: Response) => {
   }
 });
 
-app.post("/trigger-capture", async (_req: Request, res: Response) => {
-  // TRIGGERS the pre-armed shot at count=1. Stops preview THEN sends SHOOT to armed bridge.
-  // Called at count=1. Preview has been alive for counts 5,4,3,2 — now we stop it and fire.
-  console.log("[agent] /trigger-capture: triggering shot (stopping preview first)");
+app.post("/trigger-shot", async (_req: Request, res: Response) => {
+  // TRIGGERS the pre-armed shot at count=1. Stops preview THEN fires SHOOT.
+  // Returns immediately with shootFiredAt AFTER the shot fires (bridge downloads in background).
+  // CameraScreen calls this first, then polls /get-capture-result to get the JPEG.
+  console.log("[agent] /trigger-shot: triggering shot (stopping preview first)");
   const t0 = Date.now();
   captureInProgress = true;
   const hadPreviewSession = isPreviewSessionActive();
+
+  // STOP PREVIEW at count=1 — this is the ONLY time we stop preview.
+  await stopActivePreviewStreams(200);
+  await new Promise<void>((r) => setTimeout(r, 800)); // USB settle
+  lastPreviewBridgeExitedAt = Date.now();
+  previewRestartBlockedUntil = 0;
+
+  const armed = armedCapture;
+  if (armed) {
+    preArmedCaptureInFlight = armed;
+    console.log(`[agent] /trigger-shot: waiting for BRIDGE_READY before SHOOT... t=${Date.now()-t0}ms`);
+    try {
+      await armed.readyPromise;
+    } catch (err) {
+      console.error(`[agent] /trigger-shot: armed bridge died early: ${(err as Error).message}`);
+      preArmedCaptureInFlight = null;
+      armedCapture = null;
+      res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
+      return;
+    }
+  }
+
+  if (armed && preArmedCaptureInFlight === armed) {
+    // Armed bridge confirmed ready — fire SHOOT
+    const shootFiredAt = Date.now();
+    console.log(`[agent] /trigger-shot: BRIDGE_READY confirmed, firing SHOOT at ${Date.now()-t0}ms`);
+    armed.shootFn();
+
+    // Store shootFiredAt so GET /get-capture-result knows when shot fired
+    latestCaptureResult = { path: armed.outputPath, shootFiredAt, captureDoneAt: 0 };
+
+    // Return shootFiredAt immediately so CameraScreen can switch to "preparing"
+    res.json({ ok: true, shootFiredAt });
+
+    // Background: wait for completion + store result for /get-capture-result
+    armed.completionPromise
+      .then((outputPath) => {
+        const captureDoneAt = Date.now();
+        console.log(`[agent] /trigger-shot: capture done in ${captureDoneAt - t0}ms`);
+        latestCaptureResult = { path: outputPath, shootFiredAt, captureDoneAt };
+        preArmedCaptureInFlight = null;
+        preArmedShootFired = false;
+        captureInProgress = false;
+        previewRestartBlockedUntil = 0;
+        lastArmedBridgeExitedAt = Date.now();
+        if (hadPreviewSession) {
+          setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
+        }
+      })
+      .catch((err) => {
+        console.error(`[agent] /trigger-shot: completion error: ${err.message}`);
+        latestCaptureResult = null;
+        preArmedCaptureInFlight = null;
+        captureInProgress = false;
+        previewRestartBlockedUntil = 0;
+      });
+    return;
+  }
+
+  // No armed bridge — fallback inline
+  console.warn("[agent] /trigger-shot: no armed bridge, falling back to inline");
+  res.status(503).json({ ok: false, error: "Armed bridge not available — retry /trigger-shot or /trigger-capture" });
+});
+
+app.get("/get-capture-result", async (_req: Request, res: Response) => {
+  // POLLS for capture result after /trigger-shot fired. Returns JPEG when ready.
+  // CameraScreen polls this until imageCapturedAt or timeout.
+  const t0 = Date.now();
+  const result = latestCaptureResult;
+
+  if (!result) {
+    res.status(404).json({ ok: false, error: "No capture in progress", captureDone: false });
+    return;
+  }
+
+  if (!result.captureDoneAt) {
+    // Shot fired but image not yet downloaded
+    res.status(202).json({ ok: true, captureDone: false, shootFiredAt: result.shootFiredAt });
+    return;
+  }
+
+  // Image is ready
+  if (!fs.existsSync(result.path)) {
+    latestCaptureResult = null;
+    res.status(500).json({ ok: false, error: "File not found after capture", captureDone: false });
+    return;
+  }
+
+  const buf = fs.readFileSync(result.path);
+  imageCapturedAt = Date.now();
+  latestCaptureResult = null;
+  res.setHeader("Content-Type", "image/jpeg");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.send(buf);
+});
+
+// ─── Legacy combined endpoint (still used for inline fallback / IPC) ────────
+app.post("/trigger-capture", async (_req: Request, res: Response) => {
 
   // STOP PREVIEW at count=1 — this is the ONLY time we stop preview.
   // Camera can only be in one mode: live preview OR capture. Now switch to capture.
