@@ -6,6 +6,7 @@ import { getAdaptiveColors } from "../colorUtils";
 import type { BoothConfigData, DraftSceneElement, FrameData, PhotoSlot } from "../types";
 import { getEffectiveCaptureCount, getEffectiveSlots, isEffectiveDuplicateMode } from "../frameSlotUtils";
 import { isOverlayFrame } from "@/lib/frameEngine";
+import { CaptureHintOverlay } from "./CaptureHintOverlay";
 
 function useIsPortrait() {
   const [portrait, setPortrait] = useState(false);
@@ -1433,19 +1434,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [cdState, setCdState]           = useState<CountdownState>("READY");
   type CapturePhase = "idle" | "capturing" | "preparing";
   const [capturePhase, setCapturePhase] = useState<CapturePhase>("idle");
-  // Rotating text shown during Canon DSLR capture (between count=1 shot and JPEG return)
-  const [captureHint, setCaptureHint]   = useState<string>("");
-  const CAPTURE_HINTS = ["Smile!", "Cheese!", "Freeze!", "Strike a pose!", "Look pretty!"];
-
-  // Rotate capture hint text every 1 second while Canon is capturing
-  useEffect(() => {
-    if (capturePhase !== "capturing") return;
-    setCaptureHint(CAPTURE_HINTS[Math.floor(Math.random() * CAPTURE_HINTS.length)]);
-    const interval = setInterval(() => {
-      setCaptureHint(CAPTURE_HINTS[Math.floor(Math.random() * CAPTURE_HINTS.length)]);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [capturePhase]);
 
   const countdownTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Ref-based guard: prevent captureAndDisplay from running twice even if tick() fires
@@ -1919,17 +1907,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           </div>
         )}
 
-        {/* Rotating capture hint — shown during Canon shutter + download */}
-        {capturePhase === "capturing" && captureHint && (
-          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none">
-            <span
-              className="text-white font-black drop-shadow-2xl transition-all duration-300"
-              style={{ fontSize: "18vw", lineHeight: 1, color: accentColor }}
-            >
-              {captureHint}
-            </span>
-          </div>
-        )}
+        {/* Capture Hint Overlay — animated typing + float + slide-out */}
+        {capturePhase === "capturing" && <CaptureHintOverlay visible />}
 
         {/* Capture loading overlay — shows while DSLR is downloading the photo */}
         {capturePhase === "preparing" && (
@@ -2309,17 +2288,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             </div>
           )}
 
-          {/* Rotating capture hint — shown during Canon shutter + download (live_view mode) */}
-          {capturePhase === "capturing" && captureHint && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
-              <span
-                className="text-white font-black drop-shadow-2xl transition-all duration-300"
-                style={{ fontSize: "18vw", lineHeight: 1, color: accentColor }}
-              >
-                {captureHint}
-              </span>
-            </div>
-          )}
+          {/* Capture Hint Overlay — animated typing + float + slide-out (live_view mode) */}
+          {capturePhase === "capturing" && <CaptureHintOverlay visible />}
 
           {/* Belum siap */}
           {!dslrMode && !isReady && !permissionError && (

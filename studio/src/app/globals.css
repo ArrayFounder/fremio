@@ -23,3 +23,33 @@
     -moz-osx-font-smoothing: grayscale;
   }
 }
+
+/* ── Capture Hint Overlay Animations ─────────────────────────────────── */
+@keyframes typein {
+  from { clip-path: inset(0 100% 0 0); opacity: 0.5; }
+  to   { clip-path: inset(0 0% 0 0); opacity: 1; }
+}
+
+@keyframes float-hold {
+  0%   { transform: translateY(0); }
+  30%  { transform: translateY(-1.5rem); }
+  70%  { transform: translateY(1.5rem); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes slide-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(4rem) scale(0.85); }
+}
+
+.animate-typein {
+  animation: typein linear forwards;
+}
+
+.animate-float-hold {
+  animation: float-hold 0.5s ease-in-out forwards;
+}
+
+.animate-slide-out {
+  animation: slide-out 0.4s ease-in forwards;
+}
