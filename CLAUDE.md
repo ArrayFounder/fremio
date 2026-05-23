@@ -88,6 +88,65 @@ npm start                # Start agent (port 3002, TypeScript + C# EDSDK bridge)
 
 # ⚠️ JANGAN jalankan `cd agent && npm start` — itu legacy gphoto2, tidak dipakai
 
+### Start Studio + Agent Together (for local testing)
+```bash
+# Terminal 1: Studio dev server
+cd studio && npm run dev
+
+# Terminal 2: Local agent (Canon DSLR)
+cd studio/agent && npm start
+```
+
+---
+
+## Local Testing — studio.fremio.id/b/[slug] dengan Canon DSLR
+
+Untuk test kamera Canon DSLR di `studio.fremio.id/b/tes`:
+
+### Prerequisites
+1. **Studio dev server running** di `localhost:3000`
+2. **Local agent running** di `127.0.0.1:3002`
+
+### Langkah
+```bash
+# 1. Start studio dev server
+cd studio && npm run dev
+
+# 2. Start local agent (terminal baru)
+cd studio/agent && npm start
+
+# 3. Buka browser ke:
+# http://localhost:3000/b/tes
+# ATAU https://studio.fremio.id/b/tes
+```
+
+### How it works
+```
+Browser (studio.fremio.id atau localhost:3000)
+  └── Booth UI (BoothSetupScreen → CameraScreen)
+        └── fetch('http://127.0.0.1:3002/preview-stream')
+              └── Local Agent (studio/agent)
+                    └── C# EDSDK Bridge → Canon DSLR via USB
+```
+
+> ⚠️ **PENTING**: Booth UI harus connect ke `http://127.0.0.1:3002` — ini adalah agent lokal di komputer booth. Browser booth computer (saat buka studio.fremio.id) harus sudah install agent dan agent harus running.
+
+### Check Agent Status
+```bash
+curl http://127.0.0.1:3002/health
+# {"ok":true,"version":"1.0.14","platform":"win32"} ✅
+
+curl http://127.0.0.1:3002/preview-stream
+# MJPEG stream → Canon live view aktif ✅
+```
+
+### If Agent is Not Running
+```bash
+cd studio/agent && npm start
+# Agent akan listen di http://127.0.0.1:3002
+# CameraScreen akan auto-detect dan connect ke preview stream
+```
+
 ---
 
 ## Architecture
@@ -139,8 +198,6 @@ npm start                # Start agent (port 3002, TypeScript + C# EDSDK bridge)
 
 ## Canon DSLR Camera Notes
 
-## Canon DSLR Camera Notes
-
 > ⚠️ **KRITIS**: Sistem menggunakan **Canon EDSDK resmi** (via C# bridge), **BUKAN gphoto2**!
 > Referensi gphoto2 di code lama sudah usang. Agent aktif: `studio/agent/`, bukan `agent/`.
 
@@ -179,30 +236,84 @@ Electron App
 5. CameraScreen mulai polling `/preview-stream` setelah delay → bridge re-start jika sudah mati
 6. Capture: `POST /capture` → bridge `TriggerShutter()` → foto di-download
 
-### Root Cause: Race Condition Live Preview (sudah fixed)
+### Pre-Arm Capture Flow (Current Implementation)
 
-**Masalah**: Bridge mati sebelum CameraScreen mulai polling  
-- `scheduleSharedPreviewStop(2000ms)` → bridge mati di T+2000ms  
-- `booth_dslr_stream_release_until = T+3000ms` → CameraScreen mulai polling T+3000ms  
-- Gap 1033ms: bridge mati → cold EDSDK start (2–10 detik) → error "belum tersedia" muncul di 7s grace
+**Problem**: Shutter trigger terlalu lama jika bridge baru di-spawn saat countdown=1.
 
-**Fix (commit `146d2a6`, branch `agents/fix-canon-camera-capture-errors`)**:
-- `studio/agent/src/server.ts` line 138: `scheduleSharedPreviewStop(delayMs = 5000)` (was 2000)
-- `CameraScreen.tsx`: hapus guard `if (hasIpcPreview) return;` yang salah blokir MJPEG fallback
+**Solution**: Pre-arm bridge 4 detik lebih awal:
+1. CameraScreen `startCountdown()` (count=5) → `POST /prepare-capture` → spawn armed bridge
+2. Armed bridge running, waiting for SHOOT stdin signal
+3. At count=0 → `POST /capture` → send SHOOT → bridge fires shutter immediately
+
+**Key Code:**
+- `CameraScreen.tsx`: `/prepare-capture` called at `startCountdown()` (count=5), NOT at count=1
+- `server.ts`: `POST /prepare-capture` spawns bridge with `CaptureArmedToFile()` mode
+- `server.ts`: `POST /capture` sends SHOOT to armed bridge stdin → immediate capture
+
+### Double-Shot Prevention (Atomic Guards)
+
+**Problem**: Race condition bisa menyebabkan 2 shutter trigger dalam satu sesi.
+
+**Solution**: Atomic flag `preArmedShootFired` — set SEBELUM stdin write, check setelah await:
+```typescript
+// server.ts — shootFn
+preArmedShootFired = true;  // atomic set BEFORE write
+shootLastFiredAt = Date.now();
+captureLockFiredAt = Date.now();
+armedProcess.stdin?.write("SHOOT\n");
+// await readyPromise...
+// RE-CHECK after await
+if (preArmedShootFired && captureLockFiredAt !== Date.now()) {
+  return { status: "already_fired" }; // reject concurrent
+}
+```
+
+**Key Guards:**
+- `preArmedShootFired`: set before stdin write, never reset mid-session
+- `preArmedShootFired` checked in inline path before trigger
+- Window: 60s — preArmedShootFired auto-clears after 60s
+
+### C# Bridge Armed Mode (CaptureArmedToFile)
+
+**Path**: `studio/agent/native/edsdk-bridge/Program.cs`
+
+**Flow:**
+1. `args[0] == "armed"` → `CaptureArmedToFile(outputPath)`
+2. Loop: read stdin line → `NOCAPTURE` or `SHOOT`
+3. On SHOOT: `TriggerShutter()` → save to file → exit
+4. On NOCAPTURE: exit immediately (no shutter)
+5. On timeout (60s): `timedOut = true` → exit WITHOUT firing
+
+**Important**: Timeout does NOT auto-fire — bridge exits cleanly.
+
+### Inline Capture Path (Fallback)
+
+When pre-arm is not available (race, timeout), inline path triggers:
+1. Kill any existing armed bridge
+2. USB settle: 800ms wait for Canon USB session to close
+3. Spawn new bridge with `CaptureToFile()`
+4. Wait BRIDGE_READY (up to 60s)
+5. Send SHOOT via stdin
+6. Wait file output
 
 ### EDSDK Startup Timing
 
-- `EnsureCameraReady()`: up to 8 retry × ~500–1300ms ≈ hingga 10 detik jika `CommPortIsAlreadyOpen (0x000000C0)`
-- `PumpSdkEvents(8, 200)` = 1600ms minimum startup
-- Fix idle timeout ke 5000ms memastikan bridge tetap hidup saat CameraScreen mulai polling
+| Operation | Duration |
+|-----------|----------|
+| `EnsureCameraReady()` retry loop | up to 8 × ~500–1300ms ≈ 10s max |
+| `PumpSdkEvents(8, 200)` | 1600ms minimum |
+| USB settle (inline capture) | 800ms |
+| Pre-arm idle timeout | 5000ms |
 
-### Error Codes EDSDK
+### Error Codes
 
 | Code | Arti | Fix |
 |------|------|-----|
 | `0x000000C0` | `CommPortIsAlreadyOpen` — USB session conflict | Retry otomatis di `EnsureCameraReady()` |
 | `0x00000021` | `DeviceBusy` | Tunggu, retry |
-| "Live preview Canon belum tersedia" | Bridge mati sebelum CameraScreen polling | Fixed: idle timeout 5000ms |
+| `0x00000020` | `PTP Device Busy` | Retry |
+| "Live preview Canon belum tersedia" | Bridge mati sebelum polling | Fixed: idle timeout 5000ms |
+| "signal timed out" | CameraScreen fetch timeout | Fixed: pre-arm bridge earlier |
 
 ### Known Working Parameters
 
@@ -210,7 +321,9 @@ Electron App
 - `/preview-stream` → valid MJPEG stream
 - Grace period error: `DSLR_PREVIEW_ERROR_GRACE_MS = 7000ms` (di `CameraScreen.tsx`)
 - IPC fallback timer: `ipcFallbackTimer = 10000ms`
->>>>>>> origin/agents/fix-canon-camera-capture-errors
+- Pre-arm call: `startCountdown()` (count=5)
+- Kill delay: 200ms | Settle delay: 800ms
+- SHOOT window: 8000ms | BRIDGE_READY timeout: 60s
 
 ---
 
@@ -242,30 +355,58 @@ Backend: PORT, DB_HOST, JWT_SECRET, MIDTRANS_KEYS, FRONTEND_URL
 > ❌ **JANGAN**: Deploy via GitHub Actions untuk perubahan code — lambat dan tidak reliable.
 > GitHub push: boleh untuk backup/history, tapi deploy harus via SSH.
 
-#### Deploy via SSH (Posh-SSH dari PowerShell)
+### VPS SSH Access (Key-Based, No Password)
+
+> ✅ **WORKING**: SSH dengan unencrypted key `~/.ssh/fremio_deploy_nopass` — tanpa password!
+> Jalankan dari PowerShell atau bash dengan OpenSSH.
 
 ```powershell
-Import-Module Posh-SSH
-$pass = ConvertTo-SecureString 'PASSWORD' -AsPlainText -Force
-$cred = New-Object System.Management.Automation.PSCredential('root', $pass)
-$session = New-SSHSession -ComputerName '76.13.192.32' -Credential $cred -AcceptKey -Force
+# Dari PowerShell Windows
+& "C:\Windows\System32\OpenSSH\ssh.exe" -i "$HOME\.ssh\fremio_deploy_nopass" -o StrictHostKeyChecking=no root@76.13.192.32 "hostname"
+# Output: srv1322058 ✅
 
-# 1. Pull kode terbaru di VPS (jika sudah push ke GitHub)
-Invoke-SSHCommand -SessionId $session.SessionId -Command "cd /root/fremio-studio/studio && git pull" -TimeOut 60
-
-# 2. Build Next.js di VPS (3-5 menit)
-Invoke-SSHCommand -SessionId $session.SessionId -Command "cd /root/fremio-studio/studio && npm run build" -TimeOut 600
-
-# 3. Restart PM2
-Invoke-SSHCommand -SessionId $session.SessionId -Command "pm2 restart fremio-studio" -TimeOut 30
+# Dari bash (Git Bash / WSL)
+/c/Windows/System32/OpenSSH/ssh.exe -i "/c/Users/A.r.r.a.y.19/.ssh/fremio_deploy_nopass" -o StrictHostKeyChecking=no root@76.13.192.32 "hostname"
 ```
 
-#### VPS Password
-- `#Salwaputri111103` (gunakan hanya di Posh-SSH, jangan commit ke code)
+**SSH Key Details:**
+- File: `~/.ssh/fremio_deploy_nopass` (ed25519, unencrypted, no passphrase)
+- Public key di VPS: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAhC0rXMUXzP3BZRray+5OQ6Iqua4y2Wx5gB+PlRTZ4z deploy-only`
+- Path di VPS: `/root/.ssh/authorized_keys`
+- Fingerprint: `SHA256:FAzcah3iVp/SkRCh18T9MlfkRLB6u+WaZwq5erKFUwM`
 
-#### SSH Key (alternatif jika password tidak mau)
-- File: `~/.ssh/github-actions-key` (ed25519, yang berfungsi)
-- File: `~/.ssh/fremio_deploy` — **TIDAK ADA**, jangan digunakan
+**Deploy Command Sequence (dari Claude Code bash):**
+```bash
+SSH_KEY="/c/Users/A.r.r.a.y.19/.ssh/fremio_deploy_nopass"
+SSH_CMD="/c/Windows/System32/OpenSSH/ssh.exe"
+VPS="root@76.13.192.32"
+
+# 1. Git push dari lokal
+rtk git add . && rtk git commit -m "msg" && rtk git push
+
+# 2. Git pull di VPS
+$SSH_CMD -i "$SSH_KEY" -o StrictHostKeyChecking=no $VPS "cd /root/fremio-studio/studio && git pull"
+
+# 3. Build Next.js di VPS (3-10 menit)
+$SSH_CMD -i "$SSH_KEY" -o StrictHostKeyChecking=no $VPS "cd /root/fremio-studio/studio && npm run build"
+
+# 4. Restart PM2
+$SSH_CMD -i "$SSH_KEY" -o StrictHostKeyChecking=no $VPS "pm2 restart fremio-studio"
+```
+
+**Troubleshooting authorized_keys:**
+- Problem: Hostinger Hostinger concatenates keys without newlines (`#hostinger-managed-keysssh-ed25519`)
+- Fix: Append correct entry dengan `echo "ssh-ed25519 ..." >> /root/.ssh/authorized_keys`
+- Verify: `grep "fremio_deploy_nopass" ~/.ssh/authorized_keys` harus show satu baris ed25519 saja
+
+### Script-Based Deploy (PowerShell)
+
+```powershell
+# Deploy script ada di studio/scripts/deploy-vps.ps1
+& "C:\Users\A.r.r.a.y.19\fremio\studio\scripts\deploy-vps.ps1"
+```
+
+Script ini melakukan: SSH test → upload agent dist → git pull → build → pm2 restart.
 
 ---
 
@@ -398,3 +539,142 @@ ERROR: Cannot create symbolic link : A required privilege is not held by the cli
 4. Subscription tiers: Credits system for watermark-free
 5. Multi-gateway: Midtrans primary, Xendit/Doku fallbacks
 6. Real-time booth sync: Socket.io for multi-device state
+
+<!-- rtk-instructions v2 -->
+# RTK (Rust Token Killer) - Token-Optimized Commands
+
+## Golden Rule
+
+**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
+
+**Important**: Even in command chains with `&&`, use `rtk`:
+```bash
+# ❌ Wrong
+git add . && git commit -m "msg" && git push
+
+# ✅ Correct
+rtk git add . && rtk git commit -m "msg" && rtk git push
+```
+
+## RTK Commands by Workflow
+
+### Build & Compile (80-90% savings)
+```bash
+rtk cargo build         # Cargo build output
+rtk cargo check         # Cargo check output
+rtk cargo clippy        # Clippy warnings grouped by file (80%)
+rtk tsc                 # TypeScript errors grouped by file/code (83%)
+rtk lint                # ESLint/Biome violations grouped (84%)
+rtk prettier --check    # Files needing format only (70%)
+rtk next build          # Next.js build with route metrics (87%)
+```
+
+### Test (60-99% savings)
+```bash
+rtk cargo test          # Cargo test failures only (90%)
+rtk go test             # Go test failures only (90%)
+rtk jest                # Jest failures only (99.5%)
+rtk vitest              # Vitest failures only (99.5%)
+rtk playwright test     # Playwright failures only (94%)
+rtk pytest              # Python test failures only (90%)
+rtk rake test           # Ruby test failures only (90%)
+rtk rspec               # RSpec test failures only (60%)
+rtk test <cmd>          # Generic test wrapper - failures only
+```
+
+### Git (59-80% savings)
+```bash
+rtk git status          # Compact status
+rtk git log             # Compact log (works with all git flags)
+rtk git diff            # Compact diff (80%)
+rtk git show            # Compact show (80%)
+rtk git add             # Ultra-compact confirmations (59%)
+rtk git commit          # Ultra-compact confirmations (59%)
+rtk git push            # Ultra-compact confirmations
+rtk git pull            # Ultra-compact confirmations
+rtk git branch          # Compact branch list
+rtk git fetch           # Compact fetch
+rtk git stash           # Compact stash
+rtk git worktree        # Compact worktree
+```
+
+Note: Git passthrough works for ALL subcommands, even those not explicitly listed.
+
+### GitHub (26-87% savings)
+```bash
+rtk gh pr view <num>    # Compact PR view (87%)
+rtk gh pr checks        # Compact PR checks (79%)
+rtk gh run list         # Compact workflow runs (82%)
+rtk gh issue list       # Compact issue list (80%)
+rtk gh api              # Compact API responses (26%)
+```
+
+### JavaScript/TypeScript Tooling (70-90% savings)
+```bash
+rtk pnpm list           # Compact dependency tree (70%)
+rtk pnpm outdated       # Compact outdated packages (80%)
+rtk pnpm install        # Compact install output (90%)
+rtk npm run <script>    # Compact npm script output
+rtk npx <cmd>           # Compact npx command output
+rtk prisma              # Prisma without ASCII art (88%)
+```
+
+### Files & Search (60-75% savings)
+```bash
+rtk ls <path>           # Tree format, compact (65%)
+rtk read <file>         # Code reading with filtering (60%)
+rtk grep <pattern>      # Search grouped by file (75%). Format flags (-c, -l, -L, -o, -Z) run raw.
+rtk find <pattern>      # Find grouped by directory (70%)
+```
+
+### Analysis & Debug (70-90% savings)
+```bash
+rtk err <cmd>           # Filter errors only from any command
+rtk log <file>          # Deduplicated logs with counts
+rtk json <file>         # JSON structure without values
+rtk deps                # Dependency overview
+rtk env                 # Environment variables compact
+rtk summary <cmd>       # Smart summary of command output
+rtk diff                # Ultra-compact diffs
+```
+
+### Infrastructure (85% savings)
+```bash
+rtk docker ps           # Compact container list
+rtk docker images       # Compact image list
+rtk docker logs <c>     # Deduplicated logs
+rtk kubectl get         # Compact resource list
+rtk kubectl logs        # Deduplicated pod logs
+```
+
+### Network (65-70% savings)
+```bash
+rtk curl <url>          # Compact HTTP responses (70%)
+rtk wget <url>          # Compact download output (65%)
+```
+
+### Meta Commands
+```bash
+rtk gain                # View token savings statistics
+rtk gain --history      # View command history with savings
+rtk discover            # Analyze Claude Code sessions for missed RTK usage
+rtk proxy <cmd>         # Run command without filtering (for debugging)
+rtk init                # Add RTK instructions to CLAUDE.md
+rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
+```
+
+## Token Savings Overview
+
+| Category | Commands | Typical Savings |
+|----------|----------|-----------------|
+| Tests | vitest, playwright, cargo test | 90-99% |
+| Build | next, tsc, lint, prettier | 70-87% |
+| Git | status, log, diff, add, commit | 59-80% |
+| GitHub | gh pr, gh run, gh issue | 26-87% |
+| Package Managers | pnpm, npm, npx | 70-90% |
+| Files | ls, read, grep, find | 60-75% |
+| Infrastructure | docker, kubectl | 85% |
+| Network | curl, wget | 65-70% |
+
+Overall average: **60-90% token reduction** on common development operations.
+<!-- /rtk-instructions -->
