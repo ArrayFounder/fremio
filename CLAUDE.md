@@ -236,19 +236,43 @@ Electron App
 5. CameraScreen mulai polling `/preview-stream` setelah delay → bridge re-start jika sudah mati
 6. Capture: `POST /capture` → bridge `TriggerShutter()` → foto di-download
 
-### Pre-Arm Capture Flow (Current Implementation)
+### Pre-Arm Capture Flow (Working — commit d445692)
+
+> ✅ **STABLE**: Ini versi yang sudah berfungsi. Jika agent capture rusak, revert ke:
+> `git checkout d445692 -- studio/agent/ studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx`
 
 **Problem**: Shutter trigger terlalu lama jika bridge baru di-spawn saat countdown=1.
 
-**Solution**: Pre-arm bridge 4 detik lebih awal:
-1. CameraScreen `startCountdown()` (count=5) → `POST /prepare-capture` → spawn armed bridge
-2. Armed bridge running, waiting for SHOOT stdin signal
-3. At count=0 → `POST /capture` → send SHOOT → bridge fires shutter immediately
+**Solution**: Split `/prepare-capture` → `/arm-capture` + `/trigger-capture`:
+1. `count=3` → `POST /arm-capture` → spawn armed bridge (preview stays ALIVE for counts 5,4,3,2,1)
+2. `count=1` → `POST /trigger-capture` → stop preview → send SHOOT → instant capture
 
-**Key Code:**
-- `CameraScreen.tsx`: `/prepare-capture` called at `startCountdown()` (count=5), NOT at count=1
-- `server.ts`: `POST /prepare-capture` spawns bridge with `CaptureArmedToFile()` mode
-- `server.ts`: `POST /capture` sends SHOOT to armed bridge stdin → immediate capture
+**Flow akhir (working):**
+```
+CameraScreen startCountdown()
+  count=3 → POST /arm-capture (fire-and-forget)
+    → server.ts spawns bridge with CaptureArmedToFile() — preview stays ALIVE
+    → BRIDGE_READY after ~5s
+  count=1 → captureAndDisplay() → POST /trigger-capture (blocking)
+    → stopActivePreviewStreams(200ms)
+    → USB settle 800ms
+    → await armed.readyPromise (wait for BRIDGE_READY)
+    → armed.shootFn() → stdin "SHOOT\n" → instant shutter
+    → completionPromise resolves → JPEG returned to browser
+    → camera returns to live preview
+```
+
+**Key files changed:**
+- `studio/agent/src/server.ts`:
+  - `/arm-capture` — arms camera WITHOUT stopping preview; resets capture guards (imageCapturedAt, shootLastFiredAt, preArmedShootFired)
+  - `/trigger-capture` — NO NOCAPTURE; wait BRIDGE_READY before SHOOT; completion only if file exists
+  - `getAgentRuntimeRoots()` — added native/edsdk-bridge/bin/Release/net8.0/win-x64 to search path
+- `studio/agent/native/edsdk-bridge/Program.cs`:
+  - `shootReceived` flag replaces `timedOut` for exit decision — NOCAPTURE/EOF no longer sets timedOut
+- `studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx`:
+  - count=3 → `POST /arm-capture`
+  - captureFromAgent() → `POST /trigger-capture` (not /capture)
+  - removed freezeDslrPreview() calls
 
 ### Double-Shot Prevention (Atomic Guards)
 
@@ -278,23 +302,30 @@ if (preArmedShootFired && captureLockFiredAt !== Date.now()) {
 **Path**: `studio/agent/native/edsdk-bridge/Program.cs`
 
 **Flow:**
-1. `args[0] == "armed"` → `CaptureArmedToFile(outputPath)`
-2. Loop: read stdin line → `NOCAPTURE` or `SHOOT`
-3. On SHOOT: `TriggerShutter()` → save to file → exit
-4. On NOCAPTURE: exit immediately (no shutter)
-5. On timeout (60s): `timedOut = true` → exit WITHOUT firing
+1. `args[0] == "capture-armed"` → `CaptureArmedToFile(outputPath)`
+2. Setup: `EnsureCameraReady()` → `EdsOpenSession()` → EVF disable → SaveTo=Host → JPEG forced
+3. `Console.Error.WriteLine("BRIDGE_READY")` → signals Node.js that bridge is ready for SHOOT
+4. stdin reader thread: wait for `SHOOT` or `NOCAPTURE`
+5. On SHOOT: `TriggerShutter()` → save JPEG to outputPath → exit code=0
+6. On NOCAPTURE: `cancelled=true` → exit cleanly without firing
+7. On 60s timeout: `timedOut=true` → exit WITHOUT firing
 
-**Important**: Timeout does NOT auto-fire — bridge exits cleanly.
+**CRITICAL stdin race fix (commit d445692)**:
+- `timedOut` was accidentally set by NOCAPTURE and EOF (race condition)
+- Fixed: separate `shootReceived`, `cancelled`, `timedOut` flags
+- Only `shootReceived=true` triggers TakePicture; `cancelled` and `timedOut` cause clean exit
 
 ### Inline Capture Path (Fallback)
 
-When pre-arm is not available (race, timeout), inline path triggers:
-1. Kill any existing armed bridge
+When pre-arm is not available (race, bridge died before BRIDGE_READY), inline path triggers:
+1. Do NOT send NOCAPTURE — that would kill a valid armed bridge
 2. USB settle: 800ms wait for Canon USB session to close
-3. Spawn new bridge with `CaptureToFile()`
+3. Spawn new bridge with `CaptureToFile()` (not armed mode)
 4. Wait BRIDGE_READY (up to 60s)
 5. Send SHOOT via stdin
 6. Wait file output
+
+> ⚠️ **No NOCAPTURE in /trigger-capture**: Previous version sent NOCAPTURE before SHOOT, which killed the wrong armed bridge and caused race conditions. Now `/trigger-capture` sends SHOOT directly without clearing armed bridge first. The armed bridge is only cleared by `/arm-capture` when a newer arm starts.
 
 ### EDSDK Startup Timing
 
