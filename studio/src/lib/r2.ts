@@ -93,5 +93,5 @@ export function buildGifKey(sessionId: string): string {
  * Pakai .webm agar file valid dan nginx serve dengan content-type video/webm.
  */
 export function buildVideoKey(sessionId: string): string {
-  return `sessions/${sessionId}/live-${Date.now()}.webm`;
+  return `sessions/${sessionId}/live-${Date.now()}.mp4`;
 }

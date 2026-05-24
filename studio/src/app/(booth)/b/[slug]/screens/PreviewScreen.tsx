@@ -506,7 +506,7 @@ export function PreviewScreen({
         ];
         if (gifUrl)   files.push({ url: gifUrl,   name: `slideshow-${slug}.gif` });
         if (videoUrl) {
-          files.push({ url: videoUrl, name: `video-${slug}.webm` });
+          files.push({ url: videoUrl, name: `video-${slug}.mp4` });
         }
         validRawUrls.forEach((url, i) =>
           files.push({ url, name: `foto-${i + 1}-original-${slug}.jpg` })

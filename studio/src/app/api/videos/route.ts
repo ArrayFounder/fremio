@@ -37,7 +37,9 @@ export async function POST(req: Request) {
   const key       = buildVideoKey(sessionId);
   const buffer    = Buffer.from(await file.arrayBuffer());
   console.log("[POST /api/videos] uploading buffer:", buffer.length, "bytes, key:", key);
-  const publicUrl = await uploadPhoto(key, buffer, "video/webm");
+  // Use .mp4 extension with H.264 content-type for maximum cross-platform compatibility.
+  // MediaRecorder generates H.264-in-MP4 when video/mp4;codecs=avc1 is used.
+  const publicUrl = await uploadPhoto(key, buffer, "video/mp4");
   console.log("[POST /api/videos] upload done, publicUrl:", publicUrl);
 
   const updated = await prisma.boothSession.update({

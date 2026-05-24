@@ -1084,7 +1084,7 @@ export async function uploadVideo(blob: Blob, sessionId: string): Promise<string
   form.append("sessionId", sessionId);
   // Browser MediaRecorder menghasilkan WebM container (VP8/VP9/H.264).
   // Gunakan .webm agar file valid dan nginx serve dengan content-type video/webm.
-  const file = new File([blob], "live.webm", { type: "video/webm" });
+  const file = new File([blob], "live.mp4", { type: "video/mp4" });
   form.append("video", file, "live.webm");
   console.log("[uploadVideo] uploading blob size =", blob.size, "type =", blob.type, "sessionId =", sessionId);
 
