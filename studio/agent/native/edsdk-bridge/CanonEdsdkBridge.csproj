@@ -7,7 +7,4 @@
     <AssemblyName>edsdk-bridge-native</AssemblyName>
     <RootNamespace>CanonEdsdkBridge</RootNamespace>
   </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
-  </ItemGroup>
 </Project>

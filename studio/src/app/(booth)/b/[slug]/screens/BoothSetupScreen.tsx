@@ -125,6 +125,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
     return savedSource === "dslr" ? true : false;
   });
   const [dslrPreviewFrameSrc, setDslrPreviewFrameSrc] = useState<string | null>(null);
+  const [streamAspect, setStreamAspect] = useState<number | null>(null); // w/h ratio of live view
   const [startingBooth, setStartingBooth] = useState(false);
   const dslrPreviewImgRef = useRef<HTMLImageElement | null>(null);
   const agentCheckInFlightRef = useRef<Promise<void> | null>(null);
@@ -813,30 +814,42 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         </div>
       </div>
 
-      {/* ── Baris 1: Stream preview ───────────────────────────────────────── */}
-      <div className="flex-none relative bg-black overflow-hidden" style={{ height: "42vh" }}>
-        {captureSource === "dslr" ? (
-          (agentBase || setupDslrUsesIpcPreview) && dslrPreviewActive ? (
-            <>
-              {setupDslrPreviewSrc ? (
-                <img
-                  ref={dslrPreviewImgRef}
-                  key={setupDslrUsesIpcPreview ? "ipc-preview" : dslrPreviewKey}
-                  src={setupDslrPreviewSrc}
-                  alt="Canon live preview"
-                  className="w-full h-full object-cover"
-                  style={{ transform: mirror ? "scaleX(-1)" : "none" }}
-                  onLoad={() => setDslrPreviewError(null)}
-                  onError={() => {
-                    setDslrPreviewError("Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
-                    void restartCanonPreviewBridge("gagal render stream");
-                  }}
-                />
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-                  <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Menyiapkan live view Canon…</p>
-                </div>
-              )}
+      {/* ── Baris 1: Stream preview — height menyesuaikan aspect ratio kamera ─── */}
+      <div
+        className="flex-none relative bg-black overflow-hidden flex items-center justify-center"
+        style={streamAspect != null ? { height: `${100 / streamAspect}vw` } : { height: "42vh" }}
+      >
+        {/* 42vh fallback height: cover overflow untuk aspek rasio lebar (16:9) */}
+        <div className="relative w-full h-full overflow-hidden">
+          {captureSource === "dslr" ? (
+            (agentBase || setupDslrUsesIpcPreview) && dslrPreviewActive ? (
+              <>
+                {setupDslrPreviewSrc ? (
+                  <img
+                    ref={dslrPreviewImgRef}
+                    key={setupDslrUsesIpcPreview ? "ipc-preview" : dslrPreviewKey}
+                    src={setupDslrPreviewSrc}
+                    alt="Canon live preview"
+                    className="w-full h-full object-contain"
+                    style={{ transform: mirror ? "scaleX(-1)" : "none", backgroundColor: "#000" }}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                        setDslrPreviewError(null);
+                        setStreamAspect(img.naturalWidth / img.naturalHeight);
+                      }
+                    }}
+                    onError={() => {
+                      setDslrPreviewError("Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
+                      setStreamAspect(null);
+                      void restartCanonPreviewBridge("gagal render stream");
+                    }}
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                    <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Menyiapkan live view Canon…</p>
+                  </div>
+                )}
               {dslrPreviewError && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/70">
                   <span className="text-2xl">📷</span>
@@ -883,8 +896,14 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             <video
               ref={el => setPreviewEl(el)}
               autoPlay playsInline muted
-              className="w-full h-full object-cover"
-              style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+              className="w-full h-full object-contain"
+              style={{ transform: mirror ? "scaleX(-1)" : "none", backgroundColor: "#000" }}
+              onLoadedMetadata={(e) => {
+                const v = e.currentTarget;
+                if (v.videoWidth > 0 && v.videoHeight > 0) {
+                  setStreamAspect(v.videoWidth / v.videoHeight);
+                }
+              }}
             />
             {camLoading && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/60">
@@ -893,6 +912,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             )}
           </>
         )}
+        </div>
         {/* Mirror badge */}
         <div className="absolute top-2 right-2 flex items-center gap-1.5">
           {mirror && (
