@@ -1138,18 +1138,29 @@ function drawVideoInSlot(
   // Use ACTUAL video dimensions if available and non-zero.
   // If not yet decoded (videoWidth=0), fall back to canonical 1920×1080.
   // For Canon DSLR captures from 1920×1080 canvas: canonical matches actual.
-  const vw = (video.videoWidth  || 1920);
-  const vh = (video.videoHeight || 1080);
+  // SAFETY: if both are 0, use slot dimensions as fallback to avoid empty draws.
+  const vw = video.videoWidth  || 1920;
+  const vh = video.videoHeight || 1080;
+  const hasValidDims = vw > 0 && vh > 0;
+  const useFallback = !hasValidDims;
+
   const srcAspect = vw / vh;
   const dstAspect = slot.w / slot.h;
 
   let sx = 0, sy = 0, sw = vw, sh = vh;
-  if (srcAspect > dstAspect) {
+  if (hasValidDims && srcAspect > dstAspect) {
     sw = vh * dstAspect;
     sx = (vw - sw) / 2;
-  } else {
+  } else if (hasValidDims) {
     sh = vw / dstAspect;
     sy = (vh - sh) / 2;
+  }
+  // If no valid dimensions, fill the entire slot (use slot dims as video source)
+  if (useFallback) {
+    sw = slot.w;
+    sh = slot.h;
+    sx = 0;
+    sy = 0;
   }
 
   ctx.save();
@@ -1479,7 +1490,11 @@ export async function composeVideoLive(
     let lastDrawTime = 0;
     const targetInterval = 1000 / fps;
 
+    // Diagnostic: how many unique frames did we actually draw?
+    let framesDrawn = 0;
+
     const drawComposite = () => {
+      framesDrawn++;
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, cw, ch);
       // Background-mode frame (webp): draw before videos — dilewati jika sceneElements aktif
@@ -1543,7 +1558,7 @@ export async function composeVideoLive(
 
     recorder.onstop = () => {
       cancelAnimationFrame(rafId);
-      console.log("[composeVideoLive] recorder.onstop: chunks.length =", chunks.length, "recorder.mimeType =", recorder.mimeType);
+      console.log("[composeVideoLive] recorder.onstop: framesDrawn =", framesDrawn, "chunks.length =", chunks.length, "recorder.mimeType =", recorder.mimeType);
       cleanup();
       if (chunks.length === 0) { console.warn("[composeVideoLive] no chunks collected"); resolve(null); return; }
       // Output as H.264-in-MP4 for cross-browser playback (especially Safari/iOS).
