@@ -1526,10 +1526,10 @@ export async function composeVideoLive(
     };
 
     const scheduleDraw = (time: number) => {
-      if (time - lastDrawTime >= targetInterval) {
-        drawComposite();
-        lastDrawTime = time;
-      }
+      // Draw every single RAF tick — no throttle. captureStream(60) generates 60
+      // unique frames/sec of canvas content. Skipping ticks = dropping frames = short video.
+      try { drawComposite(); } catch (e) { console.warn("[composeVideoLive] drawComposite error:", e); }
+      lastDrawTime = time;
       if (performance.now() < endTime) {
         rafId = requestAnimationFrame(scheduleDraw);
       } else {
