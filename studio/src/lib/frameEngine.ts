@@ -1418,43 +1418,11 @@ export async function composeVideoLive(
     }
   }
 
-  // Determine recording FPS: match source video's native frame rate, don't upsample.
-  // Canon MJPEG = ~30fps, webcam = ~30fps. Recording at 60fps from 30fps source just
-  // creates duplicate frames (no new motion) → same file size for worse quality-per-frame.
-  // Matching source rate = each output frame is a UNIQUE motion moment → smooth video.
-  let recordedFps = fps;
-  if (entries.length > 0) {
-    const probeEl = entries[0].el;
-    const vw = probeEl.videoWidth || 0;
-    const vh = probeEl.videoHeight || 0;
-    if (vw > 0 && vh > 0) {
-      // Detect natural frame rate: measure how many RAF ticks the video actually
-      // advances its currentTime over 500ms of playback. This tells us the true frame rate.
-      let prevTime = -1;
-      let frameCount = 0;
-      const startTime = performance.now();
-      const probeRaf = (now: number) => {
-        if (now - startTime < 500) {
-          const ct = probeEl.currentTime;
-          if (prevTime >= 0 && ct > prevTime) frameCount++;
-          prevTime = ct;
-          requestAnimationFrame(probeRaf);
-        }
-      };
-      probeEl.currentTime = 0;
-      probeEl.play();
-      requestAnimationFrame(probeRaf);
-      const naturalFps = Math.round(frameCount / 0.5);
-      recordedFps = Math.min(60, Math.max(15, naturalFps || 30));
-      probeEl.pause();
-      probeEl.currentTime = 0;
-      console.log(`[composeVideoLive] detected source fps: ${recordedFps} (frames in 500ms: ${frameCount})`);
-    } else {
-      console.log(`[composeVideoLive] cannot probe fps: video dims ${vw}×${vh} not ready yet`);
-    }
-  } else {
-    console.log(`[composeVideoLive] cannot probe fps: no video elements available`);
-  }
+  // Fixed 30fps recording — match Canon MJPEG / webcam native rate.
+  // No FPS probe (probe fails on blob-sourced video elements — video hasn't decoded
+  // enough frames to play at real rate yet). Each output frame = unique motion moment
+  // from the ~30fps source; no upsampling, no duplicate frames.
+  const recordedFps = 30;
 
   // ── 5. Canvas + MediaRecorder ─────────────────────────────────────────────
   const pixelFilters = options.filters ?? null;
@@ -1569,11 +1537,8 @@ export async function composeVideoLive(
     };
 
     const scheduleDraw = (time: number) => {
-      // Throttle: only draw when the source video has a new frame to show.
-      // recordedFps ≈ source fps (~30fps), RAF fires at display rate (~60fps).
-      // Without throttle, duplicate frames bloat file size for no visual benefit.
-      const elapsed = time - lastDrawTime;
-      if (elapsed < targetInterval) { rafId = requestAnimationFrame(scheduleDraw); return; }
+      // Draw every RAF tick — no throttle. captureStream(30) generates exactly 30
+      // unique frames/sec. Skipping ticks = dropped frames = shorter video.
       try { drawComposite(); } catch (e) { console.warn("[composeVideoLive] drawComposite error:", e); }
       lastDrawTime = time;
       if (performance.now() < endTime) {
