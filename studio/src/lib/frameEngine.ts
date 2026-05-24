@@ -1413,7 +1413,7 @@ export async function composeVideoLive(
     try { return new MediaRecorder(stream, opts); } catch { return null; }
   };
   const recorder =
-    tryCreateRecorder({ mimeType, videoBitsPerSecond: 2_000_000 }) ??
+    tryCreateRecorder({ mimeType, videoBitsPerSecond: 8_000_000 }) ?? // 8Mbps — handles 60fps @ 540×960 smooth with high-FPS source
     tryCreateRecorder({ mimeType }) ??
     tryCreateRecorder({});
   if (!recorder) {
