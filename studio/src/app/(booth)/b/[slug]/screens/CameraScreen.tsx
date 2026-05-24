@@ -1058,28 +1058,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
 
       // ── 2. Fallback: direct HTTP fetch ──
-      const isHttps = window.location.protocol === "https:";
-      const candidates = isHttps
-        ? [
-            "https://localhost:3002",
-            "https://127.0.0.1:3002",
-            "https://localhost:3002",
-            "https://127.0.0.1:3002",
-            "http://localhost:3002",
-            "http://127.0.0.1:3002",
-            "http://localhost:3002",
-            "http://127.0.0.1:3002",
-          ]
-        : [
-            "http://localhost:3002",
-            "http://127.0.0.1:3002",
-            "https://localhost:3002",
-            "https://127.0.0.1:3002",
-            "http://localhost:3002",
-            "http://127.0.0.1:3002",
-            "https://localhost:3002",
-            "https://127.0.0.1:3002",
-          ];
+      // Agent listens on HTTP (127.0.0.1:3002) — always try HTTP first for local agent.
+      // Mixed Content: browser upgrades http→https for same origin, but for 127.0.0.1
+      // it keeps HTTP (which is fine since it's local-only and insecure transport doesn't
+      // matter for a local agent). We try in order of most likely to work.
+      const candidates = [
+        "http://127.0.0.1:3002",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://localhost:3002",
+      ];
 
       let healthyBase: string | null = null;
 
