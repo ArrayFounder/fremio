@@ -1135,8 +1135,11 @@ function drawVideoInSlot(
   slot:   CanvasSlot,
   mirror: boolean = false,
 ): void {
-  const vw = video.videoWidth  || 1920;
-  const vh = video.videoHeight || 1080;
+  // Use ACTUAL video dimensions if available and non-zero.
+  // If not yet decoded (videoWidth=0), fall back to canonical 1920×1080.
+  // For Canon DSLR captures from 1920×1080 canvas: canonical matches actual.
+  const vw = (video.videoWidth  || 1920);
+  const vh = (video.videoHeight || 1080);
   const srcAspect = vw / vh;
   const dstAspect = slot.w / slot.h;
 
@@ -1370,9 +1373,39 @@ export async function composeVideoLive(
     return waitForVideo(e.el);
   }));
 
-  // ── 4. Play + beri waktu frame pertama terrender ──────────────────────────
+  // ── 4. Play + tunggu dimensi video aktual tersedia ────────────────────────
   await Promise.all(entries.map((e) => e.el.play().catch(() => {})));
-  await new Promise<void>((r) => setTimeout(r, 200));
+  // Give video elements extra time to decode dimensions
+  // (especially important for Canon blobs recorded from 1920×1080 canvas)
+  await new Promise<void>((r) => setTimeout(r, 500));
+
+  // ── 4b. Diagnostic: log video dimensions ─────────────────────────────────
+  for (const { el, slot, url } of entries) {
+    console.log(`[composeVideoLive] video dim check: url=${url.slice(0,50)} videoWidth=${el.videoWidth} videoHeight=${el.videoHeight} slot=${slot.x},${slot.y} ${slot.w}×${slot.h} readyState=${el.readyState}`);
+  }
+  // Force a draw so canvas sees video pixels before MediaRecorder starts
+  // (ensures the encoder has real content to compress)
+  const probeCanvas = document.createElement("canvas");
+  probeCanvas.width  = cw;
+  probeCanvas.height = ch;
+  const probeCtx = probeCanvas.getContext("2d");
+  if (probeCtx) {
+    probeCtx.fillStyle = bg;
+    probeCtx.fillRect(0, 0, cw, ch);
+    for (const { el, slot } of entries) {
+      try { drawVideoInSlot(probeCtx, el, slot, options.mirror ?? false); } catch { /* ignore */ }
+    }
+    // Check a pixel in the CENTER of the first slot — should NOT be pure black
+    if (entries.length > 0) {
+      const s = entries[0].slot;
+      const midX = Math.round(s.x + s.w / 2);
+      const midY = Math.round(s.y + s.h / 2);
+      const px = Math.min(midX, cw - 1);
+      const py = Math.min(midY, ch - 1);
+      const pxData = probeCtx.getImageData(px, py, 1, 1).data;
+      console.log(`[composeVideoLive] probe mid-slot pixel(${px},${py}): RGBA=${pxData[0]},${pxData[1]},${pxData[2]},${pxData[3]}`);
+    }
+  }
 
   // ── 5. Canvas + MediaRecorder ─────────────────────────────────────────────
   const pixelFilters = options.filters ?? null;
