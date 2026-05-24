@@ -1251,9 +1251,9 @@ export async function composeVideoLive(
   if (typeof document === "undefined") return null;
   if (!videoBlobs.some(Boolean)) return null;
 
-  // Scale to 85% of original — excellent quality at manageable file size.
-  // 1080×1920 @ 85% = 918×1632. Good balance: 10Mbps bitrate handles this without encoder stalls.
-  const scale = 0.85;
+  // Scale to 50% — 540×960 was verified working. Higher resolution causes encoder stalls
+  // at 60fps due to the combination of pixelFilters + many sceneElements + large canvas.
+  const scale = 0.5;
   const cw    = Math.round((options.canvasWidth  ?? 1080) * scale);
   const ch    = Math.round((options.canvasHeight ?? 1920) * scale);
   const bg    = options.backgroundColor ?? "#ffffff";
