@@ -1560,16 +1560,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   const startDslrLiveRecording = useCallback(() => {
     if (typeof MediaRecorder === "undefined") return;
-    const captureStreamSupported = (() => {
-      try {
-        const probe = document.createElement("canvas") as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream };
-        return typeof probe.captureStream === "function";
-      } catch {
-        return false;
-      }
-    })();
-    if (!captureStreamSupported) return;
 
+    // ── Cleanup dari recording sebelumnya ───────────────────────────────────
     if (dslrRecordingDrawTimerRef.current) {
       cancelAnimationFrame(dslrRecordingDrawTimerRef.current);
       dslrRecordingDrawTimerRef.current = null;
@@ -1582,6 +1574,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     dslrRecordingCanvasRef.current = null;
     dslrFrozenAtRef.current = null;
 
+    // ── Canvas untuk capture video frames ──────────────────────────────────────
     const canvas = document.createElement("canvas");
     canvas.width = 1920;
     canvas.height = 1080;
@@ -1597,7 +1590,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     const mimeType = getBestRecordingMime();
     const createRecorder = (options: MediaRecorderOptions) => {
-      try { return new MediaRecorder(stream, options); } catch { return null; }
+      try { return new MediaRecorder(stream, options); } catch { return null }
     };
     const recorder =
       createRecorder({ mimeType, videoBitsPerSecond: 8_000_000 }) ??
@@ -1605,31 +1598,60 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       createRecorder({});
     if (!recorder) return;
 
-    const drawFrame = () => {
-      // dslrPreviewImgRef.current — the live <img> element (if currently mounted and loaded).
-      // dslrRecordingPosterImgRef.current — frozen poster when preview was paused.
-      // Check naturalWidth > 0 WITHOUT requiring .complete — for blob URLs, the
-      // browser may report complete=true before naturalWidth is set. naturalWidth is
-      // the reliable indicator that the image is decoded and ready to draw.
-      // If neither is loaded yet, skip drawing (canvas stays black for that frame).
-      const img = (dslrPreviewImgRef.current && dslrPreviewImgRef.current.naturalWidth > 0)
-        ? dslrPreviewImgRef.current
-        : (dslrRecordingPosterImgRef.current && dslrRecordingPosterImgRef.current.naturalWidth > 0)
-          ? dslrRecordingPosterImgRef.current
-          : null;
+    dslrRecordingChunksRef.current = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) dslrRecordingChunksRef.current.push(event.data);
+    };
+    recorder.onerror = () => {};
+    dslrRecordingCanvasRef.current = canvas;
+    dslrRecorderRef.current = recorder;
 
+    // ── Draw loop: polling agentPreview langsung di RAF loop ──────────────────
+    // KUNCI: agentPreview() dipoll langsung di draw loop, BUKAN via React state.
+    // React state update terlalu lambat (render cycle delay) dan polling berhenti saat
+    // captureInProgressRef=true. Dengan polling langsung di RAF, kita dapat frame
+    // Canon setiap tick (~8.3ms) tanpa bottleneck polling rate.
+    // Hasil: canvas captureStream menangkap motion Canon secara real-time.
+    let lastDrawTime = 0;
+    let lastPreviewFetch = 0;
+    let cachedPreviewBase64: string | null = null;
+    let cachedPreviewImg: HTMLImageElement | null = null;
+    const PREVIEW_FETCH_INTERVAL = 16; // ~60fps polling ke agent
+
+    const drawFrame = async () => {
+      const now = Date.now();
       ctx.fillStyle = "#000000";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (img) {
-        // Subtle zoom-in (1.0 → 1.05) during frozen phase (count=3 → count=0)
-        // Creates natural "build-up" tension while Canon prepares for shutter
+      // Poll Canon frame langsung dari agent jika interval tercapai
+      if (now - lastPreviewFetch >= PREVIEW_FETCH_INTERVAL) {
+        lastPreviewFetch = now;
+        try {
+          const res = await window.fremioBooth?.agentPreview();
+          if (res?.ok && res.base64 && res.base64 !== cachedPreviewBase64) {
+            cachedPreviewBase64 = res.base64;
+            const img = new Image();
+            img.src = `data:${res.mimeType || "image/jpeg"};base64,${res.base64}`;
+            await new Promise<void>((resolve) => {
+              img.onload = () => resolve();
+              img.onerror = () => resolve();
+            });
+            cachedPreviewImg = img;
+          }
+        } catch { /* ignore */ }
+      }
+
+      const img = cachedPreviewImg
+        ?? (dslrPreviewImgRef.current && dslrPreviewImgRef.current.naturalWidth > 0 ? dslrPreviewImgRef.current : null)
+        ?? (dslrRecordingPosterImgRef.current && dslrRecordingPosterImgRef.current.naturalWidth > 0 ? dslrRecordingPosterImgRef.current : null);
+
+      if (img && img.naturalWidth > 0) {
         const frozenAt = dslrFrozenAtRef.current;
         const FREEZE_TOTAL_MS = 5000;
         const zoomProgress = frozenAt !== null
           ? Math.min((Date.now() - frozenAt) / FREEZE_TOTAL_MS, 1)
           : 0;
-        const scale = 1.0 + 0.05 * zoomProgress; // 1.00 → 1.05
+        const scale = 1.0 + 0.05 * zoomProgress;
 
         ctx.save();
         if (scale !== 1.0) {
@@ -1646,19 +1668,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
 
-    dslrRecordingChunksRef.current = [];
-    recorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) dslrRecordingChunksRef.current.push(event.data);
-    };
-    recorder.onerror = () => {};
-    dslrRecordingCanvasRef.current = canvas;
-    dslrRecorderRef.current = recorder;
-
-    let lastDrawTime = 0;
-    const targetInterval = 1000 / 120;
     const scheduleDraw = (time: number) => {
-      if (time - lastDrawTime >= targetInterval) {
-        drawFrame();
+      if (time - lastDrawTime >= 1000 / 120) {
+        void drawFrame(); // fire-and-forget: drawFrame is async but we don't await
         lastDrawTime = time;
       }
       dslrRecordingDrawTimerRef.current = requestAnimationFrame(scheduleDraw);
