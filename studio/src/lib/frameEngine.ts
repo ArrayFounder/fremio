@@ -1452,12 +1452,15 @@ export async function composeVideoLive(
     return null;
   }
 
-  // MediaRecorder dengan fallback chain — sama seperti useCamera.ts
+  // MediaRecorder — try H.264 MP4 first (best quality/size), then WebM H.264 as fallback.
+  // WebM H.264 tends to produce more consistent chunks than MP4 on some Chrome builds.
   const tryCreateRecorder = (opts: MediaRecorderOptions) => {
     try { return new MediaRecorder(stream, opts); } catch { return null; }
   };
   const recorder =
-    tryCreateRecorder({ mimeType, videoBitsPerSecond: 10_000_000 }) ?? // 10Mbps — good quality at 810×1440 with 60fps
+    tryCreateRecorder({ mimeType: "video/mp4;codecs=avc1", videoBitsPerSecond: 8_000_000 }) ??
+    tryCreateRecorder({ mimeType: "video/webm;codecs=h264", videoBitsPerSecond: 8_000_000 }) ??
+    tryCreateRecorder({ mimeType, videoBitsPerSecond: 8_000_000 }) ??
     tryCreateRecorder({ mimeType }) ??
     tryCreateRecorder({});
   if (!recorder) {
@@ -1477,8 +1480,10 @@ export async function composeVideoLive(
     }
   };
   recorder.onerror = (e) => { console.error("[composeVideoLive] recorder.onerror:", e); };
-  // Start with 500ms timeslice (more reliable than 200ms for captureStream)
-  try { recorder.start(500); } catch { try { recorder.start(); } catch (e) { console.warn("[composeVideoLive] recorder.start gagal:", e); cleanup(); return null; } }
+  // Start with 100ms timeslice — much smaller chunks = smoother video playback.
+  // 500ms timeslice = ~10 chunks over 5s → video appears choppy (large jumps between chunks).
+  // 100ms timeslice = ~50 chunks over 5s → smooth, natural motion from 30fps source.
+  try { recorder.start(100); } catch { try { recorder.start(); } catch (e) { console.warn("[composeVideoLive] recorder.start gagal:", e); cleanup(); return null; } }
   console.log("[composeVideoLive] recorder started: state =", recorder.state);
 
   // ── 6. Draw loop via requestAnimationFrame (throttled ke target fps) ─────
