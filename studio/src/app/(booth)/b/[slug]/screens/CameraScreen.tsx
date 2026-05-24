@@ -1549,13 +1549,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       recorder.onstop = finish;
       recorder.onerror = finish;
 
-      if (recorder.state === "inactive") {
-        finish();
-        return;
-      }
-
-      // Flush encoder buffer with delay — MediaRecorder needs time to
-      // collect the last ~500ms chunk before stop() is called.
+      // Flush encoder buffer — wait for the last ~500ms chunk to be collected
+      // before stop() is called. Without this delay, the final chunk is lost.
       try { recorder.requestData(); } catch {}
       setTimeout(() => {
         try { recorder.stop(); } catch { finish(); }

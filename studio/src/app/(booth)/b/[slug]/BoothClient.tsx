@@ -624,7 +624,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         backgroundColor: frame.backgroundColor || "#ffffff",
         overlayUrl:      frame.overlayUrl ?? undefined,
         sceneElements:   frame.sceneElements ?? undefined,
-        duration:        4000,
+        duration:        5000,
         fps:             30,
         mirror:          hwSettings.cameraMirror,
       }),
