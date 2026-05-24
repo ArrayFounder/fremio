@@ -1612,34 +1612,38 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     // captureInProgressRef=true. Dengan polling langsung di RAF, kita dapat frame
     // Canon setiap tick (~8.3ms) tanpa bottleneck polling rate.
     // Hasil: canvas captureStream menangkap motion Canon secara real-time.
+    //
+    // ⚠️ drawFrame() TIDAK boleh async/await — itu akan membuat banyak agentPreview()
+    // concurrent calls yang membebani agent → "signal timed out" timeout.
+    // Pre-fetch dilakukan secara terpisah, drawFrame hanya membaca cached frame.
     let lastDrawTime = 0;
-    let lastPreviewFetch = 0;
     let cachedPreviewBase64: string | null = null;
     let cachedPreviewImg: HTMLImageElement | null = null;
-    const PREVIEW_FETCH_INTERVAL = 16; // ~60fps polling ke agent
+    let previewFetchInFlight = false;
 
-    const drawFrame = async () => {
-      const now = Date.now();
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Poll Canon frame langsung dari agent jika interval tercapai
-      if (now - lastPreviewFetch >= PREVIEW_FETCH_INTERVAL) {
-        lastPreviewFetch = now;
-        try {
-          const res = await window.fremioBooth?.agentPreview();
+    // Pre-fetch: mulai fetch frame Canon secara paralel, simpan ke cache.
+    // Dipanggil tiap ~16ms tanpa await — fetch berjalan di background.
+    const prefetchPreview = () => {
+      if (previewFetchInFlight) return;
+      previewFetchInFlight = true;
+      window.fremioBooth?.agentPreview()
+        .then((res) => {
           if (res?.ok && res.base64 && res.base64 !== cachedPreviewBase64) {
             cachedPreviewBase64 = res.base64;
             const img = new Image();
             img.src = `data:${res.mimeType || "image/jpeg"};base64,${res.base64}`;
-            await new Promise<void>((resolve) => {
-              img.onload = () => resolve();
-              img.onerror = () => resolve();
-            });
-            cachedPreviewImg = img;
+            // Simpan img ke cachedPreviewImg setelah decode selesai
+            img.onload = () => { cachedPreviewImg = img; };
+            img.onerror = () => { cachedPreviewImg = null; };
           }
-        } catch { /* ignore */ }
-      }
+        })
+        .catch(() => {})
+        .finally(() => { previewFetchInFlight = false; });
+    };
+
+    const drawFrame = () => {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       const img = cachedPreviewImg
         ?? (dslrPreviewImgRef.current && dslrPreviewImgRef.current.naturalWidth > 0 ? dslrPreviewImgRef.current : null)
@@ -1670,7 +1674,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     const scheduleDraw = (time: number) => {
       if (time - lastDrawTime >= 1000 / 120) {
-        void drawFrame(); // fire-and-forget: drawFrame is async but we don't await
+        prefetchPreview(); // non-blocking pre-fetch (no await)
+        drawFrame();       // synchronous draw (no await)
         lastDrawTime = time;
       }
       dslrRecordingDrawTimerRef.current = requestAnimationFrame(scheduleDraw);
