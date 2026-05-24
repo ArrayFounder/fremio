@@ -273,7 +273,7 @@ export function useCamera({
         const chunks = chunksRef.current;
         chunksRef.current = []; // clear BEFORE resolve so stale failsafe can't corrupt
         const blob = chunks.length > 0
-          ? new Blob(chunks, { type: r.mimeType || "video/mp4" })
+          ? new Blob(chunks, { type: "video/mp4" })
           : null;
         cleanup();
         console.log("[useCamera] stopRecording finish: blob =", blob ? `Blob(${blob.size})` : "null", "chunks collected =", chunks.length, "mimeType =", r.mimeType);

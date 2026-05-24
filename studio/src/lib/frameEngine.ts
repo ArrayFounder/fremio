@@ -1493,7 +1493,8 @@ export async function composeVideoLive(
       console.log("[composeVideoLive] recorder.onstop: chunks.length =", chunks.length, "recorder.mimeType =", recorder.mimeType);
       cleanup();
       if (chunks.length === 0) { console.warn("[composeVideoLive] no chunks collected"); resolve(null); return; }
-      const blob = new Blob(chunks, { type: recorder.mimeType || mimeType });
+      // Output as H.264-in-MP4 for cross-browser playback (especially Safari/iOS).
+      const blob = new Blob(chunks, { type: "video/mp4" });
       console.log("[composeVideoLive] blob created: size =", blob.size, "type =", blob.type);
       resolve(blob);
     };

@@ -1537,7 +1537,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         clearTimeout(failsafe);
         const chunks = dslrRecordingChunksRef.current;
         const blob = chunks.length > 0
-          ? new Blob(chunks, { type: recorder.mimeType || "video/webm" })
+          ? new Blob(chunks, { type: "video/mp4" })
           : null;
         dslrRecordingChunksRef.current = [];
         dslrRecordingCanvasRef.current = null;
@@ -1545,7 +1545,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         resolve(blob);
       };
 
-      const failsafe = setTimeout(finish, 3500);
+      const failsafe = setTimeout(finish, 6000);
       recorder.onstop = finish;
       recorder.onerror = finish;
 
@@ -1554,8 +1554,12 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         return;
       }
 
+      // Flush encoder buffer with delay — MediaRecorder needs time to
+      // collect the last ~500ms chunk before stop() is called.
       try { recorder.requestData(); } catch {}
-      try { recorder.stop(); } catch { finish(); }
+      setTimeout(() => {
+        try { recorder.stop(); } catch { finish(); }
+      }, 50);
     });
   }, []);
 
@@ -1584,8 +1588,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     dslrFrozenAtRef.current = null;
 
     const canvas = document.createElement("canvas");
-    canvas.width = 1280;
-    canvas.height = 720;
+    canvas.width = 1920;
+    canvas.height = 1080;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
