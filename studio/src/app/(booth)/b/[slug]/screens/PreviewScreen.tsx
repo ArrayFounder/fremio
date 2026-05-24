@@ -325,7 +325,9 @@ export function PreviewScreen({
       const W = canvas.width;
       const H = canvas.height;
       if (imagesReady && videoEl.readyState >= 2) {
+        if (mirrorVideo) { ctx.save(); ctx.translate(W, 0); ctx.scale(-1, 1); }
         ctx.drawImage(videoEl, 0, 0, W, H);
+        if (mirrorVideo) { ctx.restore(); }
         // Filter pixel-by-pixel hanya pada bounding-box slot — area frame tidak tersentuh
         // Frame sudah baked-in di dalam video (dirender oleh CameraScreen RAF loop),
         // jadi TIDAK perlu di-draw ulang — akan menyebabkan double overlay.
@@ -670,9 +672,9 @@ export function PreviewScreen({
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                     <video ref={videoRef} src={videoPreviewUrl} autoPlay loop muted playsInline
                            onCanPlay={(e) => { e.currentTarget.play().catch(() => {}); }}
-                           style={{ width: "100%", height: "100%", objectFit: "contain", display: videoIsOriginal ? "block" : "none" }} />
+                           style={{ width: "100%", height: "100%", objectFit: "contain", display: videoIsOriginal ? "block" : "none", transform: mirrorVideo ? "scaleX(-1)" : "none" }} />
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                    <video ref={hiddenVideoRef} style={{ display: "none" }} />
+                    <video ref={hiddenVideoRef} style={{ display: "none", transform: mirrorVideo ? "scaleX(-1)" : "none" }} />
                     {!videoIsOriginal && (
                       <canvas ref={videoCanvasRef} width={frameOpts.canvasWidth} height={frameOpts.canvasHeight}
                               style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
@@ -811,9 +813,9 @@ export function PreviewScreen({
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                     <video ref={videoRef} src={videoPreviewUrl} autoPlay loop muted playsInline
                            onCanPlay={(e) => { e.currentTarget.play().catch(() => {}); }}
-                           style={{ width: "100%", height: "100%", objectFit: "contain", display: videoIsOriginal ? "block" : "none" }} />
+                           style={{ width: "100%", height: "100%", objectFit: "contain", display: videoIsOriginal ? "block" : "none", transform: mirrorVideo ? "scaleX(-1)" : "none" }} />
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                    <video ref={hiddenVideoRef} style={{ display: "none" }} />
+                    <video ref={hiddenVideoRef} style={{ display: "none", transform: mirrorVideo ? "scaleX(-1)" : "none" }} />
                     {!videoIsOriginal && (
                       <canvas ref={videoCanvasRef} width={frameOpts.canvasWidth} height={frameOpts.canvasHeight}
                               style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />

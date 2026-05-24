@@ -602,7 +602,7 @@ interface LivePreviewCanvasProps {
   activeSlotIndex: number;
 }
 
-function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex }: LivePreviewCanvasProps) {
+function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex, setCachedPreviewBase64 }: LivePreviewCanvasProps & { setCachedPreviewBase64?: (base64: string, mimeType: string) => void }) {
   const canvasRef           = useRef<HTMLCanvasElement>(null);
   const hiddenVidRef        = useRef<HTMLVideoElement>(null);
   const frameBaseImgRef     = useRef<HTMLImageElement | null>(null);
@@ -616,6 +616,12 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   const dslrPosterActiveRef = useRef<boolean>(dslrPosterActive ?? false);
   const dslrPosterMirrorRef = useRef<boolean>(dslrPosterMirror);
   const rafRef              = useRef<number>(0);
+  // Direct base64 cache from agent — avoid <img> tag decode overhead
+  const cachedBase64Ref     = useRef<string | null>(null);
+  const cachedMimeTypeRef   = useRef<string>("image/jpeg");
+  // Offscreen canvas for fast base64→Image drawing (avoids browser <img> tag)
+  const offscreenCanvasRef  = useRef<HTMLCanvasElement | null>(null);
+  const offscreenImgRef    = useRef<HTMLImageElement | null>(null);
 
   const cw = frame.canvasWidth  || 1080;
   const ch = frame.canvasHeight || 1920;
@@ -648,7 +654,56 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   useEffect(() => { capturedPhotosRef.current = capturedPhotos; }, [capturedPhotos]);
   useEffect(() => { activeSlotRef.current = activeSlotIndex; }, [activeSlotIndex]);
   useEffect(() => { dslrPosterActiveRef.current = Boolean(dslrPosterActive); }, [dslrPosterActive]);
-  useEffect(() => { dslrPosterMirrorRef.current = dslrPosterMirror; }, [dslrPosterMirror]);
+  useEffect(() => { dslrPosterMirrorRef.current = Boolean(dslrPosterMirror); }, [dslrPosterMirror]);
+
+  // Initialize offscreen canvas for fast base64 rendering (avoids <img> tag overhead)
+  useEffect(() => {
+    if (!offscreenCanvasRef.current) {
+      offscreenCanvasRef.current = document.createElement("canvas");
+    }
+  }, []);
+
+  // ── Fast agent preview polling with createImageBitmap decoding ─────────────
+  // Directly poll agentPreview() in a RAF loop, decode JPEG via createImageBitmap
+  // (faster than HTMLImageElement onload), and store in offscreenImgRef.
+  // The draw loop then reads offscreenImgRef as primary source.
+  useEffect(() => {
+    let rafId: number;
+    let lastFetchTime = 0;
+    let fetchInFlight = false;
+    let cachedBase64 = "";
+
+    const pollFast = (now: number) => {
+      // Poll ~60fps, but allow skip if previous fetch still in flight
+      if (!fetchInFlight && now - lastFetchTime >= 16) {
+        fetchInFlight = true;
+        lastFetchTime = now;
+
+        window.fremioBooth?.agentPreview().then((res) => {
+          fetchInFlight = false;
+          if (res?.ok && res.base64 && res.base64 !== cachedBase64) {
+            cachedBase64 = res.base64;
+            cachedMimeTypeRef.current = res.mimeType || "image/jpeg";
+
+            // decode via createImageBitmap — faster than HTMLImageElement onload
+            const raw = atob(res.base64);
+            const buf = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+            const blob = new Blob([buf], { type: cachedMimeTypeRef.current });
+            createImageBitmap(blob).then((img) => {
+              offscreenImgRef.current = img as unknown as HTMLImageElement;
+              if (setCachedPreviewBase64) setCachedPreviewBase64(res.base64!, cachedMimeTypeRef.current);
+            }).catch(() => {});
+          }
+        }).catch(() => { fetchInFlight = false; });
+      }
+      rafId = requestAnimationFrame(pollFast);
+    };
+
+    rafId = requestAnimationFrame(pollFast);
+    return () => cancelAnimationFrame(rafId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream]);
 
   // Attach stream to hidden video + explicitly play (autoPlay can be blocked for invisible elements)
   useEffect(() => {
@@ -806,12 +861,20 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
           }
         } else if (!allPhotosDone && captureIdx === activeSlotRef.current) {
           // Tampilkan live stream untuk slot aktif (capture normal maupun retake).
+          // PRIORITAS: 1) offscreenImgRef (createImageBitmap decode, fastest)
+          //            2) dslrImageRef (HTMLImageElement, fallback)
+          //            3) poster img (still image)
+          //            4) hidden video (MJPEG fallback)
+          const fastImg = offscreenImgRef.current;
           const dslrImg = dslrImageRef?.current;
           const dslrPosterImg = dslrPosterImgRef.current;
           const vid = hiddenVidRef.current;
           const posterSource = dslrPosterImg && dslrPosterImg.complete && dslrPosterImg.naturalWidth > 0 ? dslrPosterImg : null;
           const usingPosterSource = Boolean(dslrPosterActiveRef.current && posterSource);
-          const liveSource = usingPosterSource
+          const hasFastSource = Boolean(fastImg && fastImg.width > 0);
+          const liveSource = hasFastSource
+            ? fastImg
+            : usingPosterSource
             ? posterSource
             : dslrImg && dslrImg.naturalWidth > 0
             ? dslrImg

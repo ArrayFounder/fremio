@@ -1,3 +1,5 @@
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -321,6 +323,37 @@ internal sealed class EdsdkSession : IDisposable
         }
     }
 
+    /// <summary>
+    /// Downscale JPEG to target width (keeps aspect ratio, outputs ~480p JPEG).
+    /// Reduces bandwidth ~80-90% vs full-res live view, making decode in browser faster.
+    /// </summary>
+    private static byte[]? DownscaleJpeg(byte[] jpegData, int targetWidth = 640)
+    {
+        try
+        {
+            using var srcMs = new MemoryStream(jpegData);
+            using var srcImg = Image.FromStream(srcMs);
+            if (srcImg.Width <= targetWidth) return null; // already small enough
+
+            var ratio = (double)targetWidth / srcImg.Width;
+            var newW = targetWidth;
+            var newH = (int)(srcImg.Height * ratio);
+
+            using var dstBm = new Bitmap(newW, newH, PixelFormat.Format24bppRgb);
+            using (var g = Graphics.FromImage(dstBm))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                g.DrawImage(srcImg, 0, 0, newW, newH);
+            }
+
+            using var outMs = new MemoryStream();
+            dstBm.Save(outMs, ImageFormat.Jpeg);
+            return outMs.ToArray();
+        }
+        catch { return null; }
+    }
+
     public void StartLiveViewStream()
     {
         // Monitor stdin for EOF — when Node.js calls child.stdin.end(), we get EOF
@@ -339,77 +372,88 @@ internal sealed class EdsdkSession : IDisposable
         using var stdout = Console.OpenStandardOutput();
         var consecutiveFails = 0;
 
-        while (!_shutdownRequested)
+        // Run live view on a HIGH-priority thread for smooth 15-30fps output.
+        // Without this, Windows task scheduler can starve the thread during GC or
+        // heavy UI activity → dropped frames → choppy MJPEG stream.
+        var liveViewThread = new Thread(() =>
         {
-            Edsdk.EdsGetEvent();
-            NativeMethods.PumpWindowsMessages();
-
-            var streamRef   = IntPtr.Zero;
-            var evfImageRef = IntPtr.Zero;
-            try
+            while (!_shutdownRequested)
             {
-                if (Edsdk.EdsCreateMemoryStream(0, out streamRef) != 0)
-                    { consecutiveFails++; Thread.Sleep(80); continue; }
+                Edsdk.EdsGetEvent();
+                NativeMethods.PumpWindowsMessages();
 
-                if (Edsdk.EdsCreateEvfImageRef(streamRef, out evfImageRef) != 0)
-                    { consecutiveFails++; Thread.Sleep(80); continue; }
-
-                var dlErr = Edsdk.EdsDownloadEvfImage(_cameraRef, evfImageRef);
-                if (dlErr != 0)
+                var streamRef   = IntPtr.Zero;
+                var evfImageRef = IntPtr.Zero;
+                try
                 {
-                    consecutiveFails++;
-                    if (consecutiveFails == 1 || consecutiveFails % 20 == 0)
+                    if (Edsdk.EdsCreateMemoryStream(0, out streamRef) != 0)
+                        { consecutiveFails++; Thread.Sleep(80); continue; }
+
+                    if (Edsdk.EdsCreateEvfImageRef(streamRef, out evfImageRef) != 0)
+                        { consecutiveFails++; Thread.Sleep(80); continue; }
+
+                    var dlErr = Edsdk.EdsDownloadEvfImage(_cameraRef, evfImageRef);
+                    if (dlErr != 0)
                     {
-                        Console.Error.WriteLine($"[bridge] EVF download retry (count={consecutiveFails}, err=0x{dlErr:X8})");
+                        consecutiveFails++;
+                        if (consecutiveFails == 1 || consecutiveFails % 20 == 0)
+                        {
+                            Console.Error.WriteLine($"[bridge] EVF download retry (count={consecutiveFails}, err=0x{dlErr:X8})");
+                        }
+
+                        if (consecutiveFails % 12 == 0)
+                        {
+                            TryEnableEvf();
+                            PumpSdkEvents(4, 120);
+                        }
+
+                        if (consecutiveFails >= 40)
+                        {
+                            throw new InvalidOperationException($"EVF gagal berkepanjangan (0x{dlErr:X8})");
+                        }
+
+                        Thread.Sleep(200);
+                        continue;
                     }
 
-                    if (consecutiveFails % 12 == 0)
+                    if (Edsdk.EdsGetPointer(streamRef, out var ptr) == 0 &&
+                        Edsdk.EdsGetLength(streamRef, out var len)  == 0 &&
+                        ptr != IntPtr.Zero && len > 0 && len <= 10 * 1024 * 1024)
                     {
-                        TryEnableEvf();
-                        PumpSdkEvents(4, 120);
-                    }
+                        var frame = new byte[len];
+                        Marshal.Copy(ptr, frame, 0, (int)len);
 
-                    if (consecutiveFails >= 40)
-                    {
-                        throw new InvalidOperationException($"EVF gagal berkepanjangan (0x{dlErr:X8})");
-                    }
+                        // Downscale JPEG to 640px wide for faster browser decode.
+                        // Live view preview: 640px sufficient. Full-res capture untouched.
+                        var send = DownscaleJpeg(frame, 640) ?? frame;
 
-                    Thread.Sleep(200);
-                    continue;
+                        var header = new byte[4];
+                        header[0] = (byte)(send.Length >> 24);
+                        header[1] = (byte)(send.Length >> 16);
+                        header[2] = (byte)(send.Length >> 8);
+                        header[3] = (byte)(send.Length & 0xFF);
+
+                        stdout.Write(header, 0, 4);
+                        stdout.Write(send,  0, send.Length);
+                        stdout.Flush();
+                        consecutiveFails = 0;
+                    }
+                }
+                finally
+                {
+                    if (evfImageRef != IntPtr.Zero) Edsdk.EdsRelease(evfImageRef);
+                    if (streamRef   != IntPtr.Zero) Edsdk.EdsRelease(streamRef);
                 }
 
-                if (Edsdk.EdsGetPointer(streamRef, out var ptr) == 0 &&
-                    Edsdk.EdsGetLength(streamRef, out var len)  == 0 &&
-                    ptr != IntPtr.Zero && len > 0 && len <= 10 * 1024 * 1024)
-                {
-                    var frame = new byte[len];
-                    Marshal.Copy(ptr, frame, 0, (int)len);
-
-                    var header = new byte[4];
-                    header[0] = (byte)(len >> 24);
-                    header[1] = (byte)(len >> 16);
-                    header[2] = (byte)(len >> 8);
-                    header[3] = (byte)(len & 0xFF);
-
-                    stdout.Write(header, 0, 4);
-                    stdout.Write(frame,  0, (int)len);
-                    stdout.Flush();
-                    consecutiveFails = 0;
-                }
+                // No sleep — run at maximum camera frame rate (~20–30 FPS on Canon DSLRs).
+                // The EdsDownloadEvfImage call itself throttles naturally to the camera's
+                // live-view refresh speed; busy-looping here causes no extra CPU load because
+                // the call blocks until a new frame is ready.
             }
-            finally
-            {
-                if (evfImageRef != IntPtr.Zero) Edsdk.EdsRelease(evfImageRef);
-                if (streamRef   != IntPtr.Zero) Edsdk.EdsRelease(streamRef);
-            }
-
-            // No sleep — run at maximum camera frame rate (~20–30 FPS on Canon DSLRs).
-            // The EdsDownloadEvfImage call itself throttles naturally to the camera's
-            // live-view refresh speed; busy-looping here causes no extra CPU load because
-            // the call blocks until a new frame is ready.
-        }
-
-        Console.Error.WriteLine("[bridge] Live view loop exited gracefully (stdin closed)");
+            Console.Error.WriteLine("[bridge] Live view loop exited gracefully (stdin closed)");
+        }) { IsBackground = false, Name = "LiveViewStream", Priority = ThreadPriority.Highest };
+        liveViewThread.Start();
+        liveViewThread.Join();
     }
 
     public byte[] GetLiveViewJpeg()
@@ -845,8 +889,8 @@ internal sealed class EdsdkSession : IDisposable
             {
                 Console.Error.WriteLine($"[bridge-armed] stdin reader error: {ex.Message}");
             }
-            // stdin closed without SHOOT — this is a genuine timeout (not normal for normal flow).
-            // timedOut stays false; the timeout wait below will set it.
+            Console.Error.WriteLine("[bridge-armed] stdin closed (EOF) — NOT auto-firing on 60s timeout, exiting cleanly");
+            return;
         }) { IsBackground = true, Name = "ArmedShootSignalReader" };
         stdinReader.Start();
 

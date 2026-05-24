@@ -791,375 +791,356 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   // Render
   // ─────────────────────────────────────────────────────────────────────────
 
+  // Responsive breakpoints: mobile <768px → col stack; desktop → 40/60 split
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-center py-4 px-4 select-none overflow-y-auto"
+      className="h-screen flex flex-col overflow-hidden"
       style={{ backgroundColor: primaryColor }}
     >
-      <div className="w-full max-w-2xl space-y-3">
-
-        {/* Header — compact horizontal */}
-        <div className="flex items-center justify-center gap-3">
-          {booth.logoUrl && (
-            <img
-              src={booth.logoUrl}
-              alt={booth.boothName}
-              className="h-7 w-auto object-contain"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
-            />
-          )}
-          <div>
-            <p className="text-[10px] uppercase tracking-widest" style={{ color: textTertiary }}>Setup Booth</p>
-            <h1 className="text-lg font-bold leading-tight" style={{ color: textPrimary }}>{booth.boothName}</h1>
-          </div>
-        </div>
-
-        {/* ── Kamera ───────────────────────────────────────────────────────── */}
+      <div className="flex-none flex items-center justify-center gap-3 px-4 py-2 border-b"
+        style={{ borderColor: surfaceBorder }}>
+        {booth.logoUrl && (
+          <img
+            src={booth.logoUrl}
+            alt={booth.boothName}
+            className="h-6 w-auto object-contain"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+        )}
         <div>
+          <p className="text-[9px] uppercase tracking-widest leading-none" style={{ color: textTertiary }}>Setup Booth</p>
+          <h1 className="text-sm font-bold leading-tight" style={{ color: textPrimary }}>{booth.boothName}</h1>
+        </div>
+      </div>
 
-          <div className="rounded-2xl overflow-hidden"
-            style={{ background: surfaceBg, border: `1px solid ${surfaceBorder}` }}>
-
-            {/* Preview — fixed height */}
-            <div className="relative bg-black" style={{ height: "200px" }}>
-              {captureSource === "dslr" ? (
-                (agentBase || setupDslrUsesIpcPreview) && dslrPreviewActive ? (
-                  <>
-                    {setupDslrPreviewSrc ? (
-                      <img
-                        ref={dslrPreviewImgRef}
-                        key={setupDslrUsesIpcPreview ? "ipc-preview" : dslrPreviewKey}
-                        src={setupDslrPreviewSrc}
-                        alt="Canon live preview"
-                        className="w-full h-full object-cover"
-                        style={{ transform: mirror ? "scaleX(-1)" : "none" }}
-                        onLoad={() => setDslrPreviewError(null)}
-                        onError={() => {
-                          setDslrPreviewError("Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
-                          void restartCanonPreviewBridge("gagal render stream");
-                        }}
-                      />
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-                        <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Menyiapkan live view Canon…</p>
-                      </div>
-                    )}
-                    {dslrPreviewError && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/70">
-                        <span className="text-2xl">📷</span>
-                        <p className="text-xs" style={{ color: textSecondary }}>{dslrPreviewError}</p>
-                        <button
-                          onClick={() => {
-                            setDslrPreviewError(null);
-                            setDslrPreviewFrameSrc(null);
-                            void restartCanonPreviewBridge("manual retry").then((restarted) => {
-                              if (!restarted) setDslrPreviewKey(Date.now());
-                            });
-                          }}
-                          className="px-3 py-1.5 rounded-xl text-xs font-bold"
-                          style={{ backgroundColor: accentColor, color: primaryColor }}
-                        >
-                          Coba Live View Lagi
-                        </button>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
-                    <span className="text-2xl">📷</span>
-                    <p className="text-xs" style={{ color: textSecondary }}>
-                      Canon dipilih. Kamera siap untuk capture, tetapi live view belum tersedia.
-                    </p>
-                  </div>
-                )
-              ) : camError ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
-                  <span className="text-2xl">📷</span>
-                  <p className="text-xs" style={{ color: textSecondary }}>{camError}</p>
-                  <button onClick={() => startCamera(deviceId)}
-                    className="px-3 py-1.5 rounded-xl text-xs font-bold"
-                    style={{ backgroundColor: accentColor, color: primaryColor }}>
-                    Coba Lagi
-                  </button>
-                </div>
-              ) : (
-                <video
-                  ref={el => setPreviewEl(el)}
-                  autoPlay playsInline muted
+      {/* ── Baris 1: Stream preview ───────────────────────────────────────── */}
+      <div className="flex-none relative bg-black overflow-hidden" style={{ height: "42vh" }}>
+        {captureSource === "dslr" ? (
+          (agentBase || setupDslrUsesIpcPreview) && dslrPreviewActive ? (
+            <>
+              {setupDslrPreviewSrc ? (
+                <img
+                  ref={dslrPreviewImgRef}
+                  key={setupDslrUsesIpcPreview ? "ipc-preview" : dslrPreviewKey}
+                  src={setupDslrPreviewSrc}
+                  alt="Canon live preview"
                   className="w-full h-full object-cover"
                   style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+                  onLoad={() => setDslrPreviewError(null)}
+                  onError={() => {
+                    setDslrPreviewError("Live view Canon belum tampil. Pastikan mode Live View aktif dan kamera tidak sedang busy.");
+                    void restartCanonPreviewBridge("gagal render stream");
+                  }}
                 />
-              )}
-              {captureSource !== "dslr" && camLoading && !camError && (
+              ) : (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-                  <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Memuat kamera…</p>
+                  <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Menyiapkan live view Canon…</p>
                 </div>
               )}
-              <div className="absolute top-2 right-2">
-                <button onClick={() => setMirror(v => !v)}
-                  className="px-2 py-0.5 rounded-lg text-[10px] font-bold backdrop-blur-sm"
-                  style={{ background: "rgba(0,0,0,0.5)", color: mirror ? accentColor : textTertiary }}>
-                  {mirror ? "⟷ Mirror ON" : "⟷ Mirror OFF"}
-                </button>
-              </div>
-            </div>
-
-            {/* Camera selector */}
-            <div className="p-3 space-y-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>
-                Kamera Webcam Browser {devices.length > 1 ? `(${devices.length} terdeteksi)` : ""}
-              </p>
-              {devices.length === 0 && !camError && (
-                <p className="text-xs" style={{ color: textTertiary }}>Mendeteksi kamera…</p>
-              )}
-              <div className="space-y-1.5">
-                <button
-                  onClick={() => {
-                    setCaptureSource("webcam");
-                    startCamera(deviceId);
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
-                  style={{
-                    background: captureSource === "webcam" ? `${accentColor}22` : surfaceBg,
-                    border: captureSource === "webcam" ? `1.5px solid ${accentColor}` : "1.5px solid transparent",
-                    color: captureSource === "webcam" ? accentColor : textPrimary,
-                  }}
-                >
-                  <span>🎬</span>
-                  <span className="flex-1 truncate">Gunakan Webcam Browser</span>
-                  {captureSource === "webcam" && <span className="font-bold">✓ Dipilih</span>}
-                </button>
-                {devices.map(d => (
-                  <button key={d.deviceId} onClick={() => switchCamera(d.deviceId)}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
-                    style={{
-                      background: d.deviceId === deviceId && captureSource === "webcam" ? `${accentColor}22` : surfaceBg,
-                      border:     d.deviceId === deviceId && captureSource === "webcam" ? `1.5px solid ${accentColor}` : "1.5px solid transparent",
-                      color:      d.deviceId === deviceId && captureSource === "webcam" ? accentColor : textPrimary,
-                    }}>
-                    <span>🎥</span>
-                    <span className="flex-1 truncate">{d.label}</span>
-                    {d.deviceId === deviceId && captureSource === "webcam" && <span className="font-bold">✓ Aktif</span>}
+              {dslrPreviewError && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/70">
+                  <span className="text-2xl">📷</span>
+                  <p className="text-xs" style={{ color: textSecondary }}>{dslrPreviewError}</p>
+                  <button
+                    onClick={() => {
+                      setDslrPreviewError(null);
+                      setDslrPreviewFrameSrc(null);
+                      void restartCanonPreviewBridge("manual retry").then((restarted) => {
+                        if (!restarted) setDslrPreviewKey(Date.now());
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold"
+                    style={{ backgroundColor: accentColor, color: primaryColor }}
+                  >
+                    Coba Live View Lagi
                   </button>
-                ))}
-                {/* Tip DSLR */}
-                <div className="rounded-xl px-2.5 py-2 text-[10px] leading-relaxed"
-                  style={{ background: surfaceBg, color: textTertiary }}>
-                  💡 List ini hanya webcam browser. DSLR dipilih di panel "Kamera DSLR / Mirrorless" di bawah.
                 </div>
-              </div>
+              )}
+            </>
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+              <span className="text-3xl">📷</span>
+              <p className="text-xs" style={{ color: textSecondary }}>
+                Canon dipilih — live view belum tersedia.
+              </p>
+              <p className="text-[10px]" style={{ color: textTertiary }}>
+                Pastikan Live View aktif di kamera.
+              </p>
             </div>
+          )
+        ) : camError ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+            <span className="text-3xl">📷</span>
+            <p className="text-xs" style={{ color: textSecondary }}>{camError}</p>
+            <button onClick={() => startCamera(deviceId)}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold"
+              style={{ backgroundColor: accentColor, color: primaryColor }}>
+              Coba Lagi
+            </button>
+          </div>
+        ) : (
+          <>
+            <video
+              ref={el => setPreviewEl(el)}
+              autoPlay playsInline muted
+              className="w-full h-full object-cover"
+              style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+            />
+            {camLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                <p className="animate-pulse text-xs" style={{ color: textPrimary }}>Memuat kamera…</p>
+              </div>
+            )}
+          </>
+        )}
+        {/* Mirror badge */}
+        <div className="absolute top-2 right-2 flex items-center gap-1.5">
+          {mirror && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold" style={{ background: "rgba(0,0,0,0.55)", color: accentColor }}>
+              ⟷ Mirror
+            </span>
+          )}
+          <button onClick={() => setMirror(v => !v)}
+            className="px-2 py-0.5 rounded-lg text-[10px] font-bold backdrop-blur-sm"
+            style={{ background: "rgba(0,0,0,0.55)", color: textSecondary }}>
+            {mirror ? "⟷ ON" : "⟷ OFF"}
+          </button>
+        </div>
+        {/* DSLR status badge */}
+        {captureSource === "dslr" && dslrCameras.length > 0 && (
+          <div className="absolute top-2 left-2">
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "rgba(0,0,0,0.55)", color: accentColor }}>
+              📷 {dslrCameras[0]?.model ?? "Canon DSLR"}
+            </span>
+          </div>
+        )}
+        {/* Agent status */}
+        {!isTabletMode && agentOnline === null && (
+          <div className="absolute bottom-2 left-2">
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "rgba(0,0,0,0.55)", color: textTertiary }}>
+              Mengecek agent…
+            </span>
+          </div>
+        )}
+        {!isTabletMode && agentOnline === true && dslrCameras.length > 0 && (
+          <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            <span className="text-[10px] font-bold" style={{ color: "#86efac" }}>Agent aktif — {dslrCameras.length} kamera</span>
+          </div>
+        )}
+        {!isTabletMode && agentOnline === false && (
+          <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+            <span className="text-[10px] font-bold" style={{ color: "#fde047" }}>Agent offline</span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Baris 2: Webcam selector (kiri) + Printer (kanan) ────────────── */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+
+        {/* ── Kiri: Webcam selector ── */}
+        <div className="w-2/5 flex flex-col overflow-hidden border-r"
+          style={{ borderColor: surfaceBorder, background: surfaceBg }}>
+          <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 flex-none">
+            <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: textSecondary }}>
+              WEBCAM
+            </p>
+            {devices.length > 0 && (
+              <span className="text-[10px] font-bold" style={{ color: accentColor }}>
+                {devices.length} terdeteksi
+              </span>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5">
+            {/* Webcam browser option */}
+            <button
+              onClick={() => { setCaptureSource("webcam"); startCamera(deviceId); }}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
+              style={{
+                background: captureSource === "webcam" ? `${accentColor}22` : "transparent",
+                border: captureSource === "webcam" ? `1.5px solid ${accentColor}` : "1.5px solid transparent",
+                color: captureSource === "webcam" ? accentColor : textPrimary,
+              }}
+            >
+              <span>🎬</span>
+              <span className="flex-1 truncate">Webcam Browser</span>
+              {captureSource === "webcam" && <span className="font-bold text-[10px]">✓</span>}
+            </button>
+            {devices.map(d => (
+              <button key={d.deviceId} onClick={() => switchCamera(d.deviceId)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs text-left transition-colors"
+                style={{
+                  background: d.deviceId === deviceId && captureSource === "webcam" ? `${accentColor}22` : "transparent",
+                  border: d.deviceId === deviceId && captureSource === "webcam" ? `1.5px solid ${accentColor}` : "1px solid transparent",
+                  color: d.deviceId === deviceId && captureSource === "webcam" ? accentColor : textPrimary,
+                }}>
+                <span>🎥</span>
+                <span className="flex-1 truncate">{d.label}</span>
+                {d.deviceId === deviceId && captureSource === "webcam" && <span className="font-bold text-[10px]">✓</span>}
+              </button>
+            ))}
+            {devices.length === 0 && !camError && (
+              <p className="text-[11px]" style={{ color: textTertiary }}>Mendeteksi webcam…</p>
+            )}
+            {/* DSLR list (non-mobile only) */}
+            {!isTabletMode && (
+              <div className="pt-2 border-t" style={{ borderColor: surfaceBorder }}>
+                <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: textSecondary }}>
+                  DSLR / CANON
+                </p>
+                {dslrCameras.length > 0 ? (
+                  <div className="space-y-1">
+                    {dslrCameras.map((cam, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          stopCameraPreview();
+                          setDslrPreviewActive(true);
+                          setDslrPreviewError(null);
+                          setDslrPreviewKey(Date.now());
+                          setCaptureSource("dslr");
+                          setMirror(true);
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs text-left transition-colors"
+                        style={{
+                          background: captureSource === "dslr" ? `${accentColor}22` : `${accentColor}15`,
+                          border: captureSource === "dslr" ? `1.5px solid ${accentColor}` : `1.5px solid ${accentColor}44`,
+                          color: captureSource === "dslr" ? accentColor : textPrimary,
+                        }}
+                      >
+                        <span>📷</span>
+                        <span className="flex-1 truncate">{cam.model}</span>
+                        {captureSource === "dslr" ? (
+                          <span className="font-bold text-[10px]">✓</span>
+                        ) : (
+                          <span className="text-[10px]" style={{ color: "#86efac" }}>tapilih</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl px-2.5 py-2 text-[11px]" style={{ background: `${surfaceBorder}44`, color: textTertiary }}>
+                    {agentOnline === null ? "Mendeteksi Canon…" : "Canon belum terdeteksi"}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* ── Kamera DSLR / Mirrorless ────────────────────────────────────── */}
-        {!isTabletMode && (
-          <div className="rounded-2xl p-3 space-y-2" style={{ background: surfaceBg, border: `1px solid ${surfaceBorder}` }}>
-            <div className="flex items-center justify-between">
-              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: textSecondary }}>KAMERA DSLR / MIRRORLESS</p>
-              <div className="flex items-center gap-1.5">
-                {dslrCameras.length > 0 && (
-                  <>
-                    {agentOnline === true ? (
-                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-900/50 text-green-400">
-                        ✓ {dslrCameras.length} Terdeteksi
-                      </span>
-                    ) : agentOnline === null ? (
-                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: surfaceBg, color: textTertiary }}>
-                        Memverifikasi…
-                      </span>
-                    ) : null}
-                    {dslrCapabilities?.mode === "capture-only" && (
-                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "rgba(234,179,8,0.15)", color: "#fde047" }}>
-                        Capture-only
-                      </span>
-                    )}
-                    {dslrCapabilities?.mode === "live-view" && (
-                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "rgba(34,197,94,0.18)", color: "#86efac" }}>
-                        Live View
-                      </span>
-                    )}
-                  </>
-                )}
-                {dslrCameras.length === 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: surfaceBg, color: textTertiary }}>Belum ada</span>
-                )}
-                <button
-                  onClick={() => void checkAgent()}
-                  disabled={agentChecking}
-                  className="px-2 py-0.5 rounded-lg text-[10px] font-bold disabled:opacity-50"
-                  style={{ background: `${accentColor}22`, color: accentColor, border: `1px solid ${accentColor}55` }}
-                >
-                  {agentChecking ? "Mengecek..." : "Coba Lagi"}
-                </button>
-              </div>
-            </div>
-
-            {/* Daftar kamera terdeteksi */}
-            {dslrCameras.length > 0 && (
-              <div className="space-y-1">
-                {dslrCameras.map((cam, i) => (
-                  <button
-                    key={i}
-                    onClick={() => {
-                      stopCameraPreview();
-                      setDslrPreviewActive(true);
-                      setDslrPreviewError(null);
-                      setDslrPreviewKey(Date.now());
-                      setCaptureSource("dslr");
-                      setMirror(true); // Auto-enable mirror for Canon
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
-                    style={{
-                      background: captureSource === "dslr" ? `${accentColor}22` : `${accentColor}15`,
-                      border: captureSource === "dslr" ? `1.5px solid ${accentColor}` : `1.5px solid ${accentColor}44`,
-                      color: captureSource === "dslr" ? accentColor : textPrimary,
-                    }}
-                  >
-                    <span>📷</span>
-                    <span className="flex-1">{cam.model}</span>
-                    <span className="text-[10px] opacity-60">{cam.port}</span>
-                    {captureSource === "dslr" ? (
-                      <span className="text-[10px] font-bold">✓ Dipilih</span>
-                    ) : (
-                      <span className="text-[10px] font-bold text-green-400">✓ Siap</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-
+        {/* ── Kanan: Printer ── */}
+        <div className="flex-1 flex flex-col overflow-hidden" style={{ background: surfaceBg }}>
+          <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 flex-none border-b" style={{ borderColor: surfaceBorder }}>
+            <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: textSecondary }}>
+              PRINTER
+            </p>
+            <button
+              onClick={handleRefreshPrinter}
+              disabled={agentChecking}
+              className="px-2 py-0.5 rounded-lg text-[10px] font-bold disabled:opacity-40"
+              style={{ background: `${accentColor}22`, color: accentColor }}
+            >
+              {agentChecking ? "…" : "🔄"}
+            </button>
           </div>
-        )}
-
-        {/* ── Ukuran Kertas ────────────────────────────────────────────────── */}
-        <div className="rounded-2xl p-3 space-y-2" style={{ background: surfaceBg, border: `1px solid ${surfaceBorder}` }}>
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-bold uppercase tracking-wide" style={{ color: textSecondary }}>PRINTER</p>
-              <button
-                onClick={handleRefreshPrinter}
-                className="px-2.5 py-1 rounded-xl text-[11px] font-bold transition-opacity active:opacity-60"
-                style={{ background: `${accentColor}22`, color: accentColor, border: `1px solid ${accentColor}55` }}
-              >
-                🔄 Refresh Printer
-              </button>
-            </div>
-
-            <div className="rounded-xl px-2.5 py-2 text-xs" style={{ background: surfaceBg, border: `1.5px solid ${surfaceBorder}`, color: textSecondary }}>
+          <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2">
+            {/* Printer selected status */}
+            <div className="rounded-xl px-2.5 py-1.5 text-[11px] font-semibold" style={{ background: `${accentColor}18`, color: accentColor }}>
               {printerName
-                ? `Printer aktif: ${printerName}`
-                : printers.length > 0
-                  ? "Menggunakan printer default / dialog printer"
-                  : manualPrinter.trim()
-                    ? `Printer manual: ${manualPrinter.trim()}`
-                    : "Menggunakan printer default / dialog printer"}
+                ? `✓ ${printerName}`
+                : manualPrinter.trim()
+                  ? `✓ ${manualPrinter.trim()}`
+                  : "Dialog Printer"}
             </div>
-
-            <div className="space-y-1.5">
+            {/* Default / Dialog */}
+            <button
+              onClick={() => { setPrinterName(null); setManualPrinter(""); }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs text-left"
+              style={{
+                background: !printerName && !manualPrinter.trim() ? `${accentColor}22` : "transparent",
+                border: `1px solid ${!printerName && !manualPrinter.trim() ? accentColor : surfaceBorder}`,
+                color: !printerName && !manualPrinter.trim() ? accentColor : textPrimary,
+              }}
+            >
+              <span>🖨️</span>
+              <span className="flex-1 truncate">Dialog Printer</span>
+              {!printerName && !manualPrinter.trim() && <span className="font-bold text-[10px]">✓</span>}
+            </button>
+            {/* Detected printers */}
+            {printers.map((name) => (
               <button
-                onClick={() => {
-                  setPrinterName(null);
-                  setManualPrinter("");
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
+                key={name}
+                onClick={() => { setPrinterName(name); setManualPrinter(name); }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs text-left"
                 style={{
-                  background: !printerName && !manualPrinter.trim() ? `${accentColor}22` : "transparent",
-                  border: !printerName && !manualPrinter.trim() ? `1.5px solid ${accentColor}` : `1.5px solid ${surfaceBorder}`,
-                  color: !printerName && !manualPrinter.trim() ? accentColor : textPrimary,
+                  background: printerName === name ? `${accentColor}22` : "transparent",
+                  border: `1px solid ${printerName === name ? accentColor : surfaceBorder}`,
+                  color: printerName === name ? accentColor : textPrimary,
                 }}
               >
                 <span>🖨️</span>
-                <span className="flex-1 truncate">Printer Default / Dialog Printer</span>
-                {!printerName && !manualPrinter.trim() && <span className="font-bold">✓ Dipilih</span>}
-              </button>
-
-              {printers.map((name) => (
-                <button
-                  key={name}
-                  onClick={() => {
-                    setPrinterName(name);
-                    setManualPrinter(name);
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs text-left transition-colors"
-                  style={{
-                    background: printerName === name ? `${accentColor}22` : "transparent",
-                    border: printerName === name ? `1.5px solid ${accentColor}` : `1.5px solid ${surfaceBorder}`,
-                    color: printerName === name ? accentColor : textPrimary,
-                  }}
-                >
-                  <span>🖨️</span>
-                  <span className="flex-1 truncate">{name}</span>
-                  {printerName === name && <span className="font-bold">✓ Dipilih</span>}
-                </button>
-              ))}
-
-              {printers.length === 0 && (
-                <input
-                  value={manualPrinter}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setManualPrinter(value);
-                    setPrinterName(value.trim() ? value.trim() : null);
-                  }}
-                  placeholder="Ketik nama printer manual"
-                  className="w-full px-2.5 py-2 rounded-xl text-xs outline-none"
-                  style={{
-                    background: surfaceBg,
-                    border: `1.5px solid ${surfaceBorder}`,
-                    color: textPrimary,
-                  }}
-                />
-              )}
-            </div>
-          </div>
-
-          <div className="pt-1" />
-          <p className="text-xs font-bold uppercase tracking-wide" style={{ color: textSecondary }}>UKURAN KERTAS</p>
-          <div className="flex flex-wrap gap-1.5">
-            {/* Opsi Otomatis */}
-            <button
-              onClick={() => setPaperSizeOverride(null)}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
-              style={{
-                background: paperSizeOverride === null ? `${accentColor}22` : "transparent",
-                border:     paperSizeOverride === null ? `1.5px solid ${accentColor}` : `1.5px solid ${surfaceBorder}`,
-                color:      paperSizeOverride === null ? accentColor : textTertiary,
-              }}
-            >
-              Otomatis
-            </button>
-            {/* Ukuran manual */}
-            {getAllPaperSizes().map(ps => (
-              <button
-                key={ps.name}
-                onClick={() => setPaperSizeOverride(ps.name)}
-                className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
-                style={{
-                  background: paperSizeOverride === ps.name ? `${accentColor}22` : "transparent",
-                  border:     paperSizeOverride === ps.name ? `1.5px solid ${accentColor}` : `1.5px solid ${surfaceBorder}`,
-                  color:      paperSizeOverride === ps.name ? accentColor : textTertiary,
-                }}
-              >
-                {ps.name}
-                <span className="ml-1 opacity-60 font-normal">{ps.widthMm}×{ps.heightMm}mm</span>
+                <span className="flex-1 truncate">{name}</span>
+                {printerName === name && <span className="font-bold text-[10px]">✓</span>}
               </button>
             ))}
-          </div>
-          <p className="text-[10px]" style={{ color: textTertiary }}>
-            {paperSizeOverride === null
-              ? "Ukuran kertas terdeteksi otomatis dari frame yang dipilih."
-              : `Semua cetak akan menggunakan ukuran ${paperSizeOverride}.`}
-          </p>
-        </div>
+            {/* Manual input fallback */}
+            {printers.length === 0 && (
+              <input
+                value={manualPrinter}
+                onChange={(e) => {
+                  setManualPrinter(e.target.value);
+                  setPrinterName(e.target.value.trim() || null);
+                }}
+                placeholder="Ketik nama printer manual"
+                className="w-full px-2.5 py-1.5 rounded-xl text-xs outline-none"
+                style={{ background: "transparent", border: `1.5px solid ${surfaceBorder}`, color: textPrimary }}
+              />
+            )}
 
-        {/* ── CTA ──────────────────────────────────────────────────────────── */}
+            {/* Paper size */}
+            <div className="pt-2 border-t" style={{ borderColor: surfaceBorder }}>
+              <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: textSecondary }}>
+                UKURAN KERTAS
+              </p>
+              <div className="flex flex-wrap gap-1">
+                <button
+                  onClick={() => setPaperSizeOverride(null)}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold"
+                  style={{
+                    background: paperSizeOverride === null ? `${accentColor}22` : "transparent",
+                    border: `1px solid ${paperSizeOverride === null ? accentColor : surfaceBorder}`,
+                    color: paperSizeOverride === null ? accentColor : textTertiary,
+                  }}
+                >
+                  Auto
+                </button>
+                {getAllPaperSizes().map(ps => (
+                  <button
+                    key={ps.name}
+                    onClick={() => setPaperSizeOverride(ps.name)}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold"
+                    style={{
+                      background: paperSizeOverride === ps.name ? `${accentColor}22` : "transparent",
+                      border: `1px solid ${paperSizeOverride === ps.name ? accentColor : surfaceBorder}`,
+                      color: paperSizeOverride === ps.name ? accentColor : textTertiary,
+                    }}
+                  >
+                    {ps.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Footer CTA ─────────────────────────────────────────────────────── */}
+      <div className="flex-none px-4 py-3 flex flex-col gap-1.5 border-t" style={{ borderColor: surfaceBorder }}>
         <button
           onClick={handleDone}
           disabled={!canStartBooth}
-          className="w-full py-4 rounded-3xl text-xl font-black active:scale-95 transition-all disabled:opacity-40"
+          className="w-full py-3 rounded-2xl text-base font-black active:scale-95 transition-all disabled:opacity-40"
           style={{ backgroundColor: accentColor, color: primaryColor }}
         >
           {captureSource === "dslr" && !dslrSelectedAndReady
@@ -1168,10 +1149,9 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               ? "Memuat kamera…"
               : "▶ Mulai Booth"}
         </button>
-
         <button onClick={handleReset}
-          className="w-full text-center text-xs py-1 transition-colors" style={{ color: textTertiary }}>
-          Reset pengaturan ini
+          className="w-full text-center text-[11px] py-0.5" style={{ color: textTertiary }}>
+          Reset pengaturan
         </button>
       </div>
     </div>

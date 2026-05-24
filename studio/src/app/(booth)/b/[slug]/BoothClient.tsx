@@ -473,15 +473,11 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
   // Load hardware settings from localStorage on mount (client-only)
   // Dilewati kalau dalam preview mode
-  // Windows app: selalu tampilkan setting dulu agar user bisa cek koneksi Canon
+  // SELALU mulai dari BOOTH_SETUP — user harus melalui setup setiap kunjungan
   useEffect(() => {
     if (mappedPreviewScreen) return;
-    const isWindowsApp = typeof window !== "undefined" && Boolean(window.fremioBooth);
-    if (isWindowsApp) return; // Windows app selalu mulai dari BOOTH_SETUP
-    const saved = loadHardwareSettings(booth.slug);
-    if (saved?.setupCompleted) {
-      dispatch({ type: "SETUP_COMPLETE", payload: { ...DEFAULT_HW_SETTINGS, ...saved } });
-    }
+    // Booth selalu mulai di BOOTH_SETUP; setupCompleted диспатч dilakukan
+    // saat user menyelesaikan setup di BoothSetupScreen → onDone
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

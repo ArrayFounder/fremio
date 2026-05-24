@@ -48,3 +48,8 @@ C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0
 C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\edsdk-bridge-native.pdb
 C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEdsdkBridge.genruntimeconfig.cache
 C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\ref\edsdk-bridge-native.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\Microsoft.Win32.SystemEvents.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\System.Drawing.Common.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\runtimes\win\lib\net8.0\Microsoft.Win32.SystemEvents.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEdsdkBridge.csproj.AssemblyReference.cache
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\CanonEds.63AB58C6.Up2Date

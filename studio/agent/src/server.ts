@@ -85,6 +85,9 @@ let sharedPreviewProcess: ReturnType<typeof spawn> | null = null;
 let sharedPreviewBuffer = Buffer.alloc(0);
 let latestPreviewFrame: Buffer | null = null;
 let latestPreviewFrameAt = 0;
+let previewFrameCount = 0;
+let previewFpsLastLoggedAt = 0;
+const PREVIEW_FPS_LOG_INTERVAL_MS = 5000;
 const previewFrameWaiters = new Set<PreviewFrameWaiter>();
 const previewFrameSubscribers = new Set<PreviewFrameSubscriber>();
 let previewIdleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -168,6 +171,15 @@ function failPreviewFrameWaiters(error: Error) {
 function publishPreviewFrame(frame: Buffer) {
   latestPreviewFrame = Buffer.from(frame);
   latestPreviewFrameAt = Date.now();
+  previewFrameCount++;
+  const now = Date.now();
+  const fpsElapsed = now - previewFpsLastLoggedAt;
+  if (fpsElapsed >= PREVIEW_FPS_LOG_INTERVAL_MS && previewFrameCount > 0) {
+    const fps = Math.round((previewFrameCount / fpsElapsed) * 1000);
+    console.log(`[agent] Live view FPS: ~${fps} (${previewFrameCount} frames in ${fpsElapsed}ms)`);
+    previewFrameCount = 0;
+    previewFpsLastLoggedAt = now;
+  }
   previewRestartAttemptsInWindow = 0;
   previewRestartWindowStartedAt = 0;
 
@@ -1226,10 +1238,17 @@ app.post("/arm-capture", async (_req: Request, res: Response) => {
     process: armedProcess,
     readyPromise,
     shootFn: () => {
-      console.log(`[agent] Sending SHOOT to armed bridge`);
+      // ATOMIC DOUBLE-SHOT GUARD: set the lock BEFORE writing to stdin.
+      // This prevents a second SHOOT from firing if another path calls shootFn
+      // concurrently (e.g. inline /capture path fires while pre-armed is still running).
+      if (preArmedShootFired) {
+        console.warn("[agent] shootFn: preArmedShootFired already set — skipping SHOOT");
+        return;
+      }
       preArmedShootFired = true;
       shootLastFiredAt = Date.now();
       captureLockFiredAt = Date.now();
+      console.log(`[agent] Sending SHOOT to armed bridge`);
       armedProcess.stdin?.write("SHOOT\n");
     },
     completionPromise,
