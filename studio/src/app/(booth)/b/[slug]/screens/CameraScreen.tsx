@@ -1606,18 +1606,22 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     if (!recorder) return;
 
     const drawFrame = () => {
-      const img = dslrPreviewImgRef.current;
-      const fallback = dslrRecordingPosterImgRef.current;
-      const source = (img && img.naturalWidth > 0 && img.naturalHeight > 0)
-        ? img
-        : (fallback && fallback.naturalWidth > 0 && fallback.naturalHeight > 0)
-          ? fallback
+      // dslrPreviewImgRef.current — the live <img> element (if currently mounted and loaded).
+      // dslrRecordingPosterImgRef.current — frozen poster when preview was paused.
+      // Check naturalWidth > 0 WITHOUT requiring .complete — for blob URLs, the
+      // browser may report complete=true before naturalWidth is set. naturalWidth is
+      // the reliable indicator that the image is decoded and ready to draw.
+      // If neither is loaded yet, skip drawing (canvas stays black for that frame).
+      const img = (dslrPreviewImgRef.current && dslrPreviewImgRef.current.naturalWidth > 0)
+        ? dslrPreviewImgRef.current
+        : (dslrRecordingPosterImgRef.current && dslrRecordingPosterImgRef.current.naturalWidth > 0)
+          ? dslrRecordingPosterImgRef.current
           : null;
 
       ctx.fillStyle = "#000000";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (source) {
+      if (img) {
         // Subtle zoom-in (1.0 → 1.05) during frozen phase (count=3 → count=0)
         // Creates natural "build-up" tension while Canon prepares for shutter
         const frozenAt = dslrFrozenAtRef.current;
@@ -1637,7 +1641,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           ctx.translate(canvas.width, 0);
           ctx.scale(-1, 1);
         }
-        drawCoverToCanvas(ctx, source, 0, 0, canvas.width, canvas.height);
+        drawCoverToCanvas(ctx, img, 0, 0, canvas.width, canvas.height);
         ctx.restore();
       }
     };
@@ -1665,7 +1669,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         void stopDslrLiveRecording();
       }
     }
-  }, [dslrPosterSrc, mirror, stopDslrLiveRecording]);
+  }, [dslrPosterSrc, dslrRecordingPosterImgRef, mirror, stopDslrLiveRecording]);
 
   // Reset cdState ke READY saat berpindah ke slot foto berikutnya,
   // atau saat user klik Ulangi (capturedCount berkurang → cdState stuck di DONE tanpa ini)
