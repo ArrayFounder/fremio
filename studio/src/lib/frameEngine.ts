@@ -1252,7 +1252,7 @@ export async function composeVideoLive(
   if (!videoBlobs.some(Boolean)) return null;
 
   // Scale to 85% of original — excellent quality at manageable file size.
-  // 1080×1920 @ 85% = 918×1632. Good balance: 16Mbps bitrate handles this well.
+  // 1080×1920 @ 85% = 918×1632. Good balance: 10Mbps bitrate handles this without encoder stalls.
   const scale = 0.85;
   const cw    = Math.round((options.canvasWidth  ?? 1080) * scale);
   const ch    = Math.round((options.canvasHeight ?? 1920) * scale);
@@ -1457,7 +1457,7 @@ export async function composeVideoLive(
     try { return new MediaRecorder(stream, opts); } catch { return null; }
   };
   const recorder =
-    tryCreateRecorder({ mimeType, videoBitsPerSecond: 16_000_000 }) ?? // 16Mbps — 90fps @ 810×1440 with excellent H.264 quality
+    tryCreateRecorder({ mimeType, videoBitsPerSecond: 10_000_000 }) ?? // 10Mbps — good quality at 810×1440 with 60fps
     tryCreateRecorder({ mimeType }) ??
     tryCreateRecorder({});
   if (!recorder) {
