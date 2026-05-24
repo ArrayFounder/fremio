@@ -814,13 +814,12 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         </div>
       </div>
 
-      {/* ── Baris 1: Stream preview — height menyesuaikan aspect ratio kamera ─── */}
+      {/* ── Baris 1: Stream preview — tinggi menyesuaikan aspect ratio, max 45% tinggi layar ─── */}
       <div
-        className="flex-none relative bg-black overflow-hidden flex items-center justify-center"
-        style={streamAspect != null ? { height: `${100 / streamAspect}vw` } : { height: "42vh" }}
+        className="flex-none relative bg-black flex items-center justify-center overflow-hidden"
+        style={{ height: "min(100vw, 45vh)" }}
       >
-        {/* 42vh fallback height: cover overflow untuk aspek rasio lebar (16:9) */}
-        <div className="relative w-full h-full overflow-hidden">
+        <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
           {captureSource === "dslr" ? (
             (agentBase || setupDslrUsesIpcPreview) && dslrPreviewActive ? (
               <>
