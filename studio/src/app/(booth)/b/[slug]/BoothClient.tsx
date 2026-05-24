@@ -625,7 +625,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         overlayUrl:      frame.overlayUrl ?? undefined,
         sceneElements:   frame.sceneElements ?? undefined,
         duration:        5000,
-        fps:             60,   // 60fps compositing — smooth motion tanpa overload browser
+        fps:             60,   // 60fps = native captureStream rate — smooth motion from 30fps source video
         mirror:          hwSettings.cameraMirror,
       }),
       compositingTimeout,

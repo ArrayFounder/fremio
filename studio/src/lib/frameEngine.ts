@@ -1251,9 +1251,9 @@ export async function composeVideoLive(
   if (typeof document === "undefined") return null;
   if (!videoBlobs.some(Boolean)) return null;
 
-  // Scale down 50% — rendering video 1080×1920 real-time terlalu berat
-  // Hasil tetap bagus untuk video: 540×960
-  const scale = 0.5;
+  // Scale to 85% of original — excellent quality at manageable file size.
+  // 1080×1920 @ 85% = 918×1632. Good balance: 16Mbps bitrate handles this well.
+  const scale = 0.85;
   const cw    = Math.round((options.canvasWidth  ?? 1080) * scale);
   const ch    = Math.round((options.canvasHeight ?? 1920) * scale);
   const bg    = options.backgroundColor ?? "#ffffff";
@@ -1457,7 +1457,7 @@ export async function composeVideoLive(
     try { return new MediaRecorder(stream, opts); } catch { return null; }
   };
   const recorder =
-    tryCreateRecorder({ mimeType, videoBitsPerSecond: 8_000_000 }) ?? // 8Mbps — handles 60fps @ 540×960 smooth with high-FPS source
+    tryCreateRecorder({ mimeType, videoBitsPerSecond: 16_000_000 }) ?? // 16Mbps — 90fps @ 810×1440 with excellent H.264 quality
     tryCreateRecorder({ mimeType }) ??
     tryCreateRecorder({});
   if (!recorder) {
