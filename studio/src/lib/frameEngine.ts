@@ -1448,10 +1448,6 @@ export async function composeVideoLive(
       recordedFps = Math.min(60, Math.max(15, naturalFps || 30));
       probeEl.pause();
       probeEl.currentTime = 0;
-      const naturalFps = Math.round(frameCount / 0.5);
-      recordedFps = Math.min(60, Math.max(15, naturalFps || 30));
-      probeEl.pause();
-      probeEl.currentTime = 0;
       console.log(`[composeVideoLive] detected source fps: ${recordedFps} (frames in 500ms: ${frameCount})`);
     } else {
       console.log(`[composeVideoLive] cannot probe fps: video dims ${vw}×${vh} not ready yet`);
