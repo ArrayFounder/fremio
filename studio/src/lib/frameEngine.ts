@@ -1116,16 +1116,16 @@ export async function uploadVideo(blob: Blob, sessionId: string): Promise<string
 /** Cari mimeType video terbaik yang didukung browser — prioritaskan H.264 (MP4-compatible) */
 function getBestVideoMime(): string {
   for (const t of [
-    "video/webm;codecs=h264",   // Chrome/Edge — H.264 dalam container WebM, bisa di-rename ke .mp4
-    "video/mp4;codecs=avc1",    // Safari natif
-    "video/mp4",                // Safari fallback
+    "video/mp4;codecs=avc1", // Safari + Chrome H.264 in MP4 container → .mp4 file
+    "video/mp4",             // Safari fallback
+    "video/webm;codecs=h264", // Chrome/Edge H.264 in WebM (can rename to .mp4)
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
   ]) {
     if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t)) return t;
   }
-  return "video/webm";
+  return "video/mp4";
 }
 
 /** Gambar video frame ke slot dengan object-fit:cover, optional rotation, dan rounded clip */

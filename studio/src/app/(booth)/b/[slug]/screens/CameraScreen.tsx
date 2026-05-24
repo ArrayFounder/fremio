@@ -58,16 +58,16 @@ function isChrome(): boolean {
 
 function getBestRecordingMime(): string {
   for (const type of [
-    "video/webm;codecs=h264",
-    "video/mp4;codecs=avc1",
-    "video/mp4",
+    "video/mp4;codecs=avc1", // Safari native + Chrome H.264 in MP4 container → .mp4 file
+    "video/mp4",             // Safari fallback
+    "video/webm;codecs=h264", // Chrome/Edge H.264 in WebM (rename to .mp4 works)
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
   ]) {
     if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) return type;
   }
-  return "video/webm";
+  return "video/mp4";
 }
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
