@@ -1473,9 +1473,16 @@ export async function composeVideoLive(
       if (performance.now() < endTime) {
         rafId = requestAnimationFrame(scheduleDraw);
       } else {
-        console.log("[composeVideoLive] draw loop ended, requesting data + stopping");
+        console.log("[composeVideoLive] draw loop ended, flushing recorder buffers...");
+        // Flush any remaining buffered data BEFORE stopping the recorder.
+        // With 500ms timeslice, the last chunk may still be in the encoder buffer.
         try { recorder.requestData(); } catch { /* ignore */ }
-        recorder.stop();
+        // Small delay (50ms) to let ondataavailable fire for the last flush
+        // before we stop the recorder. Required for reliable final chunk collection.
+        setTimeout(() => {
+          console.log("[composeVideoLive] stopping recorder, chunks so far =", chunks.length);
+          try { recorder.stop(); } catch { /* ignore */ }
+        }, 50);
       }
     };
 
