@@ -1385,6 +1385,10 @@ export async function composeVideoLive(
 
   const mimeType = getBestVideoMime();
   console.log("[composeVideoLive] mimeType =", mimeType, "fps =", fps, "duration =", duration, "cw =", cw, "ch =", ch);
+  console.log("[composeVideoLive] video/mp4;codecs=avc1 supported?", typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("video/mp4;codecs=avc1"));
+  console.log("[composeVideoLive] video/mp4 supported?", typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("video/mp4"));
+  console.log("[composeVideoLive] video/webm;codecs=h264 supported?", typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("video/webm;codecs=h264"));
+  console.log("[composeVideoLive] video/webm supported?", typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("video/webm"));
 
   // captureStream — check API availability first (Chrome Android supports this)
   const captureStreamFn = (canvas as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream }).captureStream;
@@ -1420,7 +1424,15 @@ export async function composeVideoLive(
   console.log("[composeVideoLive] MediaRecorder created: mimeType =", recorder.mimeType, "state =", recorder.state);
 
   const chunks: Blob[] = [];
-  recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+  let _chunkIdx = 0;
+  recorder.ondataavailable = (e) => {
+    if (e.data.size > 0) {
+      _chunkIdx++;
+      chunks.push(e.data);
+      console.log("[composeVideoLive] ondataavailable: chunk #", _chunkIdx, "size =", e.data.size, "total chunks =", chunks.length);
+    }
+  };
+  recorder.onerror = (e) => { console.error("[composeVideoLive] recorder.onerror:", e); };
   // Start with 500ms timeslice (more reliable than 200ms for captureStream)
   try { recorder.start(500); } catch { try { recorder.start(); } catch (e) { console.warn("[composeVideoLive] recorder.start gagal:", e); cleanup(); return null; } }
   console.log("[composeVideoLive] recorder started: state =", recorder.state);
@@ -1474,14 +1486,21 @@ export async function composeVideoLive(
         rafId = requestAnimationFrame(scheduleDraw);
       } else {
         console.log("[composeVideoLive] draw loop ended, flushing recorder buffers...");
-        // Double-flush: requestData twice with delay to ensure all chunks
-        // (especially the last ~500ms buffer) are collected before stop().
+        // Triple requestData with adequate wait (150ms) to ensure all pending
+        // chunks (especially the last ~500ms buffer) reach ondataavailable before
+        // stop() is called. With 500ms timeslice, a chunk fires at t=4500ms and
+        // may not reach ondataavailable until ~t=5000ms. If stop() fires before
+        // that, onstop fires with chunks.length=0. The 150ms wait gives the browser
+        // enough time to dispatch the buffered data before we stop.
         try { recorder.requestData(); } catch { /* ignore */ }
         setTimeout(() => {
           try { recorder.requestData(); } catch { /* ignore */ }
           setTimeout(() => {
-            console.log("[composeVideoLive] stopping recorder, chunks so far =", chunks.length);
-            try { recorder.stop(); } catch { /* ignore */ }
+            try { recorder.requestData(); } catch { /* ignore */ }
+            setTimeout(() => {
+              console.log("[composeVideoLive] stopping recorder, chunks so far =", chunks.length);
+              try { recorder.stop(); } catch { /* ignore */ }
+            }, 150);
           }, 50);
         }, 50);
       }
