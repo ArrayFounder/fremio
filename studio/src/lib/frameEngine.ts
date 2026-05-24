@@ -1476,8 +1476,53 @@ export async function composeVideoLive(
   }
   console.log("[composeVideoLive] MediaRecorder created: mimeType =", recorder.mimeType, "state =", recorder.state);
 
+  // Prime video elements + canvas BEFORE starting recorder.
+  // The video element must have decoded at least ONE real frame before we start
+  // capturing — otherwise captureStream sees a blank canvas (all-black or solid color).
+  // We do 3 warm-up draws at 16ms intervals so the video decoder has time to
+  // produce frames from the blob source.
+  const warmUpDraw = () => {
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, cw, ch);
+    if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
+    if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
+    for (const { el, slot } of entries) {
+      drawVideoInSlot(ctx, el, slot, options.mirror ?? false);
+      if (pixelFilters) {
+        const fx = Math.max(0, Math.floor(slot.x));
+        const fy = Math.max(0, Math.floor(slot.y));
+        const fw = Math.min(cw - fx, Math.ceil(slot.w));
+        const fh = Math.min(ch - fy, Math.ceil(slot.h));
+        if (fw > 0 && fh > 0) {
+          const imgData = ctx.getImageData(fx, fy, fw, fh);
+          applyPixelFiltersToData(imgData.data, pixelFilters);
+          ctx.putImageData(imgData, fx, fy);
+        }
+      }
+    }
+    if (isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
+    if (sceneAfterPhotos.length > 0) drawSceneElementsSync(ctx, sceneAfterPhotos, ch, sceneImages);
+    if (decorImg && !useSceneRendering) ctx.drawImage(decorImg, 0, 0, cw, ch);
+    if (options.trialWatermark) drawCenteredWatermark(ctx, cw, ch, options.trialWatermarkText ?? "Trial");
+  };
+  // 3 warm-up draws at ~16ms apart → video decoder has time to output real frames
+  warmUpDraw();
+  await new Promise<void>((r) => setTimeout(r, 50));
+  warmUpDraw();
+  await new Promise<void>((r) => setTimeout(r, 50));
+  warmUpDraw();
+  // Verify canvas isn't blank before starting recorder
+  const midSample = ctx.getImageData(Math.floor(cw / 2), Math.floor(ch / 2), 1, 1).data;
+  console.log("[composeVideoLive] canvas warm-up pixel at center:", Array.from(midSample));
+  const canvasIsBlank = midSample[0] === 0 && midSample[1] === 0 && midSample[2] === 0 && midSample[3] === 255;
+  if (canvasIsBlank) {
+    console.warn("[composeVideoLive] canvas still blank after warm-up — videos may not have decoded yet");
+  }
+
   const chunks: Blob[] = [];
   let _chunkIdx = 0;
+  // Attach ondataavailable BEFORE start() — if the browser dispatches the first
+  // event synchronously after start(), we must be ready to catch it.
   recorder.ondataavailable = (e) => {
     if (e.data.size > 0) {
       _chunkIdx++;
@@ -1486,35 +1531,37 @@ export async function composeVideoLive(
     }
   };
   recorder.onerror = (e) => { console.error("[composeVideoLive] recorder.onerror:", e); };
+  // Also listen for state changes so we know if recorder goes inactive unexpectedly
+  const _origState = recorder.state;
+  Object.defineProperty(recorder, "_watchedState", { value: recorder.state, writable: true, configurable: true });
+  const _stateCheck = setInterval(() => {
+    const s = (recorder as typeof recorder & { _watchedState?: string })._watchedState;
+    if (s !== recorder.state) {
+      (recorder as typeof recorder & { _watchedState?: string })._watchedState = recorder.state;
+      console.log("[composeVideoLive] recorder state changed:", s, "→", recorder.state);
+    }
+  }, 200);
   // Start with 100ms timeslice — much smaller chunks = smoother video playback.
-  // 500ms timeslice = ~10 chunks over 5s → video appears choppy (large jumps between chunks).
-  // 100ms timeslice = ~50 chunks over 5s → smooth, natural motion from 30fps source.
   try { recorder.start(100); } catch { try { recorder.start(); } catch (e) { console.warn("[composeVideoLive] recorder.start gagal:", e); cleanup(); return null; } }
-  console.log("[composeVideoLive] recorder started: state =", recorder.state);
+  console.log("[composeVideoLive] recorder started: state =", recorder.state, "mimeType =", recorder.mimeType);
 
-  // ── 6. Draw loop via requestAnimationFrame (throttled ke target fps) ─────
+  // ── 6. Draw loop via requestAnimationFrame ────────────────────────────────
   const endTime = performance.now() + duration;
 
   return new Promise<Blob | null>((resolve) => {
     const mirrorVideo = options.mirror ?? false;
     let rafId = 0;
-    let lastDrawTime = 0;
-    const targetInterval = 1000 / recordedFps;
-
-    // Diagnostic: how many unique frames did we actually draw?
     let framesDrawn = 0;
 
     const drawComposite = () => {
       framesDrawn++;
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, cw, ch);
-      // Background-mode frame (webp): draw before videos — dilewati jika sceneElements aktif
       if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
       if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
       for (const { el, slot } of entries) {
         drawVideoInSlot(ctx, el, slot, mirrorVideo);
         if (pixelFilters) {
-          // Pixel filter hanya pada bounding-box slot — frame overlay belum digambar
           const fx = Math.max(0, Math.floor(slot.x));
           const fy = Math.max(0, Math.floor(slot.y));
           const fw = Math.min(cw - fx, Math.ceil(slot.w));
@@ -1526,31 +1573,20 @@ export async function composeVideoLive(
           }
         }
       }
-      // Overlay-mode frame (transparent PNG): draw after videos — dilewati jika sceneElements aktif
       if (isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
       if (sceneAfterPhotos.length > 0) drawSceneElementsSync(ctx, sceneAfterPhotos, ch, sceneImages);
-      // Extra decoration overlay — hanya untuk frame biasa (non-scene)
       if (decorImg && !useSceneRendering) ctx.drawImage(decorImg, 0, 0, cw, ch);
-      if (options.trialWatermark) {
-        drawCenteredWatermark(ctx, cw, ch, options.trialWatermarkText ?? "Trial");
-      }
+      if (options.trialWatermark) drawCenteredWatermark(ctx, cw, ch, options.trialWatermarkText ?? "Trial");
     };
 
     const scheduleDraw = (time: number) => {
-      // Draw every RAF tick — no throttle. captureStream(30) generates exactly 30
-      // unique frames/sec. Skipping ticks = dropped frames = shorter video.
+      // Draw every RAF tick — no throttle. RAF ~60fps, captureStream captures each
+      // unique canvas frame at the stream's fps setting.
       try { drawComposite(); } catch (e) { console.warn("[composeVideoLive] drawComposite error:", e); }
-      lastDrawTime = time;
       if (performance.now() < endTime) {
         rafId = requestAnimationFrame(scheduleDraw);
       } else {
         console.log("[composeVideoLive] draw loop ended, flushing recorder buffers...");
-        // Triple requestData with adequate wait (150ms) to ensure all pending
-        // chunks (especially the last ~500ms buffer) reach ondataavailable before
-        // stop() is called. With 500ms timeslice, a chunk fires at t=4500ms and
-        // may not reach ondataavailable until ~t=5000ms. If stop() fires before
-        // that, onstop fires with chunks.length=0. The 150ms wait gives the browser
-        // enough time to dispatch the buffered data before we stop.
         try { recorder.requestData(); } catch { /* ignore */ }
         setTimeout(() => {
           try { recorder.requestData(); } catch { /* ignore */ }
