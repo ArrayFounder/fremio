@@ -1030,6 +1030,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const [dslrPosterMirror, setDslrPosterMirror] = useState<boolean>(mirror);
   const DSLR_PREVIEW_ERROR_GRACE_MS = 7000; // Grace period for USB release + queue wait. Canon needs up to 2200ms to release USB + 2200ms recovery = 4400ms; 7s handles worst-case with margin.
   const dslrPreviewImgRef = useRef<HTMLImageElement | null>(null);
+  const dslrStreamVideoRef = useRef<HTMLVideoElement | null>(null); // MJPEG stream video element for direct recording
   const dslrRecordingPosterImgRef = useRef<HTMLImageElement | null>(null);
   const agentBaseRef = useRef<string | null>(cachedAgentBase);
   const useIpcAgentRef = useRef<boolean>(false);
@@ -1609,10 +1610,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     });
   }, []);
 
+  // ── DSLR Live Recording: direct MJPEG video element capture ─────────────────
+  // CRITICAL: Canon MJPEG stream delivers ~16fps natively.
+  // Recording directly from <video> element captures at the video's native fps
+  // (no polling, no JPEG decode, no canvas draw). This is the cleanest path.
   const startDslrLiveRecording = useCallback(() => {
     if (typeof MediaRecorder === "undefined") return;
 
-    // ── Cleanup dari recording sebelumnya ───────────────────────────────────
+    // Cleanup previous recording
     if (dslrRecordingDrawTimerRef.current) {
       cancelAnimationFrame(dslrRecordingDrawTimerRef.current);
       dslrRecordingDrawTimerRef.current = null;
@@ -1625,7 +1630,44 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     dslrRecordingCanvasRef.current = null;
     dslrFrozenAtRef.current = null;
 
-    // ── Canvas untuk capture video frames ──────────────────────────────────────
+    // ── Primary: record from hidden MJPEG <video> element ─────────────────
+    const videoEl = dslrStreamVideoRef.current;
+    if (videoEl && videoEl.readyState >= 2) {
+      let stream: MediaStream;
+      try {
+        // Request 16fps (matches Canon MJPEG native rate ~16fps)
+        stream = (videoEl as HTMLVideoElement & { captureStream: (fps: number) => MediaStream }).captureStream(16);
+      } catch {
+        // Fallback to canvas if captureStream fails
+      }
+
+      if (stream) {
+        const mimeType = getBestRecordingMime();
+        const createRecorder = (options: MediaRecorderOptions) => {
+          try { return new MediaRecorder(stream, options); } catch { return null }
+        };
+        const recorder =
+          createRecorder({ mimeType, videoBitsPerSecond: 6_000_000 }) ??
+          createRecorder({ mimeType }) ??
+          createRecorder({});
+        if (recorder) {
+          dslrRecordingChunksRef.current = [];
+          recorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) dslrRecordingChunksRef.current.push(event.data);
+          };
+          recorder.onerror = () => {};
+          dslrRecorderRef.current = recorder;
+          try { recorder.start(200); } catch {
+            try { recorder.start(); } catch {
+              void stopDslrLiveRecording();
+            }
+          }
+          return;
+        }
+      }
+    }
+
+    // ── Fallback: canvas + agentPreview polling (for older browsers / edge cases) ─
     const canvas = document.createElement("canvas");
     canvas.width = 1920;
     canvas.height = 1080;
@@ -1634,7 +1676,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     let stream: MediaStream;
     try {
-      stream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(120);
+      stream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(20);
     } catch {
       return;
     }
@@ -1644,7 +1686,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       try { return new MediaRecorder(stream, options); } catch { return null }
     };
     const recorder =
-      createRecorder({ mimeType, videoBitsPerSecond: 8_000_000 }) ??
+      createRecorder({ mimeType, videoBitsPerSecond: 6_000_000 }) ??
       createRecorder({ mimeType }) ??
       createRecorder({});
     if (!recorder) return;
@@ -1657,17 +1699,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     dslrRecordingCanvasRef.current = canvas;
     dslrRecorderRef.current = recorder;
 
-    // drawInterval: sync ke FPS Canon (~16fps). MediaRecorder menangkap setiap canvas draw.
-    // RAF loop tetap jalan untuk detect frame update, tapi draw throttle ke ~16fps max.
-    // Jika agentPreview lebih cepat (webcam ~30fps), drawInterval menyesuaikan.
-    const drawInterval = Math.round(1000 / 20); // target max 20fps untuk video recording
+    // Fallback: canvas-based recording with ~16fps throttle (same as before)
+    const drawInterval = Math.round(1000 / 16);
     let lastDrawTime = 0;
     let cachedPreviewBase64: string | null = null;
     let cachedPreviewImg: HTMLImageElement | null = null;
     let previewFetchInFlight = false;
 
-    // Pre-fetch: mulai fetch frame Canon secara paralel, simpan ke cache.
-    // Dipanggil setiap ~60ms (buka throttle) — fetch berjalan di background.
     const prefetchPreview = () => {
       if (previewFetchInFlight) return;
       previewFetchInFlight = true;
@@ -1685,7 +1723,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         .finally(() => { previewFetchInFlight = false; });
     };
 
-    // drawFrame: synchronous draw — hanya baca cached frame, tidak await
     const drawFrame = () => {
       ctx.fillStyle = "#000000";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1717,12 +1754,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
 
-    // RAF ticker: poll setiap ~16ms (RAF rate), tapi draw throttle
     const scheduleDraw = (time: number) => {
-      // Throttle draw: hanya draw jika interval sudah lewat
       if (time - lastDrawTime >= drawInterval) {
-        prefetchPreview(); // non-blocking pre-fetch
-        drawFrame();       // synchronous draw
+        prefetchPreview();
+        drawFrame();
         lastDrawTime = time;
       }
       dslrRecordingDrawTimerRef.current = requestAnimationFrame(scheduleDraw);
@@ -1797,13 +1832,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     setMirror(next);
   };
 
+  // Countdown durasi: 8 detik (DSLR: pre-arm at 5, shot at 3; webcam: shot at 0)
+  const COUNTDOWN_DURATION = 8;
+
   const startCountdown = useCallback(() => {
     if (cdState !== "READY") return;
     if (dslrPreviewPauseTimerRef.current) clearTimeout(dslrPreviewPauseTimerRef.current);
     setCaptureError(null);
     setCdState("COUNTING");
     setDslrSessionStarted(true); // suppress loading overlay for rest of session
-    setCountdown(5);
+    setCountdown(COUNTDOWN_DURATION);
     const currentCaptureIndex = retakeSlotIndex !== null ? retakeSlotIndex : capturedCount;
 
     // ── Live Mode: mulai rekam saat countdown dimulai (jika diaktifkan) ────
@@ -1893,22 +1931,17 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         }
       };
 
-    let count = 5;
+    let count = COUNTDOWN_DURATION;
     const tick = () => {
       count -= 1;
       if (count > 0) {
         setCountdown(count);
 
-        // FREEZE preview + start capture at count=1: user sees frozen "1", then shot fires.
-        // PRE-ARM at count=2: call /prepare-capture here so the armed bridge is ready
-        // before count=1. This keeps live preview running until count=1 (4s of live view).
+        // DSLR pre-arm: fire at count=5 (5s before shot). Bridge needs ~3-4s to
+        // be BRIDGE_READY, so arming at count=5 gives ~2-3s margin before shot.
         if (willUseAgentCapture) {
-          // PRE-ARM at count=3: bridge takes ~3-4s to be BRIDGE_READY.
-          // With pre-arm at count=3, bridge is ready ~2s before shot.
-          // Preview stays live for counts 5,4,3,2,1.
-          if (count === 3) {
+          if (count === 5) {
             // /arm-capture: arms camera WITHOUT stopping preview.
-            // Preview stays live for counts 5,4,3,2,1 — no preview stop until /trigger-capture at count=1.
             const base = agentBaseRef.current;
             if (base) {
               fetch(`${base}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(15000) })
@@ -1916,10 +1949,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             }
           }
 
-          if (count === 1) {
-            // Show "1" briefly (150ms) — then switch to filler animation.
-            // This prevents jarring snap from countdown to filler.
-            setCountdown(1);
+          if (count === 3) {
+            // Shot fires after 150ms (count=3 → "1" briefly → filler → shoot)
+            setCountdown(3);
             captureInProgressRef.current = true;
 
             // Clear timer — fire shot NOW, no more ticks.
@@ -1987,25 +2019,38 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           {/* Kamera video fullscreen */}
           {dslrMode ? (
             dslrPreviewUrl ? (
-              <img
-                ref={dslrPreviewImgRef}
-                crossOrigin="anonymous"
-                src={dslrPreviewUrl}
-                alt="DSLR live preview"
-                className="w-full h-full object-cover transition-opacity duration-200"
-                style={{ transform: mirror ? "scaleX(-1)" : "none" }}
-                onLoad={() => {
-                  setDslrPreviewError(null);
-                  setDslrPreviewReady(true);
-                  setDslrPosterActive(false);
-                }}
-                onError={() => {
-                  setDslrPreviewReady(false);
-                  setDslrPreviewError("Live preview Canon belum tersedia. Pastikan Live View aktif di kamera.");
-                  setDslrPreviewUrl(null);
-                  void restartCanonPreviewBridge("gagal render stream");
-                }}
-              />
+              <>
+                {/* Display: img element shows live preview */}
+                <img
+                  ref={dslrPreviewImgRef}
+                  crossOrigin="anonymous"
+                  src={dslrPreviewUrl}
+                  alt="DSLR live preview"
+                  className="w-full h-full object-cover transition-opacity duration-200"
+                  style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+                  onLoad={() => {
+                    setDslrPreviewError(null);
+                    setDslrPreviewReady(true);
+                    setDslrPosterActive(false);
+                  }}
+                  onError={() => {
+                    setDslrPreviewReady(false);
+                    setDslrPreviewError("Live preview Canon belum tersedia. Pastikan Live View aktif di kamera.");
+                    setDslrPreviewUrl(null);
+                    void restartCanonPreviewBridge("gagal render stream");
+                  }}
+                />
+                {/* Hidden MJPEG stream video — used as recording source (captures at video's native fps) */}
+                <video
+                  ref={dslrStreamVideoRef}
+                  src={dslrPreviewUrl}
+                  muted
+                  autoPlay
+                  playsInline
+                  className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                  style={{ transform: mirror ? "scaleX(-1)" : "none", visibility: "hidden" }}
+                />
+              </>
             ) : dslrPosterSrc ? (
               <img
                 src={dslrPosterSrc}
@@ -2252,25 +2297,38 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           {/* Kamera video */}
           {dslrMode ? (
             dslrPreviewUrl ? (
-              <img
-                ref={dslrPreviewImgRef}
-                crossOrigin="anonymous"
-                src={dslrPreviewUrl}
-                alt="DSLR live preview"
-                className="w-full h-full object-cover transition-opacity duration-200"
-                style={{ transform: mirror ? "scaleX(-1)" : "none" }}
-                onLoad={() => {
-                  setDslrPreviewError(null);
-                  setDslrPreviewReady(true);
-                  setDslrPosterActive(false);
-                }}
-                onError={() => {
-                  setDslrPreviewReady(false);
-                  setDslrPreviewError("Live preview Canon belum tersedia. Pastikan Live View aktif di kamera.");
-                  setDslrPreviewUrl(null);
-                  void restartCanonPreviewBridge("gagal render stream");
-                }}
-              />
+              <>
+                {/* Display: img element */}
+                <img
+                  ref={dslrPreviewImgRef}
+                  crossOrigin="anonymous"
+                  src={dslrPreviewUrl}
+                  alt="DSLR live preview"
+                  className="w-full h-full object-cover transition-opacity duration-200"
+                  style={{ transform: mirror ? "scaleX(-1)" : "none" }}
+                  onLoad={() => {
+                    setDslrPreviewError(null);
+                    setDslrPreviewReady(true);
+                    setDslrPosterActive(false);
+                  }}
+                  onError={() => {
+                    setDslrPreviewReady(false);
+                    setDslrPreviewError("Live preview Canon belum tersedia. Pastikan Live View aktif di kamera.");
+                    setDslrPreviewUrl(null);
+                    void restartCanonPreviewBridge("gagal render stream");
+                  }}
+                />
+                {/* Hidden MJPEG stream video for recording */}
+                <video
+                  ref={dslrStreamVideoRef}
+                  src={dslrPreviewUrl}
+                  muted
+                  autoPlay
+                  playsInline
+                  className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                  style={{ transform: mirror ? "scaleX(-1)" : "none", visibility: "hidden" }}
+                />
+              </>
             ) : dslrPosterSrc ? (
               <img
                 src={dslrPosterSrc}
