@@ -1633,7 +1633,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     // ── Primary: record from hidden MJPEG <video> element ─────────────────
     const videoEl = dslrStreamVideoRef.current;
     if (videoEl && videoEl.readyState >= 2) {
-      let stream: MediaStream;
+      let stream: MediaStream | null = null;
       try {
         // Request 16fps (matches Canon MJPEG native rate ~16fps)
         stream = (videoEl as HTMLVideoElement & { captureStream: (fps: number) => MediaStream }).captureStream(16);
@@ -2048,7 +2048,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                   autoPlay
                   playsInline
                   className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-                  style={{ transform: mirror ? "scaleX(-1)" : "none", visibility: "hidden" }}
+                  style={{ visibility: "hidden" }}
                 />
               </>
             ) : dslrPosterSrc ? (
@@ -2326,7 +2326,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                   autoPlay
                   playsInline
                   className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-                  style={{ transform: mirror ? "scaleX(-1)" : "none", visibility: "hidden" }}
+                  style={{ visibility: "hidden" }}
                 />
               </>
             ) : dslrPosterSrc ? (

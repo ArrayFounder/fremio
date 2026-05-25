@@ -1343,6 +1343,20 @@ export async function composeVideoLive(
     entries.push({ el: entry.el, url: entry.url, slot });
   }
 
+  // ── Sort entries by captureIdx — videos must be drawn in capture order, not slot visual order.
+  // For duplicate frames (palindrome slot layout), iterating slots in canvas order produces wrong
+  // sequence (e.g. slot0→slot3→slot1→slot2 instead of slot0→slot1→slot2→slot3).
+  // Group by captureIdx, then draw in order: [capture0_video0, capture0_video1, capture1_video0, ...]
+  entries.sort((a, b) => {
+    const ai = isDuplicateVideo
+      ? (a.slot.photoIndex % 2 === 0 ? Math.floor(a.slot.photoIndex / 2) : _nRows - 1 - Math.floor(a.slot.photoIndex / 2))
+      : a.slot.photoIndex;
+    const bi = isDuplicateVideo
+      ? (b.slot.photoIndex % 2 === 0 ? Math.floor(b.slot.photoIndex / 2) : _nRows - 1 - Math.floor(b.slot.photoIndex / 2))
+      : b.slot.photoIndex;
+    return ai - bi;
+  });
+
   const cleanup = () => {
     blobIndexMap.forEach((e) => {
       e.el.pause();
