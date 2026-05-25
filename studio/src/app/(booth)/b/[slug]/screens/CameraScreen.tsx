@@ -1657,23 +1657,17 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     dslrRecordingCanvasRef.current = canvas;
     dslrRecorderRef.current = recorder;
 
-    // ── Draw loop: polling agentPreview langsung di RAF loop ──────────────────
-    // KUNCI: agentPreview() dipoll langsung di draw loop, BUKAN via React state.
-    // React state update terlalu lambat (render cycle delay) dan polling berhenti saat
-    // captureInProgressRef=true. Dengan polling langsung di RAF, kita dapat frame
-    // Canon setiap tick (~8.3ms) tanpa bottleneck polling rate.
-    // Hasil: canvas captureStream menangkap motion Canon secara real-time.
-    //
-    // ⚠️ drawFrame() TIDAK boleh async/await — itu akan membuat banyak agentPreview()
-    // concurrent calls yang membebani agent → "signal timed out" timeout.
-    // Pre-fetch dilakukan secara terpisah, drawFrame hanya membaca cached frame.
+    // drawInterval: sync ke FPS Canon (~16fps). MediaRecorder menangkap setiap canvas draw.
+    // RAF loop tetap jalan untuk detect frame update, tapi draw throttle ke ~16fps max.
+    // Jika agentPreview lebih cepat (webcam ~30fps), drawInterval menyesuaikan.
+    const drawInterval = Math.round(1000 / 20); // target max 20fps untuk video recording
     let lastDrawTime = 0;
     let cachedPreviewBase64: string | null = null;
     let cachedPreviewImg: HTMLImageElement | null = null;
     let previewFetchInFlight = false;
 
     // Pre-fetch: mulai fetch frame Canon secara paralel, simpan ke cache.
-    // Dipanggil tiap ~16ms tanpa await — fetch berjalan di background.
+    // Dipanggil setiap ~60ms (buka throttle) — fetch berjalan di background.
     const prefetchPreview = () => {
       if (previewFetchInFlight) return;
       previewFetchInFlight = true;
@@ -1683,7 +1677,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             cachedPreviewBase64 = res.base64;
             const img = new Image();
             img.src = `data:${res.mimeType || "image/jpeg"};base64,${res.base64}`;
-            // Simpan img ke cachedPreviewImg setelah decode selesai
             img.onload = () => { cachedPreviewImg = img; };
             img.onerror = () => { cachedPreviewImg = null; };
           }
@@ -1692,6 +1685,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         .finally(() => { previewFetchInFlight = false; });
     };
 
+    // drawFrame: synchronous draw — hanya baca cached frame, tidak await
     const drawFrame = () => {
       ctx.fillStyle = "#000000";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1723,10 +1717,12 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
 
+    // RAF ticker: poll setiap ~16ms (RAF rate), tapi draw throttle
     const scheduleDraw = (time: number) => {
-      if (time - lastDrawTime >= 1000 / 120) {
-        prefetchPreview(); // non-blocking pre-fetch (no await)
-        drawFrame();       // synchronous draw (no await)
+      // Throttle draw: hanya draw jika interval sudah lewat
+      if (time - lastDrawTime >= drawInterval) {
+        prefetchPreview(); // non-blocking pre-fetch
+        drawFrame();       // synchronous draw
         lastDrawTime = time;
       }
       dslrRecordingDrawTimerRef.current = requestAnimationFrame(scheduleDraw);
