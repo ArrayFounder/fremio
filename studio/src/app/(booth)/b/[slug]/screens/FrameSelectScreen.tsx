@@ -208,52 +208,66 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
       : "auto";
 
     if (captureSource === "dslr") {
-      // Canon MJPEG stream: use a plain DOM <img> element instead of React.
-      // <video> elements reject MJPEG (image/jpeg) as an unsupported video format.
-      // An <img> with incremental src refresh works reliably for JPEG streams.
+      // Canon MJPEG stream: use a plain DOM <img> element.
+      // <video> elements cannot display MJPEG — browsers only support
+      // video/webm and video/mp4. <img> elements handle image/jpeg natively.
+      //
+      // Strategy: append img to DOM immediately after the overlay renders,
+      // then set src. Browsers progressively render partial MJPEG data
+      // without needing onload. QR scanning starts on first paint.
       const agentBase = "http://127.0.0.1:3002";
-      setScanLog("Menghubungi Canon...");
 
-      const canonImg = document.createElement("img");
-      const showCanon = () => {
-        // Append canon img to the dedicated container div
-        const container = document.getElementById("qr-canon-img");
-        if (container) {
-          canonImg.style.cssText = "width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block;";
-          container.appendChild(canonImg);
+      // Wait for #qr-canon-img to be in the DOM (React renders it after state commit)
+      let container: HTMLElement | null = null;
+      let attempts = 0;
+      const tryAppend = () => {
+        container = document.getElementById("qr-canon-img");
+        if (!container || attempts > 20) {
+          attempts++;
+          if (attempts <= 20) setTimeout(tryAppend, 50);
+          return;
         }
-        setScanLog("Arahkan QR ke kamera");
-      };
 
-      const refreshImg = () => {
-        canonImg.src = `${agentBase}/preview-stream?t=${Date.now()}`;
-      };
+        // Add img to DOM immediately so it's visible
+        const img = document.createElement("img");
+        img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;" +
+          "transform:scaleX(-1);max-height:45vh;min-height:200px;";
+        img.crossOrigin = "anonymous";
+        container.appendChild(img);
+        setScanLog("Menghubungi Canon...");
 
-      canonImg.onload = () => {
-        if (!document.getElementById("qr-canon-img")) {
-          showCanon();
-        }
-      };
-      canonImg.onerror = () => {
-        setScanLog("Canon tidak terhubung");
-        // Retry with new stream URL
-        setTimeout(refreshImg, 1000);
-      };
-      refreshImg();
+        // Show live frame immediately then refresh to get next frame
+        const showFrame = () => {
+          if (!img.parentNode) return;
+          img.src = `${agentBase}/preview-stream?t=${Date.now()}`;
+        };
+        showFrame();
 
-      const tick = () => {
-        if (canonImg.complete && canonImg.naturalWidth > 0) {
-          detectQr(canonImg).then((rawValue) => {
-            if (rawValue) {
-              setScanLog("Kode terdeteksi ✓");
-              void handleQrDetected(rawValue);
-              return;
-            }
-          });
-        }
-        rafRef.current = window.setTimeout(tick, 200) as unknown as number;
+        img.onload = () => { setScanLog("Arahkan QR ke kamera"); };
+        img.onerror = () => {
+          setScanLog("Canon tidak terhubung");
+          // Retry with a new stream URL to bypass browser stream caching
+          setTimeout(showFrame, 800);
+        };
+
+        // Poll for QR — wait for img to have content before scanning
+        const tick = () => {
+          if (img.complete && img.naturalWidth > 0) {
+            detectQr(img).then((rawValue) => {
+              if (rawValue) {
+                setScanLog("Kode terdeteksi ✓");
+                void handleQrDetected(rawValue);
+                return;
+              }
+            });
+          }
+          // Refresh img src each poll tick to show next MJPEG frame
+          showFrame();
+          rafRef.current = window.setTimeout(tick, 400) as unknown as number;
+        };
+        rafRef.current = window.setTimeout(tick, 500) as unknown as number;
       };
-      rafRef.current = window.setTimeout(tick, 300) as unknown as number;
+      tryAppend();
       return;
     }
 
