@@ -1881,6 +1881,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
         {screen === "FRAME_SELECT" && (
           <FrameSelectScreen
+            cameraDeviceId={hwSettings.cameraDeviceId}
             booth={booth}
             frames={frames}
             onSelect={(frame) => dispatch({ type: "FRAME_SELECTED", payload: { frame } })}

@@ -50,10 +50,11 @@ function useIsPortrait() {
 }
 
 interface FrameSelectScreenProps {
-  booth:    BoothConfigData;
-  frames:   FrameData[];
-  onSelect: (frame: FrameData) => void;
-  onBack?:  () => void;
+  booth:            BoothConfigData;
+  frames:          FrameData[];
+  cameraDeviceId?: string | null; // ← gunakan kamera dari setting booth
+  onSelect:         (frame: FrameData) => void;
+  onBack?:          () => void;
 }
 
 /**
@@ -61,7 +62,7 @@ interface FrameSelectScreenProps {
  * Tap untuk preview, tap lagi atau tekan "Pilih" untuk konfirmasi.
  * Hanya menampilkan frame dengan assetUrl nyata (id fremio_ atau assetUrl valid).
  */
-export function FrameSelectScreen({ booth, frames, onSelect, onBack }: FrameSelectScreenProps) {
+export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onBack }: FrameSelectScreenProps) {
   const { primaryColor, accentColor } = booth;
   const bgColor    = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.frameSelectBgColor as string | undefined ?? primaryColor;
   const panelColor  = (booth.welcomeScreenPrefs as Record<string, unknown> | null)?.frameSelectPanelColor as string | undefined;
@@ -156,9 +157,10 @@ export function FrameSelectScreen({ booth, frames, onSelect, onBack }: FrameSele
     setScanLog("Membuka kamera...");
     setManualInput("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } },
-      });
+      const videoConstraints: MediaTrackConstraints = cameraDeviceId
+        ? { deviceId: { exact: cameraDeviceId }, facingMode: { ideal: "environment" }, width: { ideal: 1280 } }
+        : { facingMode: { ideal: "environment" }, width: { ideal: 1280 } };
+      const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
