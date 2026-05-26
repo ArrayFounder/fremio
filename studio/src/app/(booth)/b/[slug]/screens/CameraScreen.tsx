@@ -1952,8 +1952,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         if (willUseAgentCapture) {
           if (count === 5) {
             // /arm-capture: arms camera WITHOUT stopping preview.
-            // CameraScreen should read countdown all the way to 1 for UX.
-            // Trigger at count=3 (so count display shows 2 in between).
             const base = agentBaseRef.current;
             if (base) {
               fetch(`${base}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(15000) })
@@ -1961,29 +1959,21 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             }
           }
 
-          if (count === 3) {
-            // Shot fires at count=1 (not count=3) so live video stays up through
-            // all countdown numbers. Freezing now would hide the countdown.
-            // Wait for count=1 → tick fires in ~1s, then trigger shot.
-            return;
-          }
-
           if (count === 1) {
-            // Live video freeze was here (now moved to tick at count=1 below)
-            // Shot fires: freeze countdown → show filler → capture.
+            // Shot fires when countdown reaches 1 (after 8→7→6→5→4→3→2→1).
+            // Live video stays up through the entire countdown.
             captureInProgressRef.current = true;
 
-            // Freeze countdown display for one frame
-            setCountdown(1);
-
-            // Immediately enter filler + trigger capture
+            // Freeze countdown, show filler, trigger capture
             setTimeout(() => {
               setCountdown(null);
               setCapturePhase("filler");
               captureAndDisplay();
             }, 150);
-            return;
+            return; // done with timer
           }
+          // count === 2 or count 3: just keep going (don't skip)
+          // count === 3: display shows 2 in next tick (5→4→3→2→1→capture)
         }
         countdownTimerRef.current = setTimeout(tick, 1000);
       } else {
