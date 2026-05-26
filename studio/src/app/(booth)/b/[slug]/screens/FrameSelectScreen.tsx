@@ -78,11 +78,10 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
   const [scanLog,      setScanLog]      = useState("Arahkan QR ke kamera");
   const [manualInput,  setManualInput]  = useState("");
 
-  const videoRef     = useRef<HTMLVideoElement>(null);
-  const imgRef       = useRef<HTMLImageElement>(null);
+  const videoRef      = useRef<HTMLVideoElement>(null);
+  const canonVideoRef = useRef<HTMLVideoElement>(null);
   const rafRef       = useRef<number>(0);
   const streamRef    = useRef<MediaStream | null>(null);
-  const agentUrlRef  = useRef<string | null>(null);
 
   // Regular frames + scanned frames merged
   // Include all frames regardless of thumbnail — custom frames may have no thumbnail yet
@@ -126,7 +125,7 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
-    agentUrlRef.current = null;
+    if (canonVideoRef.current) canonVideoRef.current.src = "";
     setScannerOpen(false);
     setScanLog("Arahkan QR ke kamera");
   }, []);
@@ -212,30 +211,32 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
         ? `${agentBase}/preview-stream?t=${Date.now()}`
         : "http://127.0.0.1:3002/preview-stream?t=" + Date.now();
 
-      agentUrlRef.current = canonUrl;
       setScanLog("Menghubungi Canon...");
 
       try {
-        // Create img element to display MJPEG stream
-        const img = imgRef.current;
-        if (img) {
-          img.src = canonUrl;
-          img.onload = () => setScanLog("Arahkan QR ke kamera");
-          img.onerror = () => setScanLog("Canon tidak terhubung");
-        }
+        // Use video element for Canon MJPEG stream — gives reliable videoWidth/videoHeight
+        const canon = canonVideoRef.current;
+        if (!canon) return;
+
+        canon.src = canonUrl;
+        canon.play().catch(() => {});
+        canon.onloadedmetadata = () => setScanLog("Arahkan QR ke kamera");
+        canon.onerror = () => setScanLog("Canon tidak terhubung");
 
         const tick = () => {
-          const el = imgRef.current;
-          if (!el || agentUrlRef.current !== canonUrl) return;
+          const el = canonVideoRef.current;
+          if (!el || el.readyState < 2 || el.videoWidth === 0) {
+            rafRef.current = window.setTimeout(tick, 200) as unknown as number;
+            return;
+          }
+
           detectQr(el).then((rawValue) => {
             if (rawValue) {
               setScanLog("Kode terdeteksi ✓");
-              // Update img src so handleQrDetected can finish the stream properly
-              agentUrlRef.current = null; // stop scanning
               void handleQrDetected(rawValue);
               return;
             }
-            rafRef.current = window.setTimeout(tick, 300) as unknown as number;
+            rafRef.current = window.setTimeout(tick, 200) as unknown as number;
           });
         };
         rafRef.current = window.setTimeout(tick, 500) as unknown as number;
@@ -644,17 +645,20 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
           </button>
 
           <p className="text-white/50 text-xs mb-4 tracking-wide">Arahkan kamera ke QR Code</p>
-          {/* Show <img> for Canon MJPEG stream, <video> for browser camera */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+          {/* Show separate video element for Canon MJPEG stream; videoRef for browser camera */}
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           {scannerOpen && (() => {
             const src = typeof sessionStorage !== "undefined"
               ? sessionStorage.getItem("booth_camera_source") ?? "auto"
               : "auto";
             return src === "dslr" ? (
-              <img
-                ref={imgRef}
+              // eslint-disable-next-line jsx-a11y/media-has-caption
+              <video
+                ref={canonVideoRef}
                 className="w-full max-w-sm rounded-2xl bg-black/50 object-cover"
                 style={{ transform: "scaleX(-1)", maxHeight: "45vh" }}
+                playsInline
+                muted
                 alt="Canon preview"
               />
             ) : (
