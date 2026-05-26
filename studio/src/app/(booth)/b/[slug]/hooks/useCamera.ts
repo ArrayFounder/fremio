@@ -290,13 +290,19 @@ export function useCamera({
         finish(recorder);
         return;
       }
-      // Request any buffered data, then stop
+      // Flush any pending chunks from the last requestData interval tick,
+      // then wait up to 1100ms (slightly past one interval cycle) for those chunks
+      // to arrive before calling stop(). This ensures we get the final batch
+      // even when stop() is called very soon after start() (< 1 second later).
       try { recorder.requestData(); } catch { /* ignore */ }
       recorder.onstop = () => {
         console.log("[useCamera] stopRecording: onstop fired! chunks =", chunksRef.current.length);
         finish(recorder);
       };
-      try { recorder.stop(); } catch { finish(recorder); }
+      // Call stop() after a brief wait so the final requestData() chunks land
+      setTimeout(() => {
+        try { recorder.stop(); } catch { finish(recorder); }
+      }, 100);
     });
   }, []);
 
