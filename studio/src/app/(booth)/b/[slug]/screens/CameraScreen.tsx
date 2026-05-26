@@ -1952,6 +1952,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         if (willUseAgentCapture) {
           if (count === 5) {
             // /arm-capture: arms camera WITHOUT stopping preview.
+            // CameraScreen should read countdown all the way to 1 for UX.
+            // Trigger at count=3 (so count display shows 2 in between).
             const base = agentBaseRef.current;
             if (base) {
               fetch(`${base}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(15000) })
@@ -1960,17 +1962,21 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
 
           if (count === 3) {
-            // Shot fires after 150ms (count=3 → "1" briefly → filler → shoot)
-            setCountdown(3);
+            // Shot fires at count=1 (not count=3) so live video stays up through
+            // all countdown numbers. Freezing now would hide the countdown.
+            // Wait for count=1 → tick fires in ~1s, then trigger shot.
+            return;
+          }
+
+          if (count === 1) {
+            // Live video freeze was here (now moved to tick at count=1 below)
+            // Shot fires: freeze countdown → show filler → capture.
             captureInProgressRef.current = true;
 
-            // Clear timer — fire shot NOW, no more ticks.
-            if (countdownTimerRef.current) {
-              clearTimeout(countdownTimerRef.current);
-              countdownTimerRef.current = null;
-            }
+            // Freeze countdown display for one frame
+            setCountdown(1);
 
-            // Brief delay so "1" is visible for one frame before filler starts
+            // Immediately enter filler + trigger capture
             setTimeout(() => {
               setCountdown(null);
               setCapturePhase("filler");
