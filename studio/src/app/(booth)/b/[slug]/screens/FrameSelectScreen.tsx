@@ -78,9 +78,11 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
   const [scanLog,      setScanLog]      = useState("Arahkan QR ke kamera");
   const [manualInput,  setManualInput]  = useState("");
 
-  const videoRef  = useRef<HTMLVideoElement>(null);
-  const rafRef    = useRef<number>(0);
-  const streamRef = useRef<MediaStream | null>(null);
+  const videoRef     = useRef<HTMLVideoElement>(null);
+  const imgRef       = useRef<HTMLImageElement>(null);
+  const rafRef       = useRef<number>(0);
+  const streamRef    = useRef<MediaStream | null>(null);
+  const agentUrlRef  = useRef<string | null>(null);
 
   // Regular frames + scanned frames merged
   // Include all frames regardless of thumbnail — custom frames may have no thumbnail yet
@@ -124,6 +126,7 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
+    agentUrlRef.current = null;
     setScannerOpen(false);
     setScanLog("Arahkan QR ke kamera");
   }, []);
@@ -156,24 +159,99 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
     setScanStatus("scanning");
     setScanLog("Membuka kamera...");
     setManualInput("");
-    try {
-      // Determine capture source from sessionStorage (same source that BoothSetupScreen uses)
-      // "dslr" = Canon controlled by local agent (not accessible via browser getUserMedia)
-      // "webcam" or "auto" = browser camera with optional specific deviceId
-      const captureSource = typeof sessionStorage !== "undefined"
-        ? sessionStorage.getItem("booth_camera_source") ?? "auto"
-        : "auto";
 
+    // ── Load jsQR library (shared by both browser-cam and Canon MJPEG) ─────
+    let jsQRFn: ((data: Uint8ClampedArray, width: number, height: number) => { data: string } | null) | null = null;
+    let nativeDetector: { detect: (img: HTMLCanvasElement) => Promise<Array<{ rawValue: string }>> } | null = null;
+
+    const useNative = "BarcodeDetector" in window;
+    if (useNative) {
+      nativeDetector = new (window as unknown as {
+        BarcodeDetector: new (opts: { formats: string[] }) => { detect: (img: HTMLCanvasElement) => Promise<Array<{ rawValue: string }>> };
+      }).BarcodeDetector({ formats: ["qr_code"] });
+    } else {
+      jsQRFn = (await import("jsqr")).default;
+    }
+
+    const canvas = document.createElement("canvas");
+    const ctx    = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
+
+    // Shared QR detection helper
+    const detectQr = async (source: HTMLVideoElement | HTMLImageElement): Promise<string | null> => {
+      if (!ctx || (source instanceof HTMLVideoElement && source.readyState < 2)) return null;
+      if (source instanceof HTMLVideoElement && source.videoWidth === 0) return null;
+
+      const scale = Math.min(1, 640 / (source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth));
+      canvas.width  = Math.round((source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth)  * scale);
+      canvas.height = Math.round((source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight) * scale);
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+      try {
+        if (nativeDetector) {
+          const results = await nativeDetector.detect(canvas);
+          return results.length > 0 ? results[0].rawValue : null;
+        } else if (jsQRFn) {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQRFn(imageData.data, canvas.width, canvas.height);
+          return code ? code.data : null;
+        }
+      } catch { /* ignore single-frame errors */ }
+      return null;
+    };
+
+    // ── Try Canon MJPEG stream first (when DSLR is selected) ──────────────
+    const captureSource = typeof sessionStorage !== "undefined"
+      ? sessionStorage.getItem("booth_camera_source") ?? "auto"
+      : "auto";
+
+    if (captureSource === "dslr") {
+      const agentBase = typeof sessionStorage !== "undefined"
+        ? sessionStorage.getItem("booth_agent_base") ?? null
+        : null;
+      const canonUrl = agentBase
+        ? `${agentBase}/preview-stream?t=${Date.now()}`
+        : "http://127.0.0.1:3002/preview-stream?t=" + Date.now();
+
+      agentUrlRef.current = canonUrl;
+      setScanLog("Menghubungi Canon...");
+
+      try {
+        // Create img element to display MJPEG stream
+        const img = imgRef.current;
+        if (img) {
+          img.src = canonUrl;
+          img.onload = () => setScanLog("Arahkan QR ke kamera");
+          img.onerror = () => setScanLog("Canon tidak terhubung");
+        }
+
+        const tick = () => {
+          const el = imgRef.current;
+          if (!el || agentUrlRef.current !== canonUrl) return;
+          detectQr(el).then((rawValue) => {
+            if (rawValue) {
+              setScanLog("Kode terdeteksi ✓");
+              // Update img src so handleQrDetected can finish the stream properly
+              agentUrlRef.current = null; // stop scanning
+              void handleQrDetected(rawValue);
+              return;
+            }
+            rafRef.current = window.setTimeout(tick, 300) as unknown as number;
+          });
+        };
+        rafRef.current = window.setTimeout(tick, 500) as unknown as number;
+        return; // Don't use getUserMedia in DSLR mode
+      } catch (err) {
+        console.warn("[scanner] Canon MJPEG failed, falling back to browser camera:", err);
+        // Fall through to browser camera below
+      }
+    }
+
+    // ── Browser camera (webcam mode) ────────────────────────────────────────
+    try {
       let videoConstraints: MediaTrackConstraints;
-      if (captureSource === "dslr") {
-        // Canon DSLR is controlled by local agent — QR scanner cannot use it.
-        // Use any available back camera (ignore deviceId which would be null for DSLR anyway).
-        videoConstraints = { facingMode: { ideal: "environment" }, width: { ideal: 1280 } };
-      } else if (cameraDeviceId) {
-        // Webcam mode with a specific device selected in booth settings
+      if (cameraDeviceId) {
         videoConstraints = { deviceId: { exact: cameraDeviceId }, facingMode: { ideal: "environment" }, width: { ideal: 1280 } };
       } else {
-        // No specific device selected — use default back camera
         videoConstraints = { facingMode: { ideal: "environment" }, width: { ideal: 1280 } };
       }
 
@@ -185,51 +263,17 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
       }
       setScanLog("Arahkan QR ke kamera");
 
-      // Pre-load jsQR once
-      const useNative = "BarcodeDetector" in window;
-      type NativeDetector = { detect: (img: HTMLCanvasElement) => Promise<Array<{ rawValue: string }>> };
-      let nativeDetector: NativeDetector | null = null;
-      let jsQRFn: ((data: Uint8ClampedArray, width: number, height: number) => { data: string } | null) | null = null;
-
-      if (useNative) {
-        nativeDetector = new (window as unknown as {
-          BarcodeDetector: new (opts: { formats: string[] }) => NativeDetector;
-        }).BarcodeDetector({ formats: ["qr_code"] });
-      } else {
-        jsQRFn = (await import("jsqr")).default;
-      }
-
-      const canvas = document.createElement("canvas");
-      const ctx    = canvas.getContext("2d");
-
-      const tick = async () => {
+      const tick = () => {
         const video = videoRef.current;
         if (!video || !streamRef.current) return;
-        if (video.readyState >= 2 && ctx && video.videoWidth > 0) {
-          // Downscale to max 640px wide for jsQR performance
-          const scale = Math.min(1, 640 / video.videoWidth);
-          canvas.width  = Math.round(video.videoWidth  * scale);
-          canvas.height = Math.round(video.videoHeight * scale);
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          try {
-            let rawValue: string | null = null;
-            if (nativeDetector) {
-              const results = await nativeDetector.detect(canvas);
-              if (results.length > 0) rawValue = results[0].rawValue;
-            } else if (jsQRFn) {
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-              const code = jsQRFn(imageData.data, canvas.width, canvas.height);
-              if (code) rawValue = code.data;
-            }
-            if (rawValue) {
-              setScanLog(`Kode terdeteksi ✓`);
-              await handleQrDetected(rawValue);
-              return;
-            }
-          } catch { /* ignore single-frame errors */ }
-        }
-        // Use setTimeout so we don't hammer the CPU — scan every 300ms
-        rafRef.current = window.setTimeout(tick, 300) as unknown as number;
+        detectQr(video).then((rawValue) => {
+          if (rawValue) {
+            setScanLog("Kode terdeteksi ✓");
+            void handleQrDetected(rawValue);
+            return;
+          }
+          rafRef.current = window.setTimeout(tick, 300) as unknown as number;
+        });
       };
       rafRef.current = window.setTimeout(tick, 300) as unknown as number;
     } catch (err) {
@@ -600,14 +644,30 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
           </button>
 
           <p className="text-white/50 text-xs mb-4 tracking-wide">Arahkan kamera ke QR Code</p>
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <video
-            ref={videoRef}
-            className="w-full max-w-sm rounded-2xl bg-black/50"
-            playsInline
-            muted
-            style={{ transform: "scaleX(-1)" }}
-          />
+          {/* Show <img> for Canon MJPEG stream, <video> for browser camera */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          {scannerOpen && (() => {
+            const src = typeof sessionStorage !== "undefined"
+              ? sessionStorage.getItem("booth_camera_source") ?? "auto"
+              : "auto";
+            return src === "dslr" ? (
+              <img
+                ref={imgRef}
+                className="w-full max-w-sm rounded-2xl bg-black/50 object-cover"
+                style={{ transform: "scaleX(-1)", maxHeight: "45vh" }}
+                alt="Canon preview"
+              />
+            ) : (
+              // eslint-disable-next-line jsx-a11y/media-has-caption
+              <video
+                ref={videoRef}
+                className="w-full max-w-sm rounded-2xl bg-black/50"
+                playsInline
+                muted
+                style={{ transform: "scaleX(-1)" }}
+              />
+            );
+          })()}
 
           <div className="mt-4 flex items-center gap-2">
             <div className={`h-2 w-2 rounded-full animate-pulse ${scanStatus === "loading" ? "bg-yellow-400" : "bg-red-400"}`} />
