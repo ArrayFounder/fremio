@@ -208,85 +208,53 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
       : "auto";
 
     if (captureSource === "dslr") {
-      // Canon live view URL: either CameraScreen persisted it, or use default.
-      // Same URL as CameraScreen — CameraScreen calls setAgentBase("http://127.0.0.1:3002")
-      // which BoothSetupScreen syncs to sessionStorage, or sets directly via IPC.
-      const savedAgentBase = typeof sessionStorage !== "undefined"
-        ? sessionStorage.getItem("booth_agent_base")
-        : null;
-      // Fallback: same default as CameraScreen
-      const agentBase = savedAgentBase ?? "http://127.0.0.1:3002";
-      const canonUrl = `${agentBase}/preview-stream?t=${Date.now()}`;
-
+      // Canon MJPEG stream: use a plain DOM <img> element instead of React.
+      // <video> elements reject MJPEG (image/jpeg) as an unsupported video format.
+      // An <img> with incremental src refresh works reliably for JPEG streams.
+      const agentBase = "http://127.0.0.1:3002";
       setScanLog("Menghubungi Canon...");
 
-      try {
-        const canon = canonVideoRef.current;
-        if (!canon) {
-          console.warn("[scanner] canonVideoRef is null — video element not yet mounted, retrying...");
-          // Retry after a short delay to allow React to render the video element
-          const retryTimer = window.setTimeout(() => {
-            const el = canonVideoRef.current;
-            if (!el) return;
-            el.src = canonUrl;
-            el.play().catch(() => {});
-            el.onloadedmetadata = () => setScanLog("Arahkan QR ke kamera");
-            el.onerror = (e) => {
-              setScanLog("Canon tidak terhubung");
-              console.warn("[scanner] Canon video onerror:", e);
-            };
-
-            const tick = () => {
-              const vid = canonVideoRef.current;
-              if (!vid || vid.readyState < 2 || vid.videoWidth === 0) {
-                rafRef.current = window.setTimeout(tick, 200) as unknown as number;
-                return;
-              }
-              detectQr(vid).then((rawValue) => {
-                if (rawValue) {
-                  setScanLog("Kode terdeteksi ✓");
-                  void handleQrDetected(rawValue);
-                  return;
-                }
-                rafRef.current = window.setTimeout(tick, 200) as unknown as number;
-              });
-            };
-            rafRef.current = window.setTimeout(tick, 500) as unknown as number;
-          }, 200);
-          return;
+      const canonImg = document.createElement("img");
+      const showCanon = () => {
+        // Append canon img to the dedicated container div
+        const container = document.getElementById("qr-canon-img");
+        if (container) {
+          canonImg.style.cssText = "width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block;";
+          container.appendChild(canonImg);
         }
+        setScanLog("Arahkan QR ke kamera");
+      };
 
-        canon.src = canonUrl;
-        canon.play().catch(() => {});
-        canon.onloadedmetadata = () => setScanLog("Arahkan QR ke kamera");
-        canon.onerror = (e) => {
-          setScanLog("Canon tidak terhubung");
-          console.warn("[scanner] Canon video onerror:", e);
-        };
+      const refreshImg = () => {
+        canonImg.src = `${agentBase}/preview-stream?t=${Date.now()}`;
+      };
 
-        const tick = () => {
-          const el = canonVideoRef.current;
-          if (!el || el.readyState < 2 || el.videoWidth === 0) {
-            rafRef.current = window.setTimeout(tick, 200) as unknown as number;
-            return;
-          }
+      canonImg.onload = () => {
+        if (!document.getElementById("qr-canon-img")) {
+          showCanon();
+        }
+      };
+      canonImg.onerror = () => {
+        setScanLog("Canon tidak terhubung");
+        // Retry with new stream URL
+        setTimeout(refreshImg, 1000);
+      };
+      refreshImg();
 
-          detectQr(el).then((rawValue) => {
+      const tick = () => {
+        if (canonImg.complete && canonImg.naturalWidth > 0) {
+          detectQr(canonImg).then((rawValue) => {
             if (rawValue) {
               setScanLog("Kode terdeteksi ✓");
               void handleQrDetected(rawValue);
               return;
             }
-            rafRef.current = window.setTimeout(tick, 200) as unknown as number;
           });
-        };
-        rafRef.current = window.setTimeout(tick, 500) as unknown as number;
-        return; // Don't use getUserMedia in DSLR mode
-      } catch (err) {
-        console.warn("[scanner] Canon MJPEG failed, falling back to browser camera:", err);
-        setScanLog("Canon tidak terhubung — fallback ke webcam");
-        // Fall through to browser camera below
-      }
+        }
+        rafRef.current = window.setTimeout(tick, 200) as unknown as number;
+      };
+      rafRef.current = window.setTimeout(tick, 300) as unknown as number;
+      return;
     }
 
     // ── Browser camera (webcam mode) ────────────────────────────────────────
@@ -693,17 +661,7 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
             const src = typeof sessionStorage !== "undefined"
               ? sessionStorage.getItem("booth_camera_source") ?? "auto"
               : "auto";
-            return src === "dslr" ? (
-              // eslint-disable-next-line jsx-a11y/media-has-caption
-              <video
-                ref={canonVideoRef}
-                className="w-full max-w-sm rounded-2xl bg-black/50 object-cover"
-                style={{ transform: "scaleX(-1)", maxHeight: "45vh" }}
-                playsInline
-                muted
-                alt="Canon preview"
-              />
-            ) : (
+            return src !== "dslr" ? (
               // eslint-disable-next-line jsx-a11y/media-has-caption
               <video
                 ref={videoRef}
@@ -712,8 +670,11 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
                 muted
                 style={{ transform: "scaleX(-1)" }}
               />
-            );
+            ) : null; // Canon MJPEG injected via DOM <img> in startScanner
           })()}
+
+          {/* Canon MJPEG img injected here via DOM */}
+          <div id="qr-canon-img" data-qr-scanner-overlay className="w-full max-w-sm rounded-2xl overflow-hidden bg-black/50" style={{ maxHeight: "45vh" }} />
 
           <div className="mt-4 flex items-center gap-2">
             <div className={`h-2 w-2 rounded-full animate-pulse ${scanStatus === "loading" ? "bg-yellow-400" : "bg-red-400"}`} />
