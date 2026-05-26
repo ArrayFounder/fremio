@@ -1040,6 +1040,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     agentBaseRef.current = agentBase;
   }, [agentBase]);
 
+  // Sync agentBase to sessionStorage so FrameSelectScreen QR scanner can reuse it
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (agentBase) {
+      sessionStorage.setItem("booth_agent_base", agentBase);
+    } else {
+      sessionStorage.removeItem("booth_agent_base");
+    }
+  }, [agentBase]);
+
   // After 6s of DSLR mode being active, allow capture even if live preview hasn't loaded.
   // This prevents a permanently-disabled capture button when preview stalls or fails.
   useEffect(() => {

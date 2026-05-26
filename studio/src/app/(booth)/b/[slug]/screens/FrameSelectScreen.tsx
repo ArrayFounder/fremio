@@ -204,73 +204,26 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
       : "auto";
 
     if (captureSource === "dslr") {
-      // Discover agent base — same logic as CameraScreen:
-      // 1. Try IPC Electron app first
-      // 2. Fallback to direct HTTP discovery (same origin allows HTTP for 127.0.0.1)
+      // Canon live view URL: either CameraScreen persisted it, or use default.
+      // Same URL as CameraScreen — CameraScreen calls setAgentBase("http://127.0.0.1:3002")
+      // which BoothSetupScreen syncs to sessionStorage, or sets directly via IPC.
+      const savedAgentBase = typeof sessionStorage !== "undefined"
+        ? sessionStorage.getItem("booth_agent_base")
+        : null;
+      // Fallback: same default as CameraScreen
+      const agentBase = savedAgentBase ?? "http://127.0.0.1:3002";
+      const canonUrl = `${agentBase}/preview-stream?t=${Date.now()}`;
+
       setScanLog("Menghubungi Canon...");
 
-      let canonUrl: string | null = null;
-
       try {
-        // ── Option 1: IPC Electron app (booth-windows-app) ──────────────────
-        const useIpc = typeof window !== "undefined"
-          && !window.location.hostname.includes("fremio.id")
-          && Boolean((window as unknown as { fremioBooth?: { agentStatus?: () => Promise<{ ok: boolean }> } }).fremioBooth?.agentStatus);
-
-        if (useIpc) {
-          try {
-            const ipcStatus = await (window as unknown as { fremioBooth?: { agentStatus?: () => Promise<{ ok: boolean }> } }).fremioBooth!.agentStatus!();
-            if (ipcStatus?.ok) {
-              canonUrl = "http://127.0.0.1:3002/preview-stream?t=" + Date.now();
-            }
-          } catch { /* fall through to HTTP fallback */ }
-        }
-
-        // ── Option 2: Direct HTTP discovery (CameraScreen candidates) ───────
-        if (!canonUrl) {
-          const candidates = [
-            "http://127.0.0.1:3002",
-            "http://localhost:3002",
-          ];
-          for (const base of candidates) {
-            try {
-              const res = await fetch(`${base}/status`, {
-                signal: AbortSignal.timeout(2500),
-              });
-              if (res.ok) {
-                canonUrl = `${base}/preview-stream?t=${Date.now()}`;
-                break;
-              }
-            } catch { /* try next candidate */ }
-          }
-        }
-
-        // ── Option 3: stored sessionStorage agent base (if set by CameraScreen) ──
-        if (!canonUrl) {
-          const saved = typeof sessionStorage !== "undefined"
-            ? sessionStorage.getItem("booth_agent_base")
-            : null;
-          if (saved) {
-            try {
-              const res = await fetch(`${saved}/status`, {
-                signal: AbortSignal.timeout(2500),
-              });
-              if (res.ok) {
-                canonUrl = `${saved}/preview-stream?t=${Date.now()}`;
-              }
-            } catch { /* try next */ }
-          }
-        }
-
-        if (!canonUrl) throw new Error("agent not found");
-
-        // Use video element for Canon MJPEG stream — gives reliable videoWidth/videoHeight
         const canon = canonVideoRef.current;
         if (!canon) return;
 
         canon.src = canonUrl;
         canon.play().catch(() => {});
         canon.onloadedmetadata = () => setScanLog("Arahkan QR ke kamera");
+        canon.onerror = () => setScanLog("Canon tidak terhubung");
 
         const tick = () => {
           const el = canonVideoRef.current;
