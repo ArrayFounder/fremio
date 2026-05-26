@@ -602,7 +602,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     composeKeyRef.current = key;
 
     let cancelled = false;
-    console.log("[BoothClient] compositing: STARTING composeVideoLive for", photosLen, "photos,", videosLen, "videos, duration =", (booth.countdownDuration ?? 8) * 1000, "ms from countdownDuration =", booth.countdownDuration);
+    console.log("[BoothClient] compositing: STARTING composeVideoLive for", photosLen, "photos,", videosLen, "videos, duration =", Math.max(1000, (booth.countdownDuration ?? 8) * 1000 - 1000), "ms (countdown", booth.countdownDuration ?? 8, "s, minus 1s final countdown)");
     dispatch({ type: "LIVE_VIDEO_COMPOSITING" });
 
     const effectiveSlots = getEffectiveSlots(frame);
@@ -620,7 +620,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         backgroundColor: frame.backgroundColor || "#ffffff",
         overlayUrl:      frame.overlayUrl ?? undefined,
         sceneElements:   frame.sceneElements ?? undefined,
-        duration:        (booth.countdownDuration ?? 8) * 1000,
+        duration:        Math.max(1000, (booth.countdownDuration ?? 8) * 1000 - 1000), // countdown - 1 detik terakhir
         fps:             30,   // match webcam/Canon native 30fps source
         mirror:          hwSettings.cameraMirror,
       }),
