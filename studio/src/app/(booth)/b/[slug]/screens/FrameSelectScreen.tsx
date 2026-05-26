@@ -213,13 +213,13 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
 
       try {
         // ── Option 1: IPC Electron app (booth-windows-app) ──────────────────
-        const useIpc = typeof window !== "undefined" && Boolean(window.fremioBooth?.agentStatus);
-
-          && !window.location.hostname.includes("fremio.id");
+        const useIpc = typeof window !== "undefined"
+          && !window.location.hostname.includes("fremio.id")
+          && Boolean((window as unknown as { fremioBooth?: { agentStatus?: () => Promise<{ ok: boolean }> } }).fremioBooth?.agentStatus);
 
         if (useIpc) {
           try {
-            const ipcStatus = await window.fremioBooth!.agentStatus!();
+            const ipcStatus = await (window as unknown as { fremioBooth?: { agentStatus?: () => Promise<{ ok: boolean }> } }).fremioBooth!.agentStatus!();
             if (ipcStatus?.ok) {
               canonUrl = "http://127.0.0.1:3002/preview-stream?t=" + Date.now();
             }
