@@ -1504,7 +1504,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     }
   }, [dslrPosterSrc, useIpcAgentRef]);
 
-  const { videoRef, stream, isReady, permissionError, devices, start, stop, capture, startRecording, stopRecording } = useCamera({
+  const { videoRef, stream, isReady, permissionError, devices, start, stop, capture, startRecording, stopRecording, sliceRecording } = useCamera({
     canvasWidth:  1920,
     canvasHeight: 1080,
     deviceId:     selectedDeviceId,
@@ -1895,15 +1895,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             return;
           }
         } else {
-          // Webcam path: stop recording → capture photo → restart recording
-          // Matching Canon DSLR behavior: recording stops during capture,
-          // then restarts for the next photo slot.
+          // Webcam path: capture immediately (recording keeps running).
+          // capture() internally sets lastCaptureTimeRef.current = Date.now().
+          // After photo is confirmed, sliceRecording() extracts the video segment
+          // from the recording timeline up to that capture moment. Recording
+          // continues for subsequent photo slots.
           setCapturePhase("preparing");
           setCountdown(null);
           void (async () => {
-            // Stop MediaRecorder before capture to avoid camera hardware conflict
-            const _stopped = await stopRecording();
-            await new Promise<void>((r) => setTimeout(r, 200)); // camera settle
             try {
               dataUrl = capture() ?? null;
             } catch { dataUrl = null; }
@@ -1926,10 +1925,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             setCountdown(null);
             setCapturePhase("idle");
 
-            // Restart recording for next photo slot (if any)
+            // Slice the recording at this capture moment — recorder keeps running
             if (livePhotoVideoEnabled) {
-              startRecording();
-              const videoBlob = await stopRecording();
+              const videoBlob = await sliceRecording();
               onVideoReady(videoBlob, currentCaptureIndex);
             } else {
               onVideoReady(null, currentCaptureIndex);
@@ -2018,7 +2016,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
     };
     countdownTimerRef.current = setTimeout(tick, 1000);
-  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, livePhotoVideoEnabled, onCapture, onVideoReady, retakeSlotIndex, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
+  }, [boothMirrorSetting, captureSource, capturedCount, cdState, capture, captureFromAgent, dslrAvailable, dslrMode, livePhotoVideoEnabled, onCapture, onVideoReady, retakeSlotIndex, sliceRecording, startDslrLiveRecording, startRecording, stopDslrLiveRecording, stopRecording]);
 
   // Viewfinder — landscape 16:9 di landscape, 4:3 di portrait
   const aspectStyle = isPortrait

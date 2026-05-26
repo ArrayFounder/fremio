@@ -48,6 +48,13 @@ export interface UseCameraReturn {
    * Resolve setelah MediaRecorder selesai flush semua data (~100ms).
    */
   stopRecording:   () => Promise<Blob | null>;
+  /** Catat waktu capture saat ini — boundary untuk sliceRecording */
+  recordCaptureTime: () => void;
+  /**
+   * Ambil video blob untuk periode sejak lastCaptureTimeRef.
+   * Recorder tetap berjalan — bisa dipanggil lagi untuk periode berikutnya.
+   */
+  sliceRecording: () => Promise<Blob | null>;
 }
 
 /**
@@ -70,10 +77,16 @@ export function useCamera({
   const [devices, setDevices]           = useState<VideoDevice[]>([]);
 
   // ── Live recording refs ───────────────────────────────────────────────────
-  const recorderRef     = useRef<MediaRecorder | null>(null);
-  const chunksRef       = useRef<Blob[]>([]);
-  const audioCtxRef     = useRef<AudioContext | null>(null);
-  const reqDataTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recorderRef           = useRef<MediaRecorder | null>(null);
+  const chunksRef             = useRef<Blob[]>([]);
+  /** Timestamp (Date.now()) when each chunk was recorded — used for slicing */
+  const chunkTimestampsRef   = useRef<number[]>([]);
+  /** Timestamp of last photo capture — boundary for slicing */
+  const lastCaptureTimeRef    = useRef<number>(0);
+  /** Recording-start timestamp */
+  const recordingStartRef     = useRef<number>(0);
+  const audioCtxRef           = useRef<AudioContext | null>(null);
+  const reqDataTimerRef       = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /** Enumerate semua video input — dipanggil setelah izin diberikan */
   const refreshDevices = useCallback(async () => {
@@ -137,6 +150,9 @@ export function useCamera({
     const video = videoRef.current;
     if (!video || !isReady) return null;
 
+    // Record the capture time so sliceRecording can split the video at this point
+    lastCaptureTimeRef.current = Date.now();
+
     const canvas = document.createElement("canvas");
     canvas.width  = canvasWidth;
     canvas.height = canvasHeight;
@@ -182,12 +198,12 @@ export function useCamera({
     // Close any lingering AudioContext
     audioCtxRef.current?.close().catch(() => {});
     audioCtxRef.current = null;
-    // ONLY clear chunks when actually stopping a recorder that was in use.
-    // Don't clear when just trying to start — that would erase previous capture chunks!
-    if (recorderRef.current) {
-      chunksRef.current = [];
-      recorderRef.current = null;
-    }
+    // Reset recording state
+    chunksRef.current = [];
+    chunkTimestampsRef.current = [];
+    lastCaptureTimeRef.current = 0;
+    recordingStartRef.current = Date.now();
+    recorderRef.current = null;
 
     const mimeType = getBestVideoMime();
     const tryCreate = (opts: MediaRecorderOptions) => {
@@ -224,6 +240,7 @@ export function useCamera({
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
         chunksRef.current.push(e.data);
+        chunkTimestampsRef.current.push(Date.now());
         console.log("[useCamera] ondataavailable: chunk size =", e.data.size, "total chunks =", chunksRef.current.length);
       }
     };
@@ -306,5 +323,68 @@ export function useCamera({
     });
   }, []);
 
-  return { videoRef, stream, isReady, permissionError, devices, start, stop, capture, startRecording, stopRecording };
+  // ── recordCaptureTime ──────────────────────────────────────────────────────
+  /** Catat waktu capture saat ini — dipanggil di dalam capture() */
+  const recordCaptureTime = useCallback(() => {
+    lastCaptureTimeRef.current = Date.now();
+  }, []);
+
+  // ── sliceRecording ──────────────────────────────────────────────────────
+  /**
+   * Ambil video blob untuk periode sejak lastCaptureTimeRef hingga saat ini.
+   * recorder tetap berjalan — pemanggilan berikutnya memotong periode berikutnya.
+   * Dipanggil di setiap slot foto untuk dapat video per-slot.
+   */
+  const sliceRecording = useCallback((): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      const recorder = recorderRef.current;
+      if (!recorder) {
+        resolve(null);
+        return;
+      }
+      const upToTime = lastCaptureTimeRef.current || recordingStartRef.current;
+      const startTime = upToTime;
+
+      // Flush pending chunks so we have complete data up to upToTime
+      try { recorder.requestData(); } catch { /* ignore */ }
+
+      // Wait for pending data then slice
+      const waitAndSlice = () => {
+        const chunks = chunksRef.current;
+        const timestamps = chunkTimestampsRef.current;
+
+        // Find the last chunk that should be included (before or at upToTime)
+        // Timestamps are when chunks ARRIVED. Each chunk contains ~1s of video.
+        // If timestamp T arrived, that chunk contains video from (T - 1000ms) to T.
+        // We want all chunks where (timestamp - 1000ms) < upToTime.
+        const includeUpTo = upToTime;
+        let splitIdx = chunks.length;
+        for (let i = 0; i < timestamps.length; i++) {
+          // chunk i arrived at timestamps[i] and contains video up to timestamps[i]
+          // if timestamps[i] > includeUpTo, this chunk (and later) are for the NEXT slot
+          if (timestamps[i] > includeUpTo) {
+            splitIdx = i;
+            break;
+          }
+        }
+
+        const sliceChunks = chunks.slice(0, splitIdx);
+        const blob = sliceChunks.length > 0
+          ? new Blob(sliceChunks, { type: "video/mp4" })
+          : null;
+
+        // Remove sliced chunks so remaining chunks are for future slots
+        chunksRef.current = chunks.slice(splitIdx);
+        chunkTimestampsRef.current = timestamps.slice(splitIdx);
+
+        console.log("[useCamera] sliceRecording: upToTime =", includeUpTo, "chunks used =", sliceChunks.length, "remaining =", chunksRef.current.length, "blob =", blob ? `Blob(${blob.size})` : "null");
+        resolve(blob);
+      };
+
+      // Wait ~500ms to let ondataavailable fire for the last interval tick
+      setTimeout(waitAndSlice, 500);
+    });
+  }, []);
+
+  return { videoRef, stream, isReady, permissionError, devices, start, stop, capture, startRecording, stopRecording, recordCaptureTime, sliceRecording };
 }
