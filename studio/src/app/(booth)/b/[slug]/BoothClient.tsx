@@ -602,7 +602,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     composeKeyRef.current = key;
 
     let cancelled = false;
-    console.log("[BoothClient] compositing: STARTING composeVideoLive for", photosLen, "photos,", videosLen, "videos");
+    console.log("[BoothClient] compositing: STARTING composeVideoLive for", photosLen, "photos,", videosLen, "videos, duration =", (booth.countdownDuration ?? 8) * 1000, "ms from countdownDuration =", booth.countdownDuration);
     dispatch({ type: "LIVE_VIDEO_COMPOSITING" });
 
     const effectiveSlots = getEffectiveSlots(frame);
@@ -620,8 +620,8 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         backgroundColor: frame.backgroundColor || "#ffffff",
         overlayUrl:      frame.overlayUrl ?? undefined,
         sceneElements:   frame.sceneElements ?? undefined,
-        duration:        5000,
-        fps:             60,   // 60fps = native captureStream rate — smooth motion from 30fps source video
+        duration:        (booth.countdownDuration ?? 8) * 1000,
+        fps:             30,   // match webcam/Canon native 30fps source
         mirror:          hwSettings.cameraMirror,
       }),
       compositingTimeout,
@@ -637,7 +637,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVideoReady, session.capturedPhotos.length, livePhotoVideoEnabled]);
+  }, [currentVideoReady, session.capturedPhotos.length, livePhotoVideoEnabled, booth.countdownDuration]);
 
   // ─── Socket.io — dengarkan session:unlocked dari server ──────────────────
   useBoothSocket(booth.id, {
