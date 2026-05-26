@@ -16,7 +16,7 @@ const updateSchema = z.object({
   primaryColor:           z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   accentColor:            z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   isActive:               z.boolean().optional(),
-  countdownDuration:    z.number().int().min(5).max(8).optional(),,
+  countdownDuration:    z.number().int().min(5).max(8).optional(),
   welcomeScreenPrefs:     z.record(z.unknown()).optional().nullable(),
   timerTutorialSeconds:    z.number().int().min(0).max(3600).optional(),
   timerFrameSelectSeconds: z.number().int().min(0).max(3600).optional(),
