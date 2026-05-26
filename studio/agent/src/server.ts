@@ -1159,9 +1159,17 @@ app.post("/arm-capture", async (_req: Request, res: Response) => {
   preArmedCaptureInFlight = null;
 
   // Wait for camera USB to be free from previous capture.
-  const USB_SETTLE_MS = 1500;
+  // If the previous bridge crashed (AccessViolation, exited with non-zero code),
+  // give it extra settle time — the USB session may be in a bad state.
+  const CRASH_SUSPECT_MS = 5000;
+  let USB_SETTLE_MS = 1500;
   if (lastArmedBridgeExitedAt > 0) {
     const elapsed = Date.now() - lastArmedBridgeExitedAt;
+    if (elapsed < CRASH_SUSPECT_MS) {
+      // Recent crash or unexpected exit — double settle time
+      USB_SETTLE_MS = 2500;
+      console.log(`[agent] /arm-capture: recent bridge exit (${elapsed}ms ago), using extended settle ${USB_SETTLE_MS}ms`);
+    }
     if (elapsed < USB_SETTLE_MS) {
       console.log(`[agent] /arm-capture: waiting ${USB_SETTLE_MS - elapsed}ms for USB settle`);
       await new Promise<void>((r) => setTimeout(r, USB_SETTLE_MS - elapsed));
@@ -1266,6 +1274,7 @@ app.post("/arm-capture", async (_req: Request, res: Response) => {
     console.error(`[agent] /arm-capture: BRIDGE_READY failed: ${(err as Error).message}`);
     try { armedProcess.kill(); } catch { /* ignore */ }
     if (armedCapture?.process === armedProcess) armedCapture = null;
+    captureInProgress = false;
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
   }
 });
@@ -1295,6 +1304,7 @@ app.post("/trigger-shot", async (_req: Request, res: Response) => {
       console.error(`[agent] /trigger-shot: armed bridge died early: ${(err as Error).message}`);
       preArmedCaptureInFlight = null;
       armedCapture = null;
+      captureInProgress = false; // MUST reset so next capture can proceed
       res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
       return;
     }
@@ -1339,6 +1349,7 @@ app.post("/trigger-shot", async (_req: Request, res: Response) => {
 
   // No armed bridge — fallback inline
   console.warn("[agent] /trigger-shot: no armed bridge, falling back to inline");
+  captureInProgress = false;
   res.status(503).json({ ok: false, error: "Armed bridge not available — retry /trigger-shot or /trigger-capture" });
 });
 
