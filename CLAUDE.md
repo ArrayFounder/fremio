@@ -187,6 +187,7 @@ cd studio/agent && npm start
 | studio/src/app/(dashboard)/agent/page.tsx | Agent download page at /agent |
 | studio/src/app/(booth)/b/[slug]/screens/BoothSetupScreen.tsx | Hardware setup before booth session |
 | studio/src/app/(booth)/b/[slug]/screens/CameraScreen.tsx | Booth camera + countdown UI |
+| studio/src/app/(booth)/b/[slug]/screens/FrameSelectScreen.tsx | Frame selection + QR scanner — Canon MJPEG via DOM img for DSLR mode |
 | studio/src/app/(booth)/b/[slug]/screens/CaptureHintOverlay.tsx | Animated overlay during Canon capture — filler text (Smile!/Cheese!) + preparing text (Menyiapkan hasil…) with char-by-char typing animation |
 | studio/agent/src/server.ts | ✅ AKTIF — Agent TypeScript/EDSDK (port 3002), MJPEG `/preview-stream` |
 | studio/agent/native/edsdk-bridge/Program.cs | C# wrapper Canon EDSDK — `EnsureCameraReady()`, retry logic |
@@ -354,10 +355,27 @@ When pre-arm is not available (race, bridge died before BRIDGE_READY), inline pa
 - Grace period error: `DSLR_PREVIEW_ERROR_GRACE_MS = 7000ms` (di `CameraScreen.tsx`)
 - IPC fallback timer: `ipcFallbackTimer = 10000ms`
 - Pre-arm call: `startCountdown()` (count=5)
-- Kill delay: 200ms | Settle delay: 800ms
-- SHOOT window: 8000ms | BRIDGE_READY timeout: 60s
 
----
+
+### FrameSelectScreen QR Scanner (Canon MJPEG)
+
+**Problem**: Canon MJPEG stream (`/preview-stream`) must be displayed in the QR scanner overlay when `captureSource === "dslr"`. `<video>` elements cannot play MJPEG (only `video/webm`/`video/mp4` are valid browser video formats).
+
+**Solution**: Plain DOM `<img>` element with per-tick `src` refresh:
+1. React renders `<div id="qr-canon-img">` as placeholder in scanner overlay
+2. `startScanner()` polls for container (50ms × 20 attempts) then appends `<img>`
+3. Each poll tick calls `img.src = agent/preview-stream?t={timestamp}` — browser fetches the latest JPEG frame from the MJPEG stream (~2fps live preview)
+4. QR scanning via `jsqr` reads `getImageData` from the img canvas
+5. Canon agent URL: `http://127.0.0.1:3002` (hardcoded — matches CameraScreen's IPC/HTTP discovery default)
+6. `CameraScreen` syncs its discovered `agentBase` → `sessionStorage.booth_agent_base` — QR scanner uses this if set
+
+**Key files:**
+- `FrameSelectScreen.tsx` — contains `startScanner()` with DSLR branch
+- `CameraScreen.tsx` — writes `booth_agent_base` to sessionStorage via `useEffect([agentBase])`
+
+**Important — Mixed Content note**: `http://127.0.0.1:3002` is allowed from `https://studio.fremio.id` because browsers treat `127.0.0.1` (IP address localhost) as a "local network" exception — Mixed Content rules do not block HTTP requests to IP addresses from HTTPS pages. `localhost` (hostname) may fail in some browsers due to HTTPS resolution; use `127.0.0.1` always.
+
+
 
 ## Environment Variables
 
