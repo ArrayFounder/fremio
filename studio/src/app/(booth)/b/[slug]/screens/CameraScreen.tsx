@@ -1895,11 +1895,47 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             return;
           }
         } else {
-          // Webcam path: capture immediately
+          // Webcam path: stop recording → capture photo → restart recording
+          // Matching Canon DSLR behavior: recording stops during capture,
+          // then restarts for the next photo slot.
           setCapturePhase("preparing");
           setCountdown(null);
-          // Fallback: use camera's built-in capture
-          try { dataUrl = capture(); } catch { /* ignore */ }
+          void (async () => {
+            // Stop MediaRecorder before capture to avoid camera hardware conflict
+            const _stopped = await stopRecording();
+            await new Promise<void>((r) => setTimeout(r, 200)); // camera settle
+            try {
+              dataUrl = capture() ?? null;
+            } catch { dataUrl = null; }
+
+            // Guard: abort if photo is empty
+            if (!dataUrl || dataUrl.length < 100) {
+              captureInFlightRef.current = false;
+              captureInProgressRef.current = false;
+              setCapturePhase("idle");
+              setCdState("READY");
+              setCaptureError("Foto kosong — gagal mengambil hasil dari kamera. Coba lagi.");
+              console.error("[CameraScreen] webcam capture: dataUrl is empty or too short", dataUrl?.length);
+              return;
+            }
+
+            setCdState("DONE");
+            captureInFlightRef.current = false;
+            captureInProgressRef.current = false;
+            onCapture(dataUrl);
+            setCountdown(null);
+            setCapturePhase("idle");
+
+            // Restart recording for next photo slot (if any)
+            if (livePhotoVideoEnabled) {
+              startRecording();
+              const videoBlob = await stopRecording();
+              onVideoReady(videoBlob, currentCaptureIndex);
+            } else {
+              onVideoReady(null, currentCaptureIndex);
+            }
+          })();
+          return;
         }
 
         // Guard: if dataUrl is empty (e.g. DSLR blob conversion failed silently),
@@ -1931,14 +1967,8 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             const videoBlob = await stopDslrLiveRecording();
             onVideoReady(videoBlob, currentCaptureIndex);
           })();
-        } else if (livePhotoVideoEnabled) {
-          // Webcam: stop the MediaRecorder and pass the blob
-          void (async () => {
-            const videoBlob = await stopRecording();
-            console.log("[CameraScreen] webcam videoBlob:", videoBlob ? `Blob(${videoBlob.size})` : "null", "captureIndex:", currentCaptureIndex);
-            onVideoReady(videoBlob, currentCaptureIndex);
-          })();
         } else {
+          // Webcam: no video recording
           onVideoReady(null, currentCaptureIndex);
         }
       };
