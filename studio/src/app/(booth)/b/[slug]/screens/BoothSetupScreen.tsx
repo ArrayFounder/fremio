@@ -1019,7 +1019,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                           setDslrPreviewError(null);
                           setDslrPreviewKey(Date.now());
                           setCaptureSource("dslr");
-                          setMirror(true);
+                          setDeviceId(null);
                         }}
                         className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs text-left transition-colors"
                         style={{

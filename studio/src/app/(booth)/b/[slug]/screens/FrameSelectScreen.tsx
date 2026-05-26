@@ -157,9 +157,26 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
     setScanLog("Membuka kamera...");
     setManualInput("");
     try {
-      const videoConstraints: MediaTrackConstraints = cameraDeviceId
-        ? { deviceId: { exact: cameraDeviceId }, facingMode: { ideal: "environment" }, width: { ideal: 1280 } }
-        : { facingMode: { ideal: "environment" }, width: { ideal: 1280 } };
+      // Determine capture source from sessionStorage (same source that BoothSetupScreen uses)
+      // "dslr" = Canon controlled by local agent (not accessible via browser getUserMedia)
+      // "webcam" or "auto" = browser camera with optional specific deviceId
+      const captureSource = typeof sessionStorage !== "undefined"
+        ? sessionStorage.getItem("booth_camera_source") ?? "auto"
+        : "auto";
+
+      let videoConstraints: MediaTrackConstraints;
+      if (captureSource === "dslr") {
+        // Canon DSLR is controlled by local agent — QR scanner cannot use it.
+        // Use any available back camera (ignore deviceId which would be null for DSLR anyway).
+        videoConstraints = { facingMode: { ideal: "environment" }, width: { ideal: 1280 } };
+      } else if (cameraDeviceId) {
+        // Webcam mode with a specific device selected in booth settings
+        videoConstraints = { deviceId: { exact: cameraDeviceId }, facingMode: { ideal: "environment" }, width: { ideal: 1280 } };
+      } else {
+        // No specific device selected — use default back camera
+        videoConstraints = { facingMode: { ideal: "environment" }, width: { ideal: 1280 } };
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
       streamRef.current = stream;
       if (videoRef.current) {
