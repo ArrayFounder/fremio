@@ -127,6 +127,8 @@ model BoothConfig {
   timerCameraSeconds          Int      @default(420)
   timerPreviewSeconds         Int      @default(120)
   timerDeliverySeconds        Int      @default(150)
+  /// Durasi countdown timer sesi foto (5-8 detik). Langsung mengupdate durasi live video recording.
+  countdownDuration           Int      @default(8)   // range 5-8
   /// Booth ini menggunakan 1 kredit operator (menghilangkan watermark trial)
   usesCredit             Boolean  @default(false)
   /// Mode sesi foto: live_view (default) atau fullscreen

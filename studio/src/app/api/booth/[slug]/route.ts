@@ -128,6 +128,7 @@ export async function GET(
         timerPreviewSeconds:     booth.timerPreviewSeconds,
         timerDeliverySeconds:    booth.timerDeliverySeconds,
         photoSessionMode:       (booth as any).photoSessionMode ?? "live_view",
+        countdownDuration:      (booth as any).countdownDuration ?? 8,
       },
       frames,
     },

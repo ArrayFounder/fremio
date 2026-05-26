@@ -1842,8 +1842,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     setMirror(next);
   };
 
-  // Countdown durasi: 8 detik (DSLR: pre-arm at 5, shot at 3; webcam: shot at 0)
-  const COUNTDOWN_DURATION = 8;
+  // Countdown durasi dari booth config (range 5-8 detik).
+  // DSLR: pre-arm at (countdownDuration - 3), shot at count=1.
+  // Webcam: shot at count=1.
+  const cd = booth.countdownDuration ?? 8;
 
   const startCountdown = useCallback(() => {
     if (cdState !== "READY") return;
@@ -1851,7 +1853,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     setCaptureError(null);
     setCdState("COUNTING");
     setDslrSessionStarted(true); // suppress loading overlay for rest of session
-    setCountdown(COUNTDOWN_DURATION);
+    setCountdown(cd);
     const currentCaptureIndex = retakeSlotIndex !== null ? retakeSlotIndex : capturedCount;
 
     // ── Live Mode: mulai rekam saat countdown dimulai (jika diaktifkan) ────
@@ -1941,16 +1943,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         }
       };
 
-    let count = COUNTDOWN_DURATION;
+    let count = cd;
     const tick = () => {
       count -= 1;
       if (count > 0) {
         setCountdown(count);
 
-        // DSLR pre-arm: fire at count=5 (5s before shot). Bridge needs ~3-4s to
-        // be BRIDGE_READY, so arming at count=5 gives ~2-3s margin before shot.
+        // DSLR pre-arm: fire at (countdownDuration - 3). Bridge needs ~3-4s to
+        // be BRIDGE_READY, so pre-arming gives ~2-3s margin before shot.
         if (willUseAgentCapture) {
-          if (count === 5) {
+          if (count === cd - 3) {
             // /arm-capture: arms camera WITHOUT stopping preview.
             const base = agentBaseRef.current;
             if (base) {
@@ -1960,7 +1962,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           }
 
           if (count === 1) {
-            // Shot fires when countdown reaches 1 (after 8→7→6→5→4→3→2→1).
+            // Shot fires when countdown reaches 1 (after cd→cd-1→...→1).
             // Live video stays up through the entire countdown.
             captureInProgressRef.current = true;
 

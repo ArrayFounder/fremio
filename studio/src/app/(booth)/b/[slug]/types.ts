@@ -99,6 +99,8 @@ export interface BoothConfigData {
   timerDeliverySeconds:    number
   /** Mode sesi foto: live_view (default) atau fullscreen */
   photoSessionMode:        string
+  /** Durasi countdown sesi foto dalam detik (5-8). Langsung mengupdate live video recording. */
+  countdownDuration:        number
 }
 
 export interface PhotoSlot {

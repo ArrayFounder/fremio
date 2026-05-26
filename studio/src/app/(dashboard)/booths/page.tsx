@@ -21,6 +21,7 @@ interface Booth {
   timerCameraSeconds:      number;
   timerPreviewSeconds:     number;
   timerDeliverySeconds:    number;
+  countdownDuration:        number;   // 5-8 detik, durasi countdown sesi foto
   photoSessionMode:        string;
   _count?: { sessions: number };
 }
@@ -2813,6 +2814,7 @@ export default function BoothsPage() {
               { key: "timerPrintCountSeconds",  label: "Jumlah Cetak" },
               { key: "timerPaymentSeconds",     label: "Pembayaran" },
               { key: "timerCameraSeconds",      label: "Sesi Foto" },
+              { key: "countdownDuration",       label: "Durasi Countdown" },
               { key: "timerPreviewSeconds",     label: "Preview & Filter" },
               { key: "timerDeliverySeconds",    label: "QR & Pengiriman" },
             ];
