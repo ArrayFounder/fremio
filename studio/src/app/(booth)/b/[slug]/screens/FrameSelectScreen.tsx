@@ -154,6 +154,10 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
   }, [stopScanner]);
 
   const startScanner = useCallback(async () => {
+    // Set scannerOpen first so the <video> element mounts into the DOM
+    // before we try to access its ref. Without this, React batches
+    // setScannerOpen(true) and startScanner() runs while the element
+    // hasn't rendered yet (canonVideoRef.current = null).
     setScannerOpen(true);
     setScanStatus("scanning");
     setScanLog("Membuka kamera...");
@@ -218,12 +222,47 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
 
       try {
         const canon = canonVideoRef.current;
-        if (!canon) return;
+        if (!canon) {
+          console.warn("[scanner] canonVideoRef is null — video element not yet mounted, retrying...");
+          // Retry after a short delay to allow React to render the video element
+          const retryTimer = window.setTimeout(() => {
+            const el = canonVideoRef.current;
+            if (!el) return;
+            el.src = canonUrl;
+            el.play().catch(() => {});
+            el.onloadedmetadata = () => setScanLog("Arahkan QR ke kamera");
+            el.onerror = (e) => {
+              setScanLog("Canon tidak terhubung");
+              console.warn("[scanner] Canon video onerror:", e);
+            };
+
+            const tick = () => {
+              const vid = canonVideoRef.current;
+              if (!vid || vid.readyState < 2 || vid.videoWidth === 0) {
+                rafRef.current = window.setTimeout(tick, 200) as unknown as number;
+                return;
+              }
+              detectQr(vid).then((rawValue) => {
+                if (rawValue) {
+                  setScanLog("Kode terdeteksi ✓");
+                  void handleQrDetected(rawValue);
+                  return;
+                }
+                rafRef.current = window.setTimeout(tick, 200) as unknown as number;
+              });
+            };
+            rafRef.current = window.setTimeout(tick, 500) as unknown as number;
+          }, 200);
+          return;
+        }
 
         canon.src = canonUrl;
         canon.play().catch(() => {});
         canon.onloadedmetadata = () => setScanLog("Arahkan QR ke kamera");
-        canon.onerror = () => setScanLog("Canon tidak terhubung");
+        canon.onerror = (e) => {
+          setScanLog("Canon tidak terhubung");
+          console.warn("[scanner] Canon video onerror:", e);
+        };
 
         const tick = () => {
           const el = canonVideoRef.current;
