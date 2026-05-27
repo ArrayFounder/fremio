@@ -1955,6 +1955,36 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         </div>
       )}
 
+      {/* ── Floating Agent Logs Button (always visible, bottom-left) ──── */}
+      {!agentLogsOpen && (
+        <button
+          onClick={async () => {
+            setAgentLogsOpen(true);
+            setAgentLogsData(null);
+            try {
+              const logs = await (window as any).fremioBooth?.getAgentLogs?.();
+              if (logs) {
+                setAgentLogsData(logs);
+              } else {
+                setAgentLogsData({ pid: null, running: false, stdout: "Agent tidak aktif di perangkat ini.", stderr: "" });
+              }
+            } catch {
+              setAgentLogsData({ pid: null, running: false, stdout: "Agent tidak aktif di perangkat ini.", stderr: "" });
+            }
+          }}
+          className="fixed bottom-4 left-4 z-40 px-3 py-1.5 rounded-xl text-xs font-semibold"
+          style={{
+            background: "rgba(14,14,14,0.85)",
+            color: "rgba(255,255,255,0.5)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            backdropFilter: "blur(8px)",
+          }}
+          title="Lihat Log Agent"
+        >
+          📋 Log
+        </button>
+      )}
+
       <ScreenErrorBoundary
         screenName={screen}
         accentColor={accentColor}
@@ -2113,26 +2143,6 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
                     className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold text-white/90 hover:bg-white/10"
                   >
                     {isFullscreen ? "Keluar Fullscreen" : "Masuk Fullscreen"}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setIdleSettingsOpen(false);
-                      setAgentLogsOpen(true);
-                      setAgentLogsData(null);
-                      try {
-                        const logs = await (window as any).fremioBooth?.getAgentLogs?.();
-                        if (logs) {
-                          setAgentLogsData(logs);
-                        } else {
-                          setAgentLogsData({ pid: null, running: false, stdout: "Agent tidak aktif di perangkat ini.", stderr: "" });
-                        }
-                      } catch {
-                        setAgentLogsData({ pid: null, running: false, stdout: "Agent tidak aktif di perangkat ini.", stderr: "" });
-                      }
-                    }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold text-white/90 hover:bg-white/10"
-                  >
-                    Lihat Log Agent
                   </button>
                 </div>
               </>
