@@ -1640,44 +1640,72 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     dslrRecordingCanvasRef.current = null;
     dslrFrozenAtRef.current = null;
 
-    // ── Primary: record from hidden MJPEG <video> element ─────────────────
-    const videoEl = dslrStreamVideoRef.current;
-    if (videoEl && videoEl.readyState >= 2) {
-      let stream: MediaStream | null = null;
-      try {
-        // Request 16fps (matches Canon MJPEG native rate ~16fps)
-        stream = (videoEl as HTMLVideoElement & { captureStream: (fps: number) => MediaStream }).captureStream(16);
-      } catch {
-        // Fallback to canvas if captureStream fails
-      }
-
-      if (stream) {
-        const mimeType = getBestRecordingMime();
-        const createRecorder = (options: MediaRecorderOptions) => {
-          try { return new MediaRecorder(stream, options); } catch { return null }
-        };
-        const recorder =
-          createRecorder({ mimeType, videoBitsPerSecond: 6_000_000 }) ??
-          createRecorder({ mimeType }) ??
-          createRecorder({});
-        if (recorder) {
-          dslrRecordingChunksRef.current = [];
-          recorder.ondataavailable = (event) => {
-            if (event.data && event.data.size > 0) dslrRecordingChunksRef.current.push(event.data);
-          };
-          recorder.onerror = () => {};
-          dslrRecorderRef.current = recorder;
-          try { recorder.start(200); } catch {
-            try { recorder.start(); } catch {
-              void stopDslrLiveRecording();
-            }
-          }
-          return;
+    // ── Primary: record via canvas with optional mirror applied ─────────────────
+    // Draw dslrStreamVideoRef to a canvas (applying mirror if needed), then captureStream.
+    // This records the pre-processed canvas content, so the raw blob already
+    // contains the mirror transform. No re-mirroring needed in compositing.
+    const vid = dslrStreamVideoRef.current;
+    if (!vid) return;
+    const mirror = boothMirrorSettingRef.current;
+    const captureCanvas = document.createElement("canvas");
+    captureCanvas.width  = 1920;
+    captureCanvas.height = 1080;
+    const captureCtx = captureCanvas.getContext("2d")!;
+    let drawRafId = 0;
+    const doDrawFrame = () => {
+      if (captureCtx && vid.readyState >= 2) {
+        captureCtx.save();
+        if (mirror) {
+          captureCtx.translate(1920, 0);
+          captureCtx.scale(-1, 1);
         }
+        captureCtx.drawImage(vid, 0, 0, 1920, 1080);
+        captureCtx.restore();
       }
+      if (dslrRecorderRef.current?.state === "recording") {
+        drawRafId = requestAnimationFrame(doDrawFrame);
+      }
+    };
+    drawRafId = requestAnimationFrame(doDrawFrame);
+
+    let stream: MediaStream | null = null;
+    try {
+      stream = captureCanvas.captureStream(16);
+    } catch {
+      cancelAnimationFrame(drawRafId);
     }
 
-    // ── Fallback: canvas + agentPreview polling (for older browsers / edge cases) ─
+    if (stream) {
+      const mimeType = getBestRecordingMime();
+      const createRecorder = (options: MediaRecorderOptions) => {
+        try { return new MediaRecorder(stream!, options); } catch { return null }
+      };
+      const recorder =
+        createRecorder({ mimeType, videoBitsPerSecond: 6_000_000 }) ??
+        createRecorder({ mimeType }) ??
+        createRecorder({});
+      if (recorder) {
+        dslrRecordingChunksRef.current = [];
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) dslrRecordingChunksRef.current.push(event.data);
+        };
+        recorder.onerror = () => {};
+        dslrRecorderRef.current = recorder;
+        try { recorder.start(200); } catch {
+          try { recorder.start(); } catch {
+            cancelAnimationFrame(drawRafId);
+            void stopDslrLiveRecording();
+          }
+        }
+        return;
+      }
+      cancelAnimationFrame(drawRafId);
+    }
+  }, [boothMirrorSetting]);
+
+  // ── Fallback: canvas + agentPreview polling (for older browsers / edge cases) ─
+  useEffect(() => {
+    const mirror = boothMirrorSettingRef.current;
     const canvas = document.createElement("canvas");
     canvas.width = 1920;
     canvas.height = 1080;
@@ -1778,7 +1806,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         void stopDslrLiveRecording();
       }
     }
-  }, [dslrPosterSrc, dslrRecordingPosterImgRef, mirror, stopDslrLiveRecording]);
+  }, [mirror, stopDslrLiveRecording]);
 
   // Reset cdState ke READY saat berpindah ke slot foto berikutnya,
   // atau saat user klik Ulangi (capturedCount berkurang → cdState stuck di DONE tanpa ini)

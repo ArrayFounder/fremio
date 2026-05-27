@@ -672,9 +672,9 @@ export function PreviewScreen({
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                     <video ref={videoRef} src={videoPreviewUrl} autoPlay loop muted playsInline
                            onCanPlay={(e) => { e.currentTarget.play().catch(() => {}); }}
-                           style={{ width: "100%", height: "100%", objectFit: "contain", display: videoIsOriginal ? "block" : "none", transform: mirrorVideo ? "scaleX(-1)" : "none" }} />
+                           style={{ width: "100%", height: "100%", objectFit: "contain", display: videoIsOriginal ? "block" : "none" }} />
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                    <video ref={hiddenVideoRef} style={{ display: "none", transform: mirrorVideo ? "scaleX(-1)" : "none" }} />
+                    <video ref={hiddenVideoRef} style={{ display: "none" }} />
                     {!videoIsOriginal && (
                       <canvas ref={videoCanvasRef} width={frameOpts.canvasWidth} height={frameOpts.canvasHeight}
                               style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
@@ -813,9 +813,9 @@ export function PreviewScreen({
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                     <video ref={videoRef} src={videoPreviewUrl} autoPlay loop muted playsInline
                            onCanPlay={(e) => { e.currentTarget.play().catch(() => {}); }}
-                           style={{ width: "100%", height: "100%", objectFit: "contain", display: videoIsOriginal ? "block" : "none", transform: mirrorVideo ? "scaleX(-1)" : "none" }} />
+                           style={{ width: "100%", height: "100%", objectFit: "contain", display: videoIsOriginal ? "block" : "none" }} />
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                    <video ref={hiddenVideoRef} style={{ display: "none", transform: mirrorVideo ? "scaleX(-1)" : "none" }} />
+                    <video ref={hiddenVideoRef} style={{ display: "none" }} />
                     {!videoIsOriginal && (
                       <canvas ref={videoCanvasRef} width={frameOpts.canvasWidth} height={frameOpts.canvasHeight}
                               style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />

@@ -1133,7 +1133,6 @@ function drawVideoInSlot(
   ctx:    CanvasRenderingContext2D,
   video:  HTMLVideoElement,
   slot:   CanvasSlot,
-  mirror: boolean = false,
 ): void {
   // Use ACTUAL video dimensions if available and non-zero.
   // If not yet decoded (videoWidth=0), fall back to canonical 1920×1080.
@@ -1178,14 +1177,9 @@ function drawVideoInSlot(
     ctx.rect(slot.x, slot.y, slot.w, slot.h);
   }
   ctx.clip();
-  if (mirror) {
-    // Flip horizontal around center of slot
-    ctx.translate(slot.x + slot.w, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, sx, sy, sw, sh, 0, slot.y, slot.w, slot.h);
-  } else {
-    ctx.drawImage(video, sx, sy, sw, sh, slot.x, slot.y, slot.w, slot.h);
-  }
+  // NOTE: mirroring is done at recording time (CanvasScreen draws video with ctx.scale(-1,1)
+  // before captureStream, so the blob is already mirrored). No canvas mirroring here.
+  ctx.drawImage(video, sx, sy, sw, sh, slot.x, slot.y, slot.w, slot.h);
   ctx.restore();
 }
 
@@ -1418,7 +1412,7 @@ export async function composeVideoLive(
     probeCtx.fillStyle = bg;
     probeCtx.fillRect(0, 0, cw, ch);
     for (const { el, slot } of entries) {
-      try { drawVideoInSlot(probeCtx, el, slot, options.mirror ?? false); } catch { /* ignore */ }
+      try { drawVideoInSlot(probeCtx, el, slot); } catch { /* ignore */ }
     }
     // Check a pixel in the CENTER of the first slot — should NOT be pure black
     if (entries.length > 0) {
@@ -1501,7 +1495,7 @@ export async function composeVideoLive(
     if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
     if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
     for (const { el, slot } of entries) {
-      drawVideoInSlot(ctx, el, slot, options.mirror ?? false);
+      drawVideoInSlot(ctx, el, slot);
       if (pixelFilters) {
         const fx = Math.max(0, Math.floor(slot.x));
         const fy = Math.max(0, Math.floor(slot.y));
@@ -1563,7 +1557,6 @@ export async function composeVideoLive(
   const endTime = performance.now() + duration;
 
   return new Promise<Blob | null>((resolve) => {
-    const mirrorVideo = options.mirror ?? false;
     let rafId = 0;
     let framesDrawn = 0;
 
@@ -1574,7 +1567,7 @@ export async function composeVideoLive(
       if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
       if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
       for (const { el, slot } of entries) {
-        drawVideoInSlot(ctx, el, slot, mirrorVideo);
+        drawVideoInSlot(ctx, el, slot);
         if (pixelFilters) {
           const fx = Math.max(0, Math.floor(slot.x));
           const fy = Math.max(0, Math.floor(slot.y));
