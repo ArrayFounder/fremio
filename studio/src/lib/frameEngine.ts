@@ -1400,17 +1400,24 @@ export async function composeVideoLive(
   );
   console.log(`[composeVideoLive] sceneImages: ${sceneImages.size} images, useSceneRendering=${useSceneRendering}`);
 
-  // ── 3. Load + tunggu setiap video siap ────────────────────────────────────
-  await Promise.all(entries.map((e) => {
+  // ── 3. Load + tunggu setiap video siap — SEQUENTIAL, not parallel ─────────
+  // CRITICAL: browsers can only decode ~2 videos simultaneously (GPU/video decode limits).
+  // Running waitForVideo() in parallel means only 1-2 of 3 videos finish before timeout.
+  // Fix: decode one video at a time, 60s max each. This ensures ALL 3 videos decode.
+  for (const e of entries) {
+    console.log(`[composeVideoLive] loading video captureIdx=${e.captureIdx}...`);
     e.el.load();
-    return waitForVideo(e.el);
-  }));
+    const decoded = await waitForVideo(e.el);
+    console.log(`[composeVideoLive] captureIdx=${e.captureIdx} readyState=${e.el.readyState} dims=${e.el.videoWidth}×${e.el.videoHeight}`);
+  }
 
   // ── 4. Play + tunggu dimensi video aktual tersedia ────────────────────────
-  await Promise.all(entries.map((e) => e.el.play().catch(() => {})));
-  // Give video elements extra time to decode — Canon blob-sourced videos can take
-  // 1-3s to reach readyState=4 (HAVE_ENOUGH_DATA) and populate videoWidth/videoHeight.
-  // This ensures drawVideoInSlot() has valid dimensions for the entire draw loop.
+  // Play videos SEQUENTIALLY with 1s gaps to avoid decode resource competition.
+  for (const e of entries) {
+    e.el.play().catch(() => {});
+    await new Promise<void>((r) => setTimeout(r, 1000));
+  }
+  // Extra decode buffer after sequential play
   await new Promise<void>((r) => setTimeout(r, 3000));
 
   // ── 4b. Diagnostic: log video dimensions ─────────────────────────────────
