@@ -551,18 +551,23 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   // ── Mulai compositing video saat video terakhir sudah siap ──────────────
   useEffect(() => {
     if (!livePhotoVideoEnabled) return;
-    // Tunggu video slot saat ini selesai direkam
-    if (!currentVideoReady) return;
     const frame = session.selectedFrame;
     if (!frame) return;
 
     const totalNeeded = totalCaptures(frame);
     const photosLen = session.capturedPhotos.length;
-    const videosLen = session.capturedVideos.length;
+    const videosArr = session.capturedVideos ?? [];
+    const nonNullVideos = videosArr.filter(Boolean).length;
 
-    // Hanya mulai pada review foto terakhir
+    // Guard: SEMUA foto sudah ter-capture DAN SEMUA video slots sudah ada blob.
+    // currentVideoReady=true tidak cukup — dispatch pertama langsung set true,
+    // tapi slot lainnya mungkin masih null karena async slice belum selesai.
     if (photosLen < totalNeeded) {
       console.log("[BoothClient] compositing skip: photos", photosLen, "< totalNeeded", totalNeeded);
+      return;
+    }
+    if (nonNullVideos < totalNeeded) {
+      console.log("[BoothClient] compositing skip: photos", photosLen, ">= totalNeeded but nonNullVideos", nonNullVideos, "< totalNeeded", totalNeeded, "| videos =", videosArr.map((b, i) => `slot${i}=${b ? `Blob(${b.size})` : 'null'}`).join(", "));
       return;
     }
 
@@ -574,19 +579,10 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
       captureStreamSupported = typeof el.captureStream === "function";
     } catch { captureStreamSupported = false; }
 
-    const rawBlob = videosLen > 0 ? session.capturedVideos.find(Boolean) ?? null : null;
-    console.log("[BoothClient] live video effect: photos=", photosLen, "videos=", videosLen, "rawBlob=", rawBlob ? `Blob(${rawBlob.size})` : null, "captureStreamSupported=", captureStreamSupported, "sessionId=", session.sessionId);
+    const rawBlob = nonNullVideos > 0 ? session.capturedVideos.find(Boolean) ?? null : null;
+    console.log("[BoothClient] live video effect: photos=", photosLen, "videos=", nonNullVideos, "rawBlob=", rawBlob ? `Blob(${rawBlob.size})` : null, "captureStreamSupported=", captureStreamSupported, "sessionId=", session.sessionId);
 
-    // Jika semua video null (browser tidak support rekaman), langsung set error
-    // supaya UI tetap menampilkan kolom video dengan pesan "tidak tersedia"
-    if (!session.capturedVideos.some(Boolean)) {
-      const errKey = `${session.sessionId ?? ""}_${photosLen}_novid`;
-      if (composeKeyRef.current === errKey) return;
-      composeKeyRef.current = errKey;
-      console.log("[BoothClient] compositing: all videos null, setting error state");
-      dispatch({ type: "LIVE_VIDEO_DONE", payload: null }); // → liveVideoState = "error"
-      return;
-    }
+    // all-videos-null check: redundant since we guard with nonNullVideos >= totalNeeded above, skip
 
     if (!captureStreamSupported) {
       const rawKey = `${session.sessionId ?? ""}_${photosLen}_raw`;
