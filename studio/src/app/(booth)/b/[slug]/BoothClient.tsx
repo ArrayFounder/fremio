@@ -607,7 +607,7 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     const resolvedEffectiveSlots = mapSlotsToCaptureIndexes(effectiveSlots, isEffectiveDuplicateMode(frame));
 
     const compositingTimeout = new Promise<Blob | null>((_, reject) => {
-      setTimeout(() => reject(new Error("Compositing timeout (120s)")), 120000);
+      setTimeout(() => reject(new Error("Compositing timeout (180s)")), 180000);
     });
 
     Promise.race([
