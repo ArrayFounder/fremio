@@ -1556,9 +1556,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   const dslrPreviewPauseTimerRef        = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dslrRecorderRef                 = useRef<MediaRecorder | null>(null);
   const dslrRecordingChunksRef          = useRef<Blob[]>([]);
+  /** Timestamps (Date.now()) for each chunk — used for time-based slicing */
+  const dslrChunkTimestampsRef          = useRef<number[]>([]);
+  /** Boundary timestamp for the current slot — set by dslrRecordCaptureTime() */
+  const dslrLastCaptureTimeRef         = useRef<number>(0);
   const dslrRecordingCanvasRef          = useRef<HTMLCanvasElement | null>(null);
   const dslrRecordingDrawTimerRef       = useRef<number | null>(null);
-  const dslrFrozenAtRef                 = useRef<number | null>(null); // timestamp saat MJPEG stop (count=3)
+  const dslrReqDataTimerRef              = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dslrFrozenAtRef                 = useRef<number | null>(null);
 
   useEffect(() => {
     if (!dslrPosterSrc) {
@@ -1578,155 +1583,179 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     };
   }, [dslrPosterSrc]);
 
+  /**
+   * DSLR Live Recording — continuous recording (same strategy as webcam useCamera).
+   *
+   * ONE MediaRecorder runs for the ENTIRE photo session. Each photo capture calls
+   * dslrRecordCaptureTime() → sliceDslrRecording() to extract a blob for that slot.
+   * NO start/stop per slot — avoids the race where new recording clears chunks
+   * from the previous slot before stop() fires.
+   */
+
+  /** Record the current timestamp as boundary between slot recordings */
+  const dslrRecordCaptureTime = useCallback(() => {
+    dslrLastCaptureTimeRef.current = Date.now();
+  }, []);
+
+  /**
+   * Extract video blob for the current slot using time-based slicing.
+   * Recorder KEEPS RUNNING — next slots continue from remaining chunks.
+   */
+  const sliceDslrRecording = useCallback((): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      const recorder = dslrRecorderRef.current;
+      if (!recorder) { resolve(null); return; }
+      const upToTime = dslrLastCaptureTimeRef.current || Date.now();
+      try { recorder.requestData(); } catch {}
+      const waitAndSlice = () => {
+        const chunks = dslrRecordingChunksRef.current;
+        const timestamps = dslrChunkTimestampsRef.current;
+        let splitIdx = chunks.length;
+        for (let i = 0; i < timestamps.length; i++) {
+          if (timestamps[i] <= upToTime) { splitIdx = i + 1; } else { break; }
+        }
+        const sliceChunks = chunks.slice(0, splitIdx);
+        const blob = sliceChunks.length > 0 ? new Blob(sliceChunks, { type: "video/mp4" }) : null;
+        dslrRecordingChunksRef.current = chunks.slice(splitIdx);
+        dslrChunkTimestampsRef.current = timestamps.slice(splitIdx);
+        console.log("[CameraScreen] DSLR sliceDslrRecording: upToTime=", upToTime, "chunks used=", sliceChunks.length, "remaining=", dslrRecordingChunksRef.current.length, "blob=", blob ? `Blob(${blob.size})` : "null");
+        resolve(blob);
+      };
+      setTimeout(waitAndSlice, 500);
+    });
+  }, []);
+
+  /** Start continuous DSLR recording. Safe to call multiple times — only starts if no active recorder. */
+  const startDslrLiveRecording = useCallback(() => {
+    // ── Start continuous recording — only if no recorder is currently running ──
+    if (dslrRecorderRef.current && dslrRecorderRef.current.state === "recording") {
+      console.log("[CameraScreen] DSLR recording already running, reusing existing recorder");
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") return;
+
+    // Stop any stale recorder
+    if (dslrRecorderRef.current && dslrRecorderRef.current.state !== "inactive") {
+      try { dslrRecorderRef.current.stop(); } catch {}
+    }
+    if (dslrReqDataTimerRef.current) { clearInterval(dslrReqDataTimerRef.current); dslrReqDataTimerRef.current = null; }
+    if (dslrRecordingDrawTimerRef.current) { cancelAnimationFrame(dslrRecordingDrawTimerRef.current); dslrRecordingDrawTimerRef.current = null; }
+
+    dslrRecorderRef.current = null;
+    dslrRecordingChunksRef.current = [];
+    dslrChunkTimestampsRef.current = [];
+    dslrLastCaptureTimeRef.current = 0;
+    dslrRecordingCanvasRef.current = null;
+    dslrFrozenAtRef.current = null;
+
+    const vid = dslrStreamVideoRef.current;
+    if (!vid) return;
+    const mirror = boothMirrorSettingRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width  = 1920;
+    canvas.height = 1080;
+    const ctx = canvas.getContext("2d")!;
+    dslrRecordingCanvasRef.current = canvas;
+
+    const doDrawFrame = () => {
+      if (ctx && vid.readyState >= 2) {
+        ctx.save();
+        if (mirror) { ctx.translate(1920, 0); ctx.scale(-1, 1); }
+        ctx.drawImage(vid, 0, 0, 1920, 1080);
+        ctx.restore();
+      }
+      if (dslrRecorderRef.current?.state === "recording") {
+        dslrRecordingDrawTimerRef.current = requestAnimationFrame(doDrawFrame);
+      }
+    };
+    dslrRecordingDrawTimerRef.current = requestAnimationFrame(doDrawFrame);
+
+    let stream: MediaStream | null = null;
+    try {
+      stream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(16);
+    } catch {
+      if (dslrRecordingDrawTimerRef.current) cancelAnimationFrame(dslrRecordingDrawTimerRef.current);
+      return;
+    }
+
+    const mimeType = getBestRecordingMime();
+    const tryCreate = (opts: MediaRecorderOptions) => { try { return new MediaRecorder(stream!, opts); } catch { return null; } };
+    const recorder =
+      tryCreate({ mimeType, videoBitsPerSecond: 6_000_000 }) ??
+      tryCreate({ mimeType }) ??
+      tryCreate({});
+    if (!recorder) {
+      if (dslrRecordingDrawTimerRef.current) cancelAnimationFrame(dslrRecordingDrawTimerRef.current);
+      return;
+    }
+
+    dslrRecordingChunksRef.current = [];
+    dslrChunkTimestampsRef.current = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        dslrRecordingChunksRef.current.push(e.data);
+        dslrChunkTimestampsRef.current.push(Date.now());
+      }
+    };
+    recorder.onerror = () => {};
+
+    // Poll requestData every 1s as safety net (same as useCamera webcam)
+    dslrReqDataTimerRef.current = setInterval(() => {
+      if (dslrRecorderRef.current && dslrRecorderRef.current.state === "recording") {
+        try { dslrRecorderRef.current.requestData(); } catch {}
+      }
+    }, 1000);
+
+    try { recorder.start(1000); } catch {
+      try { recorder.start(); } catch {
+        clearInterval(dslrReqDataTimerRef.current!);
+        dslrReqDataTimerRef.current = null;
+        if (dslrRecordingDrawTimerRef.current) { cancelAnimationFrame(dslrRecordingDrawTimerRef.current); dslrRecordingDrawTimerRef.current = null; }
+        return;
+      }
+    }
+    dslrRecorderRef.current = recorder;
+  }, []);
+
+  /** Stop recording and return final blob — called when session ends (all photos done). */
   const stopDslrLiveRecording = useCallback((): Promise<Blob | null> => {
     return new Promise((resolve) => {
-      // Snapshot chunks NOW so they can't be cleared by a concurrent startDslrLiveRecording.
-      // stop() can race with requestAnimationFrame adding more chunks, but by capturing
-      // the ref at this point and letting the RAF continue, we collect those trailing
-      // chunks too via the setTimeout(before stop()).
-      const chunksSnapshot = [...dslrRecordingChunksRef.current];
-
-      if (dslrRecordingDrawTimerRef.current) {
-        cancelAnimationFrame(dslrRecordingDrawTimerRef.current);
-        dslrRecordingDrawTimerRef.current = null;
-      }
-
+      if (dslrReqDataTimerRef.current) { clearInterval(dslrReqDataTimerRef.current); dslrReqDataTimerRef.current = null; }
+      if (dslrRecordingDrawTimerRef.current) { cancelAnimationFrame(dslrRecordingDrawTimerRef.current); dslrRecordingDrawTimerRef.current = null; }
       const recorder = dslrRecorderRef.current;
-      const failSafeTimer = setTimeout(() => {
-        // Take whatever chunks accumulated up to this point
-        const accumulated = [...dslrRecordingChunksRef.current];
-        // Only use chunks from before this stop call (+ any that arrived during wait)
-        const blob = accumulated.length > 0
-          ? new Blob(accumulated, { type: "video/mp4" })
-          : (chunksSnapshot.length > 0 ? new Blob(chunksSnapshot, { type: "video/mp4" }) : null);
+      const chunks = dslrRecordingChunksRef.current;
+      if (!recorder) {
+        const blob = chunks.length > 0 ? new Blob(chunks, { type: "video/mp4" }) : null;
         dslrRecordingChunksRef.current = [];
-        dslrRecordingCanvasRef.current = null;
-        if (dslrRecorderRef.current && dslrRecorderRef.current.state !== "inactive") {
-          try { dslrRecorderRef.current.stop(); } catch {}
-        }
+        dslrChunkTimestampsRef.current = [];
         dslrRecorderRef.current = null;
-        resolve(blob);
-      }, 150);
-
-      if (!recorder || recorder.state === "inactive") {
-        clearTimeout(failSafeTimer);
-        const blob = chunksSnapshot.length > 0
-          ? new Blob(chunksSnapshot, { type: "video/mp4" })
-          : null;
-        dslrRecordingChunksRef.current = [];
         dslrRecordingCanvasRef.current = null;
-        dslrRecorderRef.current = null;
         resolve(blob);
         return;
       }
-
       let settled = false;
       const finish = () => {
         if (settled) return;
         settled = true;
-        clearTimeout(failSafeTimer);
-        // Collect everything that arrived up to this point
-        const all = [...dslrRecordingChunksRef.current];
-        const blob = all.length > 0
-          ? new Blob(all, { type: "video/mp4" })
-          : (chunksSnapshot.length > 0 ? new Blob(chunksSnapshot, { type: "video/mp4" }) : null);
+        clearTimeout(failsafe);
+        const all = dslrRecordingChunksRef.current;
+        const blob = all.length > 0 ? new Blob(all, { type: "video/mp4" }) : null;
         dslrRecordingChunksRef.current = [];
-        dslrRecordingCanvasRef.current = null;
+        dslrChunkTimestampsRef.current = [];
         dslrRecorderRef.current = null;
+        dslrRecordingCanvasRef.current = null;
         resolve(blob);
       };
-
+      const failsafe = setTimeout(finish, 6000);
       recorder.onstop = finish;
       recorder.onerror = finish;
       try { recorder.requestData(); } catch {}
       setTimeout(() => {
-        try { recorder.stop(); } catch { finish(); }
+        if (recorder.state !== "inactive") { try { recorder.stop(); } catch { finish(); } }
+        else { finish(); }
       }, 50);
     });
   }, []);
-
-  // ── DSLR Live Recording: direct MJPEG video element capture ─────────────────
-  // CRITICAL: Canon MJPEG stream delivers ~16fps natively.
-  // Recording directly from <video> element captures at the video's native fps
-  // (no polling, no JPEG decode, no canvas draw). This is the cleanest path.
-  const startDslrLiveRecording = useCallback(() => {
-    if (typeof MediaRecorder === "undefined") return;
-
-    // Cleanup previous recording
-    if (dslrRecordingDrawTimerRef.current) {
-      cancelAnimationFrame(dslrRecordingDrawTimerRef.current);
-      dslrRecordingDrawTimerRef.current = null;
-    }
-    if (dslrRecorderRef.current && dslrRecorderRef.current.state !== "inactive") {
-      try { dslrRecorderRef.current.stop(); } catch {}
-    }
-    dslrRecorderRef.current = null;
-    dslrRecordingChunksRef.current = [];
-    dslrRecordingCanvasRef.current = null;
-    dslrFrozenAtRef.current = null;
-
-    // ── Primary: record via canvas with optional mirror applied ─────────────────
-    // Draw dslrStreamVideoRef to a canvas (applying mirror if needed), then captureStream.
-    // This records the pre-processed canvas content, so the raw blob already
-    // contains the mirror transform. No re-mirroring needed in compositing.
-    const vid = dslrStreamVideoRef.current;
-    if (!vid) return;
-    const mirror = boothMirrorSettingRef.current;
-    const captureCanvas = document.createElement("canvas");
-    captureCanvas.width  = 1920;
-    captureCanvas.height = 1080;
-    const captureCtx = captureCanvas.getContext("2d")!;
-    let drawRafId = 0;
-    const doDrawFrame = () => {
-      if (captureCtx && vid.readyState >= 2) {
-        captureCtx.save();
-        if (mirror) {
-          captureCtx.translate(1920, 0);
-          captureCtx.scale(-1, 1);
-        }
-        captureCtx.drawImage(vid, 0, 0, 1920, 1080);
-        captureCtx.restore();
-      }
-      if (dslrRecorderRef.current?.state === "recording") {
-        drawRafId = requestAnimationFrame(doDrawFrame);
-      }
-    };
-    drawRafId = requestAnimationFrame(doDrawFrame);
-
-    let stream: MediaStream | null = null;
-    try {
-      stream = captureCanvas.captureStream(16);
-    } catch {
-      cancelAnimationFrame(drawRafId);
-    }
-
-    if (stream) {
-      const mimeType = getBestRecordingMime();
-      const createRecorder = (options: MediaRecorderOptions) => {
-        try { return new MediaRecorder(stream!, options); } catch { return null }
-      };
-      const recorder =
-        createRecorder({ mimeType, videoBitsPerSecond: 6_000_000 }) ??
-        createRecorder({ mimeType }) ??
-        createRecorder({});
-      if (recorder) {
-        dslrRecordingChunksRef.current = [];
-        recorder.ondataavailable = (event) => {
-          if (event.data && event.data.size > 0) dslrRecordingChunksRef.current.push(event.data);
-        };
-        recorder.onerror = () => {};
-        dslrRecorderRef.current = recorder;
-        try { recorder.start(200); } catch {
-          try { recorder.start(); } catch {
-            cancelAnimationFrame(drawRafId);
-            void stopDslrLiveRecording();
-          }
-        }
-        return;
-      }
-      cancelAnimationFrame(drawRafId);
-    }
-  }, [boothMirrorSetting]);
 
   // ── Fallback: canvas + agentPreview polling (for older browsers / edge cases) ─
   useEffect(() => {
@@ -1910,10 +1939,15 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     const currentCaptureIndex = retakeSlotIndex !== null ? retakeSlotIndex : capturedCount;
 
     // ── Live Mode: mulai rekam saat countdown dimulai (jika diaktifkan) ────
+    // DSLR: only start if no recorder is currently running (continuous recording)
     if (livePhotoVideoEnabled && !dslrMode) {
       startRecording();
     } else if (livePhotoVideoEnabled && dslrMode) {
-      startDslrLiveRecording();
+      if (!dslrRecorderRef.current || dslrRecorderRef.current.state !== "recording") {
+        startDslrLiveRecording();
+      } else {
+        console.log("[CameraScreen] DSLR recording already running, reusing");
+      }
     }
 
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
@@ -2013,15 +2047,18 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         onCapture(dataUrl);
         setCountdown(null);
         setCapturePhase("idle");
+        // ── DSLR Live Mode: continuous recording → slice per slot (recorder keeps running) ──
         if (livePhotoVideoEnabled && dslrMode) {
           void (async () => {
-            await new Promise<void>((r) => setTimeout(r, 150));
-            const videoBlob = await stopDslrLiveRecording();
-            console.log("[CameraScreen] DSLR stopDslrLiveRecording: slot", currentCaptureIndex, "blob =", videoBlob ? `Blob(${videoBlob.size})` : "null");
+            // Mark boundary BEFORE slicing so sliceDslrRecording knows where to cut
+            dslrRecordCaptureTime();
+            const videoBlob = await sliceDslrRecording();
+            console.log("[CameraScreen] DSLR sliceDslrRecording: slot", currentCaptureIndex, "blob =", videoBlob ? `Blob(${videoBlob.size})` : "null");
             onVideoReady(videoBlob, currentCaptureIndex);
           })();
+        } else if (livePhotoVideoEnabled) {
+          // Webcam: sliceRecording is called in the webcam path above
         } else {
-          // Webcam: no video recording
           onVideoReady(null, currentCaptureIndex);
         }
       };
