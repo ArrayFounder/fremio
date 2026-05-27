@@ -1182,11 +1182,21 @@ app.get("/printers", async (_req: Request, res: Response) => {
 });
 
 app.post("/arm-capture", async (_req: Request, res: Response) => {
-  // ARMS the camera for capture — does NOT stop preview.
+  // ARMS the camera for capture.
   // Called at count=3 so the armed bridge is ready by count=1.
-  // Preview stays alive for counts 5,4,3,2,1. Preview is stopped by /trigger-capture at count=1.
-  console.log("[agent] /arm-capture: arming capture (preview stays alive)");
+  // At count=1, /trigger-shot stops the preview, waits, then fires SHOOT.
+  console.log("[agent] /arm-capture: arming capture");
   const t0 = Date.now();
+
+  // CRITICAL FIX: Stop the preview stream BEFORE spawning the armed bridge.
+  // The preview bridge holds the USB session open. If the armed bridge starts while
+  // preview is still alive, it gets CommPortIsAlreadyOpen (0xC0) and fails.
+  // Stop preview, wait for bridge to exit AND for USB port to fully release.
+  console.log("[agent] /arm-capture: stopping preview streams first...");
+  const STOP_PREVIEW_MS = 2000; // 2s: 1.5s kill delay + 0.5s USB settle
+  await stopActivePreviewStreams(STOP_PREVIEW_MS);
+  await new Promise<void>((r) => setTimeout(r, 800));
+  console.log(`[agent] /arm-capture: preview stopped, USB settle done`);
 
   // RESET capture guards for new session — camera is starting a fresh capture cycle.
   // Without this, imageCapturedAt from the previous session (60s window) blocks new captures.
