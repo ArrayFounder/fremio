@@ -56,10 +56,26 @@
         <button type="submit" id="startBoothButton" class="primary-button" disabled>Masuk Booth</button>
         <button type="button" id="backToLoginButton" class="text-button">Kembali</button>
         <button type="button" id="logoutButton" class="text-button">Logout</button>
+        <button type="button" id="agentLogsButton" class="text-button">Lihat Log Agent</button>
         <p id="status" class="status"></p>
       </form>
     </section>
   </main>
+
+  <div id="logModal" class="modal" hidden>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Log Agent</h2>
+        <button type="button" id="closeLogModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="logInfo" class="status"></p>
+        <label>STDOUT <textarea id="logStdout" readonly rows="10" placeholder="(no stdout)"></textarea></label>
+        <label>STDERR <textarea id="logStderr" readonly rows="10" placeholder="(no stderr)"></textarea></label>
+        <button type="button" id="copyLogButton" class="primary-button">Salin ke Clipboard</button>
+      </div>
+    </div>
+  </div>
 
   <script src="./setup.js"></script>
 </body>

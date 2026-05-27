@@ -265,6 +265,14 @@ async function boot() {
   const startBoothButton = document.getElementById("startBoothButton");
   const backToLoginButton = document.getElementById("backToLoginButton");
   const logoutButton = document.getElementById("logoutButton");
+  const agentLogsButton = document.getElementById("agentLogsButton");
+
+  const logModal = document.getElementById("logModal");
+  const closeLogModal = document.getElementById("closeLogModal");
+  const logInfo = document.getElementById("logInfo");
+  const logStdout = document.getElementById("logStdout");
+  const logStderr = document.getElementById("logStderr");
+  const copyLogButton = document.getElementById("copyLogButton");
 
   const refreshBridgeButton = document.getElementById("refreshBridgeButton");
   const restartBridgeButton = document.getElementById("restartBridgeButton");
@@ -415,6 +423,47 @@ async function boot() {
 
   restartBridgeButton?.addEventListener("click", () => {
     void refreshBridgeStatus("restart");
+  });
+
+  // ── Agent Logs Modal ──
+  agentLogsButton?.addEventListener("click", async () => {
+    if (!window.fremioBooth?.getAgentLogs) {
+      logInfo.textContent = "API getAgentLogs tidak tersedia di jendela ini.";
+      logStdout.value = "";
+      logStderr.value = "";
+    } else {
+      logInfo.textContent = "Memuat log...";
+      logStdout.value = "";
+      logStderr.value = "";
+      try {
+        const logs = await window.fremioBooth.getAgentLogs();
+        logInfo.textContent = `PID: ${logs?.pid ?? "none"} | Running: ${logs?.running ?? false}`;
+        logStdout.value = (logs?.stdout || "(no stdout)").slice(-4000);
+        logStderr.value = (logs?.stderr || "(no stderr)").slice(-4000);
+      } catch (err) {
+        logInfo.textContent = `Gagal ambil log: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    logModal.hidden = false;
+  });
+
+  closeLogModal?.addEventListener("click", () => {
+    logModal.hidden = true;
+  });
+
+  logModal?.addEventListener("click", (e) => {
+    if (e.target === logModal) logModal.hidden = true;
+  });
+
+  copyLogButton?.addEventListener("click", async () => {
+    const text = `=== FREMIO AGENT LOG ===\n${logInfo.textContent}\n\n--- STDOUT ---\n${logStdout.value}\n\n--- STDERR ---\n${logStderr.value}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      copyLogButton.textContent = "Tersalin!";
+      setTimeout(() => { copyLogButton.textContent = "Salin ke Clipboard"; }, 2000);
+    } catch {
+      window.prompt("Salin manual (Ctrl+C):", text);
+    }
   });
 
   authStatusEl.textContent = "";
