@@ -339,6 +339,7 @@ function reducer(state: State, action: Action): State {
       // Grow array to accommodate idx if needed (first capture: idx=0, length=0)
       while (newVideos.length <= idx) newVideos.push(null);
       newVideos[idx] = action.payload.videoBlob;
+      console.log("[BoothClient] PHOTO_VIDEO_READY: captureIndex =", action.payload.captureIndex, "videoBlob =", action.payload.videoBlob ? `Blob(${action.payload.videoBlob.size})` : "null", "→ stored at idx", idx, "| newVideos =", newVideos.map((b, i) => b ? `slot${i}=Blob(${b.size})` : `slot${i}=null`).join(", "));
       return {
         ...state,
         // compositing effect watches [currentVideoReady, capturedPhotos.length]

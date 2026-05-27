@@ -1956,6 +1956,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             // Slice the recording at this capture moment — recorder keeps running
             if (livePhotoVideoEnabled) {
               const videoBlob = await sliceRecording();
+              console.log("[CameraScreen] webcam sliceRecording: slot", currentCaptureIndex, "blob =", videoBlob ? `Blob(${videoBlob.size})` : "null");
               onVideoReady(videoBlob, currentCaptureIndex);
             } else {
               onVideoReady(null, currentCaptureIndex);
@@ -1991,6 +1992,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
           void (async () => {
             await new Promise<void>((r) => setTimeout(r, 150));
             const videoBlob = await stopDslrLiveRecording();
+            console.log("[CameraScreen] DSLR stopDslrLiveRecording: slot", currentCaptureIndex, "blob =", videoBlob ? `Blob(${videoBlob.size})` : "null");
             onVideoReady(videoBlob, currentCaptureIndex);
           })();
         } else {

@@ -1243,7 +1243,11 @@ export async function composeVideoLive(
   options:       ComposeVideoOptions = {}
 ): Promise<Blob | null> {
   if (typeof document === "undefined") return null;
-  if (!videoBlobs.some(Boolean)) return null;
+  if (!videoBlobs.some(Boolean)) {
+    console.log("[composeVideoLive] no valid video blobs in array:", videoBlobs.map((b, i) => b ? `Blob(${b.size})` : `null`).join(", "));
+    return null;
+  }
+  console.log("[composeVideoLive] input blobs:", videoBlobs.map((b, i) => b ? `slot${i}=Blob(${b.size})` : `slot${i}=null`).join(", "));
 
   // Scale to 50% — 540×960 was verified working. Higher resolution causes encoder stalls
   // at 60fps due to the combination of pixelFilters + many sceneElements + large canvas.
