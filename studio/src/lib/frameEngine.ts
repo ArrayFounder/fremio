@@ -1321,20 +1321,20 @@ export async function composeVideoLive(
   const blobIndexMap = new Map<number, { el: HTMLVideoElement; url: string }>();
 
   // 2-kolom duplicate: kiri-row-r ↔ kanan-row-(nRows-1-r)
+  // Layout: [0][3] [1][4] [2][5] → captures needed = nRows = n/2
+  // Left column (even pi): captureIdx = pi/2 (e.g. 0→0, 2→1, 4→2)
+  // Right column (odd pi): captureIdx = nRows-1-(pi-1)/2 (mirrors left column)
+  //   pi=3 → 3-1-(2/2) = 1 → mirrors pi=1 (captureIdx=1) ✓
+  //   pi=5 → 3-1-(4/2) = 0 → mirrors pi=3 (captureIdx=0) ✓
   const _nRows = isDuplicateVideo ? n / 2 : 0;
-  console.log(`[composeVideoLive] isDuplicateVideo=${isDuplicateVideo} (n=${n}, blobs=${videoBlobs.length}, _nRows=${_nRows})`);
   for (const slot of canvasSlots) {
     const captureIdx = isDuplicateVideo
       ? (slot.photoIndex % 2 === 0
           ? Math.floor(slot.photoIndex / 2)
-          : _nRows - 1 - Math.floor(slot.photoIndex / 2))
+          : _nRows - 1 - Math.floor((slot.photoIndex - 1) / 2))
       : slot.photoIndex;
     const blob = videoBlobs[captureIdx] ?? null;
-    if (!blob) {
-      console.log(`[composeVideoLive] slot[pi=${slot.photoIndex}, pos=${slot.x},${slot.y}] captureIdx=${captureIdx} → NO blob (videoBlobs[${captureIdx}]=${blob})`);
-      continue;
-    }
-    console.log(`[composeVideoLive] slot[pi=${slot.photoIndex}, pos=${slot.x},${slot.y}] captureIdx=${captureIdx} → blob(${blob.size})`);
+    if (!blob) continue;
 
     // Reuse video element jika captureIdx sudah ada (slot mirror pakai video yang sama)
     let entry = blobIndexMap.get(captureIdx);
@@ -1351,22 +1351,13 @@ export async function composeVideoLive(
       container.appendChild(el);   // Attach ke DOM — wajib untuk decode
       entry = { el, url };
       blobIndexMap.set(captureIdx, entry);
-      console.log(`[composeVideoLive] created video element for captureIdx=${captureIdx}, url=${url.slice(0,50)}`);
-    } else {
-      console.log(`[composeVideoLive] reusing video element for captureIdx=${captureIdx}`);
     }
     entries.push({ el: entry.el, url: entry.url, slot, captureIdx });
   }
-  console.log(`[composeVideoLive] entries built: ${entries.length} entries, ${blobIndexMap.size} unique videos`);
+  // Sort entries by captureIdx so draw order matches capture order (critical for duplicate frames)
+  entries.sort((a, b) => a.captureIdx - b.captureIdx);
 
-  // ── Sort entries by captureIdx — videos must be drawn in capture order, not slot visual order.
-  // For duplicate frames (palindrome slot layout), iterating slots in canvas order produces wrong
-  // sequence (e.g. slot0→slot3→slot1→slot2 instead of slot0→slot1→slot2→slot3).
-  // Group by captureIdx, then draw in order: [capture0_video0, capture0_video1, capture1_video0, ...]
-  entries.sort((a, b) => {
-    // Sort by captureIdx directly — already computed during entry creation
-    return a.captureIdx - b.captureIdx;
-  });
+  // entries already sorted by captureIdx above — no need to re-sort
 
   const cleanup = () => {
     blobIndexMap.forEach((e) => {
@@ -1424,27 +1415,23 @@ export async function composeVideoLive(
   }
 
   // ── 4c. Wait until ALL video elements have valid dimensions before starting recorder.
-  // This is critical: drawVideoInSlot() uses videoWidth/videoHeight for aspect-ratio cropping.
-  // If a video has zero dimensions, the slot will be drawn as solid black (useFallback branch).
-  // Block until all entries are decoded OR 20s timeout (whichever comes first).
-  const allReady = await Promise.race([
-    Promise.all(entries.map(async (entry) => {
-      let waited = 0;
-      while (entry.el.videoWidth === 0 || entry.el.videoHeight === 0) {
-        if (waited >= 20000) {
-          console.warn(`[composeVideoLive] timeout waiting for video dimensions captureIdx=${entry.captureIdx}, using slot fallback`);
-          return;
-        }
-        await new Promise<void>((r) => setTimeout(r, 200));
-        waited += 200;
+  // Do NOT use Promise.race — we must wait for ALL videos, not just until the first timeout.
+  // Each video can take 1-10s to decode (especially Canon blob-sourced videos).
+  // Poll every 200ms, max 30s per video.
+  console.log("[composeVideoLive] waiting for all videos to decode dimensions...");
+  await Promise.all(entries.map(async (entry) => {
+    let waited = 0;
+    const maxWait = 30000;
+    while (entry.el.videoWidth === 0 || entry.el.videoHeight === 0) {
+      if (waited >= maxWait) {
+        console.warn(`[composeVideoLive] timeout (${maxWait}ms) waiting for captureIdx=${entry.captureIdx} video dims`);
+        return;
       }
-    })),
-    new Promise<void>((r) => setTimeout(r, 25000)),
-  ]);
-  void allReady;
-
-  // Re-log dimensions after waiting
-  console.log("[composeVideoLive] after dimension wait:");
+      await new Promise<void>((r) => setTimeout(r, 200));
+      waited += 200;
+    }
+  }));
+  console.log("[composeVideoLive] all videos decoded:");
   for (const { el, captureIdx } of entries) {
     console.log(`  captureIdx=${captureIdx} readyState=${el.readyState} videoWidth=${el.videoWidth} videoHeight=${el.videoHeight}`);
   }
