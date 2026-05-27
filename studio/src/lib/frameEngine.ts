@@ -1291,15 +1291,19 @@ export async function composeVideoLive(
   const useSceneRendering = canvasScene.length > 0;
 
   // ── 1. Hidden container di DOM — Wajib agar video bisa decode di Chrome ───
+  // IMPORTANT: use visible size + opacity:0 instead of width:1px height:1px opacity:0.001.
+  // Chrome throttles video decode for sub-pixel-sized elements. 1×1px with opacity:0
+  // can cause videos to take 30-60s to reach readyState=4 (HAVE_ENOUGH_DATA).
+  // Using 200×200px makes the element "visible enough" for proper decode scheduling.
   const container = document.createElement("div");
   container.style.cssText = [
     "position:fixed",
     "top:-9999px",
     "left:-9999px",
-    "width:1px",
-    "height:1px",
+    "width:200px",
+    "height:200px",
     "overflow:hidden",
-    "opacity:0.001",  // opacity:0 bisa dioptimasi browser jadi tidak dirender
+    "opacity:0",
     "pointer-events:none",
     "z-index:-1",
   ].join(";");
