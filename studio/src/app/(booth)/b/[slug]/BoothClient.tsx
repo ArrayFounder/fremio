@@ -1937,14 +1937,10 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
               </div>
             </div>
             <button
-              onClick={async () => {
+              onClick={() => {
                 if (!agentLogsData) return;
                 const text = `=== FREMIO AGENT LOG ===\nPID: ${agentLogsData.pid ?? "none"} | Running: ${agentLogsData.running}\n\n--- STDOUT ---\n${agentLogsData.stdout.slice(-3000)}\n\n--- STDERR ---\n${agentLogsData.stderr.slice(-3000)}`;
-                try {
-                  await navigator.clipboard.writeText(text);
-                } catch {
-                  window.prompt("Salin manual (Ctrl+C):", text);
-                }
+                window.prompt("Salin log (Ctrl+C):", text);
               }}
               className="w-full py-2.5 rounded-xl text-sm font-bold"
               style={{ background: `${accentColor}22`, color: accentColor }}
