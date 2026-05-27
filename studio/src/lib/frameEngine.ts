@@ -1290,22 +1290,24 @@ export async function composeVideoLive(
   const sceneAfterPhotos = canvasScene.filter((el) => el.zIndex >= photoLayerZ);
   const useSceneRendering = canvasScene.length > 0;
 
-  // ── 1. Hidden container di DOM — Wajib agar video bisa decode di Chrome ───
-  // IMPORTANT: use visible size + opacity:0 instead of width:1px height:1px opacity:0.001.
-  // Chrome throttles video decode for sub-pixel-sized elements. 1×1px with opacity:0
-  // can cause videos to take 30-60s to reach readyState=4 (HAVE_ENOUGH_DATA).
-  // Using 200×200px makes the element "visible enough" for proper decode scheduling.
+  // ── 1. Hidden container in DOM — MUST be large enough for browser to decode ───
+  // IMPORTANT: Browser throttles video decode on sub-pixel or stacked elements.
+  // Must give each unique captureIdx its own visible area (120×200px) so the
+  // decoder schedules them in parallel. Estimate nUnique from videoBlobs count.
+  const nUnique = videoBlobs.filter(Boolean).length;
+  const containerPx = Math.max(200, nUnique * 120); // 360px = 3×120px, enough for 3 videos side-by-side
   const container = document.createElement("div");
   container.style.cssText = [
     "position:fixed",
-    "top:-9999px",
-    "left:-9999px",
-    "width:200px",
-    "height:200px",
+    `top:-9999px`,
+    `left:-9999px`,
+    `width:${containerPx}px`,
+    `height:200px`,
     "overflow:hidden",
-    "opacity:0",
+    "opacity:1",      // Visible to browser decode priority, hidden by top:-9999px
     "pointer-events:none",
     "z-index:-1",
+    "background:#000", // Visible background so decoder doesn't deprioritize
   ].join(";");
   document.body.appendChild(container);
 
@@ -1320,8 +1322,10 @@ export async function composeVideoLive(
   const entries: VideoEntry[] = [];
   const objectUrls: string[] = [];
 
-  // Buat map dari captureIdx → { el, url } agar slot mirror berbagi <video> element yang sama.
-  // (Slot pi=0 dan pi=n-1 pakai captureIdx=0 → cukup 1 elemen video untuk keduanya)
+  // ── 3. Create ONE video element per unique captureIdx (not per slot) ────────
+  // Key fix: Element sharing between SAME captureIdx = OK (they show the same video).
+  // Element sharing between DIFFERENT captureIdxs = BLOCKING (later captures starve).
+  // So: blobIndexMap stores one element per captureIdx only; entries reuse those.
   const blobIndexMap = new Map<number, { el: HTMLVideoElement; url: string }>();
 
   // 2-kolom duplicate: kiri-row-r ↔ kanan-row-(nRows-1-r)
@@ -1340,19 +1344,33 @@ export async function composeVideoLive(
     const blob = videoBlobs[captureIdx] ?? null;
     if (!blob) continue;
 
-    // Reuse video element jika captureIdx sudah ada (slot mirror pakai video yang sama)
+    // ONE element per captureIdx — mirror slots share the same element
     let entry = blobIndexMap.get(captureIdx);
     if (!entry) {
       const url = URL.createObjectURL(blob);
       objectUrls.push(url);
+
+      // Each element gets its own isolated container (positioned side-by-side
+      // by left vs right columns) so browser decoder doesn't stall later captures.
+      const elContainer = document.createElement("div");
+      elContainer.style.cssText = [
+        "position:absolute",
+        "width:120px",
+        "height:200px",
+        "overflow:hidden",
+        "visibility:hidden",
+      ].join(";");
+      container.appendChild(elContainer);
+
       const el = document.createElement("video");
-      el.src        = url;
-      el.loop       = true;
-      el.muted      = true;
+      el.src         = url;
+      el.loop        = true;
+      el.muted       = true;
       el.playsInline = true;
       el.preload    = "auto";
-      el.style.cssText = "width:1px;height:1px;display:block;";
-      container.appendChild(el);   // Attach ke DOM — wajib untuk decode
+      el.style.cssText = "width:120px;height:200px;display:block;";
+      elContainer.appendChild(el);
+
       entry = { el, url };
       blobIndexMap.set(captureIdx, entry);
     }
@@ -1400,50 +1418,62 @@ export async function composeVideoLive(
   );
   console.log(`[composeVideoLive] sceneImages: ${sceneImages.size} images, useSceneRendering=${useSceneRendering}`);
 
-  // ── 3. Load all unique video elements in parallel ─────────────────────────
-  // Browser video decoder can handle ~2-3 parallel decodes in a 200×200 visible container.
-  // Load ALL unique elements at once (skip shared elements), then wait for dimensions.
-  const loadedEls = new Set<HTMLVideoElement>();
-  for (const e of entries) {
-    if (loadedEls.has(e.el)) { console.log(`[composeVideoLive] captureIdx=${e.captureIdx} skipped (shared elem)`); continue; }
-    loadedEls.add(e.el);
-    e.el.load();
-    console.log(`[composeVideoLive] captureIdx=${e.captureIdx} load() called`);
+  // ── 3. Load & decode all unique video elements ────────────────────────────
+  // Each captureIdx has its own <video> element — no sharing, no decode contention.
+  // Load + play all at once so the browser decoder schedules them independently.
+  const uniqueCaptureIdxs = Array.from(new Set(entries.map((e) => e.captureIdx)));
+  console.log(`[composeVideoLive] loading ${uniqueCaptureIdxs.length} unique video elements...`);
+  for (const idx of uniqueCaptureIdxs) {
+    const entry = entries.find((e) => e.captureIdx === idx)!;
+    entry.el.load();
+    console.log(`[composeVideoLive] captureIdx=${idx} load() called`);
   }
-  // Give browsers time to start decoding all videos simultaneously
-  await new Promise<void>((r) => setTimeout(r, 500));
+  // Give decoder time to start
+  await new Promise<void>((r) => setTimeout(r, 1000));
 
-  // ── 4. Play all videos in parallel ─────────────────────────────────────────
-  await Promise.all(entries.map((e) => e.el.play().catch(() => {})));
-  // Give decoder time to populate dimensions (Canon MJPEG blobs need several seconds)
-  await new Promise<void>((r) => setTimeout(r, 5000));
+  // Start playing all
+  for (const entry of entries) {
+    entry.el.play().catch(() => {});
+  }
+  // Give all videos time to populate dimensions
+  console.log("[composeVideoLive] waiting for dimensions...");
+  await new Promise<void>((r) => setTimeout(r, 3000));
 
-  // ── 4b. Diagnostic: log video dimensions ─────────────────────────────────
-  for (const { el, slot, url, captureIdx } of entries) {
-    console.log(`[composeVideoLive] dim check: captureIdx=${captureIdx} state=${el.readyState} dims=${el.videoWidth}×${el.videoHeight} slot=${slot.x},${slot.y}`);
+  // ── 4b. Diagnostic: log unique video element dimensions ────────────────────
+  const uniqueElsArr: HTMLVideoElement[] = [];
+  const seenEls = new Set<HTMLVideoElement>();
+  for (const { el, captureIdx } of entries) {
+    if (seenEls.has(el)) continue;
+    seenEls.add(el);
+    uniqueElsArr.push(el);
+    const captureIdxs = entries.filter((e) => e.el === el).map((e) => e.captureIdx);
+    console.log(`[composeVideoLive] el${uniqueElsArr.length} captureIdxs=[${captureIdxs}] state=${el.readyState} dims=${el.videoWidth}×${el.videoHeight}`);
   }
 
-  // ── 4c. Wait for ALL videos to have valid dimensions — parallel, 60s each ───
-  // Browser needs time to decode all 3 videos in parallel. Poll every 500ms, 60s max per video.
-  console.log("[composeVideoLive] waiting for all videos to have dimensions...");
-  const decodeResults = await Promise.all(entries.map(async (entry) => {
+  // ── 4c. Wait for ALL unique video elements to have valid dimensions ──────────
+  // Each video element has its own decoder slot — poll independently.
+  // Max 30s per element to stay within 30s total render budget.
+  let allDecoded = true;
+  for (const el of uniqueElsArr) {
+    const captureIdxs = entries.filter((e) => e.el === el).map((e) => e.captureIdx);
     let waited = 0;
-    const maxWait = 60000;
-    while (entry.el.videoWidth === 0 || entry.el.videoHeight === 0) {
+    const maxWait = 30000;
+    while (el.videoWidth === 0 || el.videoHeight === 0) {
       if (waited >= maxWait) {
-        console.warn(`[composeVideoLive] captureIdx=${entry.captureIdx} TIMEOUT at ${maxWait}ms`);
-        return false;
+        console.warn(`[composeVideoLive] el for captureIdxs=[${captureIdxs}] TIMEOUT at ${maxWait}ms`);
+        allDecoded = false;
+        break;
       }
       await new Promise<void>((r) => setTimeout(r, 500));
       waited += 500;
     }
-    console.log(`[composeVideoLive] captureIdx=${entry.captureIdx} dims OK: ${entry.el.videoWidth}×${entry.el.videoHeight}`);
-    return true;
-  }));
-  const allDecoded = decodeResults.every(Boolean);
-  console.log("[composeVideoLive] decode results:", entries.map((e, i) => `captureIdx=${e.captureIdx}:${decodeResults[i] ? "ok" : "timeout"}`).join(", "), "| allDecoded=", allDecoded);
+    if (allDecoded || el.videoWidth > 0) {
+      console.log(`[composeVideoLive] captureIdxs=[${captureIdxs}] dims OK: ${el.videoWidth}×${el.videoHeight}`);
+    }
+  }
   if (!allDecoded) {
-    console.warn(`[composeVideoLive] WARNING: only ${decodeResults.filter(Boolean).length}/${entries.length} videos decoded. Some slots will be empty/black in composite.`);
+    const decodedCount = uniqueElsArr.filter((el) => el.videoWidth > 0).length;
+    console.warn(`[composeVideoLive] WARNING: only ${decodedCount}/${uniqueElsArr.length} videos decoded. Some slots will be empty/black in composite.`);
   }
   // Force a draw so canvas sees video pixels before MediaRecorder starts
   // (ensures the encoder has real content to compress)
