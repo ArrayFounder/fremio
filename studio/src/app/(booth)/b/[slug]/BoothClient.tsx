@@ -1082,6 +1082,13 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
   const [fsToast, setFsToast]     = useState<string | null>(null);
   const [showSettingsButton, setShowSettingsButton] = useState(false);
   const [idleSettingsOpen, setIdleSettingsOpen] = useState(false);
+  const [agentLogsOpen, setAgentLogsOpen] = useState(false);
+  const [agentLogsData, setAgentLogsData] = useState<{
+    pid: number | null;
+    running: boolean;
+    stdout: string;
+    stderr: string;
+  } | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [pinDigits, setPinDigits] = useState<string[]>(Array.from({ length: 6 }, () => ""));
   const [pinError, setPinError] = useState<string | null>(null);
@@ -1870,6 +1877,84 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
         </div>
       )}
 
+      {/* ── Agent Logs Modal ─────────────────────────────────────────── */}
+      {agentLogsOpen && (
+        <div
+          className="absolute inset-0 z-[2000] flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.75)" }}
+          onClick={() => setAgentLogsOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl p-5 flex flex-col gap-3 max-h-[85vh] overflow-hidden"
+            style={{ background: "#171717", border: "1px solid rgba(255,255,255,0.12)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-white text-base font-bold">Log Agent</p>
+              <button
+                onClick={() => setAgentLogsOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold"
+                style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)" }}
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-white/50 text-xs">
+              {agentLogsData
+                ? `PID: ${agentLogsData.pid ?? "none"} | Running: ${agentLogsData.running}`
+                : "Memuat..."}
+            </p>
+            <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0">
+              <div>
+                <p className="text-white/40 text-[10px] font-bold uppercase mb-1">STDOUT</p>
+                <textarea
+                  readOnly
+                  rows={6}
+                  value={agentLogsData ? agentLogsData.stdout.slice(-3000) : ""}
+                  className="w-full rounded-xl text-[11px] px-3 py-2 resize-none outline-none"
+                  style={{
+                    background: "#1e1e1e",
+                    color: "#d4d4d4",
+                    fontFamily: "Consolas, monospace",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                />
+              </div>
+              <div>
+                <p className="text-white/40 text-[10px] font-bold uppercase mb-1">STDERR</p>
+                <textarea
+                  readOnly
+                  rows={6}
+                  value={agentLogsData ? agentLogsData.stderr.slice(-3000) : ""}
+                  className="w-full rounded-xl text-[11px] px-3 py-2 resize-none outline-none"
+                  style={{
+                    background: "#1e1e1e",
+                    color: "#d4d4d4",
+                    fontFamily: "Consolas, monospace",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                />
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (!agentLogsData) return;
+                const text = `=== FREMIO AGENT LOG ===\nPID: ${agentLogsData.pid ?? "none"} | Running: ${agentLogsData.running}\n\n--- STDOUT ---\n${agentLogsData.stdout.slice(-3000)}\n\n--- STDERR ---\n${agentLogsData.stderr.slice(-3000)}`;
+                try {
+                  await navigator.clipboard.writeText(text);
+                } catch {
+                  window.prompt("Salin manual (Ctrl+C):", text);
+                }
+              }}
+              className="w-full py-2.5 rounded-xl text-sm font-bold"
+              style={{ background: `${accentColor}22`, color: accentColor }}
+            >
+              Salin ke Clipboard
+            </button>
+          </div>
+        </div>
+      )}
+
       <ScreenErrorBoundary
         screenName={screen}
         accentColor={accentColor}
@@ -2028,6 +2113,26 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
                     className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold text-white/90 hover:bg-white/10"
                   >
                     {isFullscreen ? "Keluar Fullscreen" : "Masuk Fullscreen"}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setIdleSettingsOpen(false);
+                      setAgentLogsOpen(true);
+                      setAgentLogsData(null);
+                      try {
+                        const logs = await (window as any).fremioBooth?.getAgentLogs?.();
+                        if (logs) {
+                          setAgentLogsData(logs);
+                        } else {
+                          setAgentLogsData({ pid: null, running: false, stdout: "Agent tidak aktif di perangkat ini.", stderr: "" });
+                        }
+                      } catch {
+                        setAgentLogsData({ pid: null, running: false, stdout: "Agent tidak aktif di perangkat ini.", stderr: "" });
+                      }
+                    }}
+                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold text-white/90 hover:bg-white/10"
+                  >
+                    Lihat Log Agent
                   </button>
                 </div>
               </>
