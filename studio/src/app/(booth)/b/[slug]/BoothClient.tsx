@@ -599,7 +599,8 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     composeKeyRef.current = key;
 
     let cancelled = false;
-    console.log("[BoothClient] compositing: STARTING composeVideoLive for", photosLen, "photos,", videosLen, "videos, duration =", Math.max(1000, (booth.countdownDuration ?? 8) * 1000 - 1000), "ms (countdown", booth.countdownDuration ?? 8, "s, minus 1s final countdown)");
+    let recordedVideosCount = nonNullVideos;
+    console.log("[BoothClient] compositing: STARTING composeVideoLive for", photosLen, "photos,", recordedVideosCount, "videos, duration =", Math.max(1000, (booth.countdownDuration ?? 8) * 1000 - 1000), "ms (countdown", booth.countdownDuration ?? 8, "s, minus 1s final countdown)");
     dispatch({ type: "LIVE_VIDEO_COMPOSITING" });
 
     const effectiveSlots = getEffectiveSlots(frame);
