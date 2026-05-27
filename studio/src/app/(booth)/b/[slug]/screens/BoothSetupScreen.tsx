@@ -1015,6 +1015,11 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                         key={i}
                         onClick={() => {
                           stopCameraPreview();
+                          // Auto-reset Canon: kill bridges + terminate/re-init EDSDK = like unplug/replug USB.
+                          if (agentBase) {
+                            fetch(`${agentBase}/camera-reset`, { method: "POST" })
+                              .catch(() => { /* ignore — preview will restart anyway */ });
+                          }
                           setDslrPreviewActive(true);
                           setDslrPreviewError(null);
                           setDslrPreviewKey(Date.now());
@@ -1039,8 +1044,18 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-xl px-2.5 py-2 text-[11px]" style={{ background: `${surfaceBorder}44`, color: textTertiary }}>
-                    {agentOnline === null ? "Mendeteksi Canon…" : "Canon belum terdeteksi"}
+                  <div
+                    className="rounded-xl px-2.5 py-2 text-[11px] cursor-pointer"
+                    style={{ background: `${surfaceBorder}44`, color: textTertiary }}
+                    onClick={() => {
+                      // Retry: reset Canon + re-detect
+                      if (agentBase) {
+                        fetch(`${agentBase}/camera-reset`, { method: "POST" }).catch(() => { /* ignore */ });
+                      }
+                      checkAgent();
+                    }}
+                  >
+                    {agentOnline === null ? "Mendeteksi Canon…" : "Canon belum terdeteksi — klik untuk reset"}
                   </div>
                 )}
               </div>

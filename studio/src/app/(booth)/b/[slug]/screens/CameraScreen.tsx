@@ -1605,7 +1605,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     return new Promise((resolve) => {
       const recorder = dslrRecorderRef.current;
       if (!recorder) { resolve(null); return; }
-      const upToTime = dslrLastCaptureTimeRef.current || Date.now();
+      // Use stored boundary if set; if 0 (component remounted between sessions), use
+      // current time so all remaining chunks are captured for this slot.
+      const storedBoundary = dslrLastCaptureTimeRef.current;
+      const upToTime = storedBoundary > 0 ? storedBoundary : Date.now();
       try { recorder.requestData(); } catch {}
       const waitAndSlice = () => {
         const chunks = dslrRecordingChunksRef.current;

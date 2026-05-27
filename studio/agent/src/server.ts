@@ -231,11 +231,9 @@ function scheduleSharedPreviewStop(delayMs = 5000) { // Keep bridge alive long e
   previewIdleTimer = setTimeout(() => {
     previewIdleTimer = null;
     if (previewFrameSubscribers.size > 0) return;
-    if (Date.now() - lastPreviewConsumerAt < delayMs) {
-      scheduleSharedPreviewStop(delayMs);
-      return;
-    }
-    stopSharedPreviewProcess();
+    // Always reschedule — keep preview alive even when no browser consumer is active.
+    // Camera's live view stays ON so it responds instantly when the booth session starts.
+    scheduleSharedPreviewStop(delayMs);
   }, delayMs);
 }
 
@@ -1138,6 +1136,46 @@ app.get("/logs", (_req: Request, res: Response) => {
   });
 });
 
+app.post("/camera-reset", async (_req: Request, res: Response) => {
+  // Full EDSDK reset: kill all bridges, terminate/re-init SDK, then restart preview.
+  // Simulates unplugging and replugging the camera USB.
+  console.log("[agent] /camera-reset: resetting Canon camera...");
+
+  // 1. Kill all active preview streams
+  const killPromise = stopActivePreviewStreams(100);
+
+  // 2. Kill any armed capture bridge
+  const armed = armedCapture;
+  if (armed) {
+    try { armed.process.kill(); } catch { /* ignore */ }
+  }
+
+  // 3. Wait for streams to die
+  await killPromise;
+  await new Promise<void>((r) => setTimeout(r, 300));
+
+  // 4. Call the C# bridge reset command (terminate + re-init EDSDK)
+  const bridgePath = resolveEdsdkBridgePath();
+  try {
+    const { stdout } = await execBridgeBuffer(bridgePath, ["reset"], 8000);
+    console.log(`[agent] /camera-reset: bridge output: ${stdout.toString().trim()}`);
+  } catch (err) {
+    console.error(`[agent] /camera-reset: bridge error: ${(err as Error).message}`);
+    // Non-fatal — we still want to restart preview even if bridge reset fails
+  }
+
+  // 5. Clear state
+  sharedPreviewProcess = null;
+  lastPreviewBridgeExitedAt = 0;
+  previewRestartBlockedUntil = 0;
+
+  // 6. Re-detect camera status
+  const status = await detectCameras();
+  console.log(`[agent] /camera-reset: done — cameras found: ${status.count}`);
+
+  res.json({ ok: true, count: status.count, devices: status.devices });
+});
+
 app.get("/printers", async (_req: Request, res: Response) => {
   const printers = await listPrinters();
   res.json({ ok: true, printers });
@@ -1979,6 +2017,10 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`║  ${proto}://127.0.0.1:${PORT}             ║`);
   console.log(`║  Platform: ${process.platform.padEnd(26)}║`);
   console.log(`╚══════════════════════════════════════╝`);
+
+  // Auto-start preview: keep Canon live view ON always so it's instantly ready
+  // when the booth session starts — no delay waiting for EVF activation.
+  setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 1000);
 
   // macOS: write cert and show one-time install command
   if (isMac) {

@@ -31,6 +31,7 @@ internal static class Program
             "preview-stream" => PreviewStream(args),
             "capture"        => Capture(args),
             "capture-armed"  => CaptureArmed(args),
+            "reset"          => ResetEdsdk(args),
             _ => Fail($"Unknown command: {args[0]}")
         };
 
@@ -69,6 +70,30 @@ internal static class Program
         catch (Exception ex)
         {
             return PrintBridgeError(ex);
+        }
+    }
+
+    private static int ResetEdsdk(string[] args)
+    {
+        // Full EDSDK reset: terminate + re-initialize.
+        // This is equivalent to physically unplugging and replugging the camera USB.
+        try
+        {
+            Console.Error.WriteLine("[bridge-reset] Terminating EDSDK...");
+            Edsdk.EdsTerminateSDK();
+            Thread.Sleep(400);
+            Console.Error.WriteLine("[bridge-reset] Re-initializing EDSDK...");
+            Edsdk.EdsInitializeSDK();
+            Thread.Sleep(300);
+            Console.Error.WriteLine("[bridge-reset] EDSDK reset complete");
+            Console.Out.Write("{\"ok\":true}");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[bridge-reset] Error: {ex.Message}");
+            Console.Out.Write($"{{\"ok\":false,\"error\":\"{ex.Message}\"}}");
+            return 1;
         }
     }
 
@@ -1063,7 +1088,7 @@ internal sealed class EdsdkSession : IDisposable
         {
             // First attempt: minimal pump (camera usually ready immediately after GetFirstCamera).
             // Retries: longer pump to let SDK settle.
-            PumpSdkEvents(attempt == 1 ? 1 : 2, attempt == 1 ? 40 : 80); // OPTIMIZED: reduced first pump 50ms→40ms
+            PumpSdkEvents(attempt == 1 ? 2 : 4, attempt == 1 ? 60 : 120);
 
             var t1 = System.Diagnostics.Stopwatch.StartNew();
             var err = Edsdk.EdsOpenSession(_cameraRef);
@@ -1073,29 +1098,76 @@ internal sealed class EdsdkSession : IDisposable
             lastErr = err;
             Console.Error.WriteLine($"[bridge] EdsOpenSession retry {attempt}/8: 0x{err:X8}");
 
+            // ERR_BAD_HANDLE (0x61): handle is stale — USB session was closed but pointer invalid.
+            // Get a fresh camera handle before retrying EdsOpenSession.
+            if (err == 0x61) // ERR_BAD_HANDLE
+            {
+                Console.Error.WriteLine("[bridge] Handle stale (0x61) — getting fresh camera handle...");
+                var oldRef = _cameraRef;
+                _cameraRef = GetFirstCameraWithRetry();
+                if (oldRef != IntPtr.Zero) Edsdk.EdsRelease(oldRef);
+                if (_cameraRef == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException("Kamera Canon belum terdeteksi oleh EDSDK");
+                }
+                PumpSdkEvents(4, 150);
+                Thread.Sleep(300);
+                continue;
+            }
+
             // If device busy or not ready, wait and retry
             if (err == EdsErr_DeviceBusy || err == EdsErr_ObjectNotReady)
             {
-                PumpSdkEvents(3, 120); // OPTIMIZED: reduced from 4×150=600ms to 3×120=360ms
-                Thread.Sleep(200); // OPTIMIZED: reduced from 300ms
+                PumpSdkEvents(4, 150);
+                Thread.Sleep(300);
                 continue;
             }
 
             // Handle COMM_PORT_IS_ALREADY_OPEN - camera session already open somewhere else
-            // Fast retry: the previous bridge is likely just finishing its EdsCloseSession.
+            // The previous bridge may still be in its EdsCloseSession cleanup.
+            // Need BOTH a fresh handle AND enough settle time for USB to release.
             if (err == EdsErr_CommPortIsAlreadyOpen)
             {
-                Console.Error.WriteLine("[bridge] Camera session busy - fast retry...");
-                Edsdk.EdsCloseSession(_cameraRef);
-                Thread.Sleep(100); // OPTIMIZED: reduced from 150ms to 100ms
+                Console.Error.WriteLine("[bridge] Camera session busy (0xC0) — releasing handle, waiting for USB...");
+                var oldRef = _cameraRef;
+                if (attempt <= 2)
+                {
+                    // First 2 attempts: get a fresh handle and settle.
+                    _cameraRef = GetFirstCameraWithRetry();
+                    if (oldRef != IntPtr.Zero) Edsdk.EdsRelease(oldRef);
+                    if (_cameraRef == IntPtr.Zero)
+                    {
+                        throw new InvalidOperationException("Kamera Canon belum terdeteksi oleh EDSDK");
+                    }
+                    PumpSdkEvents(8, 200);
+                    Thread.Sleep(500);
+                }
+                else
+                {
+                    // After 2 failures with fresh handles, the camera is likely in a stuck state.
+                    // Force a true re-enumeration (forget ALL handles, then re-discover).
+                    Console.Error.WriteLine("[bridge] 0xC0 persists — forcing USB re-enumeration...");
+                    Edsdk.EdsTerminateSDK();
+                    Thread.Sleep(300);
+                    Edsdk.EdsInitializeSDK();
+                    Thread.Sleep(200);
+                    if (oldRef != IntPtr.Zero) Edsdk.EdsRelease(oldRef);
+                    _cameraRef = GetFirstCameraWithRetry();
+                    if (_cameraRef == IntPtr.Zero)
+                    {
+                        throw new InvalidOperationException("Kamera Canon belum terdeteksi oleh EDSDK");
+                    }
+                    PumpSdkEvents(4, 150);
+                    Thread.Sleep(300);
+                }
                 continue;
             }
 
             // For other errors, also try a brief wait
             if (attempt < 8)
             {
-                PumpSdkEvents(2, 80); // OPTIMIZED: reduced from 3×100=300ms to 2×80=160ms
-                Thread.Sleep(200); // OPTIMIZED: reduced from 250ms to 200ms
+                PumpSdkEvents(3, 120);
+                Thread.Sleep(250);
             }
         }
 
@@ -1112,10 +1184,10 @@ internal sealed class EdsdkSession : IDisposable
         {
             // First attempt: minimal pump — camera is usually already enumerated.
             // Subsequent attempts: longer pump to allow USB re-enumeration.
-            PumpSdkEvents(attempt == 0 ? 1 : 2, attempt == 0 ? 40 : 80); // OPTIMIZED: reduced from 80 to 40ms
+            PumpSdkEvents(attempt == 0 ? 2 : 4, attempt == 0 ? 60 : 150);
             var cameraRef = GetFirstCamera();
             if (cameraRef != IntPtr.Zero) return cameraRef;
-            Thread.Sleep(200); // OPTIMIZED: reduced from 400ms to 200ms
+            Thread.Sleep(400);
         }
 
         return IntPtr.Zero;
