@@ -1580,15 +1580,43 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   const stopDslrLiveRecording = useCallback((): Promise<Blob | null> => {
     return new Promise((resolve) => {
+      // Snapshot chunks NOW so they can't be cleared by a concurrent startDslrLiveRecording.
+      // stop() can race with requestAnimationFrame adding more chunks, but by capturing
+      // the ref at this point and letting the RAF continue, we collect those trailing
+      // chunks too via the setTimeout(before stop()).
+      const chunksSnapshot = [...dslrRecordingChunksRef.current];
+
       if (dslrRecordingDrawTimerRef.current) {
         cancelAnimationFrame(dslrRecordingDrawTimerRef.current);
         dslrRecordingDrawTimerRef.current = null;
       }
 
       const recorder = dslrRecorderRef.current;
-      if (!recorder) {
+      const failSafeTimer = setTimeout(() => {
+        // Take whatever chunks accumulated up to this point
+        const accumulated = [...dslrRecordingChunksRef.current];
+        // Only use chunks from before this stop call (+ any that arrived during wait)
+        const blob = accumulated.length > 0
+          ? new Blob(accumulated, { type: "video/mp4" })
+          : (chunksSnapshot.length > 0 ? new Blob(chunksSnapshot, { type: "video/mp4" }) : null);
+        dslrRecordingChunksRef.current = [];
         dslrRecordingCanvasRef.current = null;
-        resolve(null);
+        if (dslrRecorderRef.current && dslrRecorderRef.current.state !== "inactive") {
+          try { dslrRecorderRef.current.stop(); } catch {}
+        }
+        dslrRecorderRef.current = null;
+        resolve(blob);
+      }, 150);
+
+      if (!recorder || recorder.state === "inactive") {
+        clearTimeout(failSafeTimer);
+        const blob = chunksSnapshot.length > 0
+          ? new Blob(chunksSnapshot, { type: "video/mp4" })
+          : null;
+        dslrRecordingChunksRef.current = [];
+        dslrRecordingCanvasRef.current = null;
+        dslrRecorderRef.current = null;
+        resolve(blob);
         return;
       }
 
@@ -1596,23 +1624,20 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       const finish = () => {
         if (settled) return;
         settled = true;
-        clearTimeout(failsafe);
-        const chunks = dslrRecordingChunksRef.current;
-        const blob = chunks.length > 0
-          ? new Blob(chunks, { type: "video/mp4" })
-          : null;
+        clearTimeout(failSafeTimer);
+        // Collect everything that arrived up to this point
+        const all = [...dslrRecordingChunksRef.current];
+        const blob = all.length > 0
+          ? new Blob(all, { type: "video/mp4" })
+          : (chunksSnapshot.length > 0 ? new Blob(chunksSnapshot, { type: "video/mp4" }) : null);
         dslrRecordingChunksRef.current = [];
         dslrRecordingCanvasRef.current = null;
         dslrRecorderRef.current = null;
         resolve(blob);
       };
 
-      const failsafe = setTimeout(finish, 6000);
       recorder.onstop = finish;
       recorder.onerror = finish;
-
-      // Flush encoder buffer — wait for the last ~500ms chunk to be collected
-      // before stop() is called. Without this delay, the final chunk is lost.
       try { recorder.requestData(); } catch {}
       setTimeout(() => {
         try { recorder.stop(); } catch { finish(); }
