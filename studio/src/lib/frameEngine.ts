@@ -1400,48 +1400,56 @@ export async function composeVideoLive(
   );
   console.log(`[composeVideoLive] sceneImages: ${sceneImages.size} images, useSceneRendering=${useSceneRendering}`);
 
-  // ── 3. Load + tunggu setiap video siap — SEQUENTIAL, not parallel ─────────
-  // CRITICAL: browsers can only decode ~2 videos simultaneously (GPU/video decode limits).
-  // Running waitForVideo() in parallel means only 1-2 of 3 videos finish before timeout.
-  // Fix: decode one video at a time, 60s max each. This ensures ALL 3 videos decode.
+  // ── 3. Load + wait for each video — SEQUENTIAL, one unique video element at a time ──
+  // CRITICAL: each unique video element (per captureIdx) must be loaded ONCE.
+  // Calling load() on an already-decoding element resets its state to readyState=0!
+  // Also: decode one at a time with 2s gaps to prevent browser GPU resource competition.
+  const loadedEls = new Set<HTMLVideoElement>();
   for (const e of entries) {
-    console.log(`[composeVideoLive] loading video captureIdx=${e.captureIdx}...`);
+    if (loadedEls.has(e.el)) { console.log(`[composeVideoLive] captureIdx=${e.captureIdx} skipped (elem shared with prev entry)`); continue; }
+    loadedEls.add(e.el);
+    console.log(`[composeVideoLive] loading captureIdx=${e.captureIdx} element...`);
     e.el.load();
-    const decoded = await waitForVideo(e.el);
-    console.log(`[composeVideoLive] captureIdx=${e.captureIdx} readyState=${e.el.readyState} dims=${e.el.videoWidth}×${e.el.videoHeight}`);
+    // Try to reach readyState >= 3 (HAVE_FUTURE_DATA) + valid dims. Use a short timeout per video.
+    let waited = 0;
+    const maxWait = 20000;
+    while (e.el.readyState < 3 || e.el.videoWidth === 0) {
+      if (waited >= maxWait) { console.warn(`[composeVideoLive] captureIdx=${e.captureIdx} decode timeout at ${maxWait}ms`); break; }
+      await new Promise<void>((r) => setTimeout(r, 100));
+      waited += 100;
+    }
+    console.log(`[composeVideoLive] captureIdx=${e.captureIdx} loaded: readyState=${e.el.readyState} dims=${e.el.videoWidth}×${e.el.videoHeight}`);
+    // 2s gap between starting next video decode (lets GPU focus on current decode)
+    await new Promise<void>((r) => setTimeout(r, 2000));
   }
 
-  // ── 4. Play + tunggu dimensi video aktual tersedia ────────────────────────
-  // Play videos SEQUENTIALLY with 1s gaps to avoid decode resource competition.
-  for (const e of entries) {
-    e.el.play().catch(() => {});
-    await new Promise<void>((r) => setTimeout(r, 1000));
-  }
-  // Extra decode buffer after sequential play
-  await new Promise<void>((r) => setTimeout(r, 3000));
+  // ── 4. Play + final dimension verification ────────────────────────────────
+  await Promise.all(entries.map((e) => e.el.play().catch(() => {})));
+  // Give playing videos a moment to populate dimensions
+  await new Promise<void>((r) => setTimeout(r, 2000));
 
   // ── 4b. Diagnostic: log video dimensions ─────────────────────────────────
   for (const { el, slot, url, captureIdx } of entries) {
-    console.log(`[composeVideoLive] video dim check: captureIdx=${captureIdx} url=${url.slice(0,50)} videoWidth=${el.videoWidth} videoHeight=${el.videoHeight} slot=${slot.x},${slot.y} ${slot.w}×${slot.h} readyState=${el.readyState}`);
+    console.log(`[composeVideoLive] dim check: captureIdx=${captureIdx} state=${el.readyState} dims=${el.videoWidth}×${el.videoHeight} slot=${slot.x},${slot.y}`);
   }
 
-  // ── 4c. Wait until ALL video elements have valid dimensions before starting recorder.
-  // Each video can take 5-15s to fully decode (especially Canon MJPEG blob-sourced videos).
-  // Poll every 200ms, max 60s per video. If one video times out, continue with others —
-  // a partial composite (some slots filled) is better than falling back to raw single-session blob.
-  console.log("[composeVideoLive] waiting for all videos to decode dimensions...");
+  // ── 4c. Final dimension wait — short check, max 20s per video ─────────────
+  // We already did sequential loading in step 3, so this is just a supplemental poll.
+  // If a video reaches readyState>=3 and has valid dims, it will exit immediately.
+  console.log("[composeVideoLive] final dimension verification...");
   const decodeResults = await Promise.all(entries.map(async (entry) => {
     let waited = 0;
-    const maxWait = 60000;
+    const maxWait = 20000;
     while (entry.el.videoWidth === 0 || entry.el.videoHeight === 0) {
       if (waited >= maxWait) {
-        console.warn(`[composeVideoLive] timeout (${maxWait}ms) waiting for captureIdx=${entry.captureIdx} video dims — continuing with partial composite`);
-        return false; // timed out, but continue
+        console.warn(`[composeVideoLive] captureIdx=${entry.captureIdx} STILL timeout after ${maxWait}ms`);
+        return false;
       }
       await new Promise<void>((r) => setTimeout(r, 200));
       waited += 200;
     }
-    return true; // decoded successfully
+    console.log(`[composeVideoLive] captureIdx=${entry.captureIdx} dims confirmed: ${entry.el.videoWidth}×${entry.el.videoHeight}`);
+    return true;
   }));
   const allDecoded = decodeResults.every(Boolean);
   console.log("[composeVideoLive] decode results:", entries.map((e, i) => `captureIdx=${e.captureIdx}:${decodeResults[i] ? "ok" : "timeout"}`).join(", "), "| allDecoded=", allDecoded);
