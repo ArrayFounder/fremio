@@ -1415,25 +1415,27 @@ export async function composeVideoLive(
   }
 
   // ── 4c. Wait until ALL video elements have valid dimensions before starting recorder.
-  // Do NOT use Promise.race — we must wait for ALL videos, not just until the first timeout.
-  // Each video can take 1-10s to decode (especially Canon blob-sourced videos).
-  // Poll every 200ms, max 30s per video.
+  // Each video can take 5-15s to fully decode (especially Canon MJPEG blob-sourced videos).
+  // Poll every 200ms, max 60s per video. If one video times out, continue with others —
+  // a partial composite (some slots filled) is better than falling back to raw single-session blob.
   console.log("[composeVideoLive] waiting for all videos to decode dimensions...");
-  await Promise.all(entries.map(async (entry) => {
+  const decodeResults = await Promise.all(entries.map(async (entry) => {
     let waited = 0;
-    const maxWait = 30000;
+    const maxWait = 60000;
     while (entry.el.videoWidth === 0 || entry.el.videoHeight === 0) {
       if (waited >= maxWait) {
-        console.warn(`[composeVideoLive] timeout (${maxWait}ms) waiting for captureIdx=${entry.captureIdx} video dims`);
-        return;
+        console.warn(`[composeVideoLive] timeout (${maxWait}ms) waiting for captureIdx=${entry.captureIdx} video dims — continuing with partial composite`);
+        return false; // timed out, but continue
       }
       await new Promise<void>((r) => setTimeout(r, 200));
       waited += 200;
     }
+    return true; // decoded successfully
   }));
-  console.log("[composeVideoLive] all videos decoded:");
-  for (const { el, captureIdx } of entries) {
-    console.log(`  captureIdx=${captureIdx} readyState=${el.readyState} videoWidth=${el.videoWidth} videoHeight=${el.videoHeight}`);
+  const allDecoded = decodeResults.every(Boolean);
+  console.log("[composeVideoLive] decode results:", entries.map((e, i) => `captureIdx=${e.captureIdx}:${decodeResults[i] ? "ok" : "timeout"}`).join(", "), "| allDecoded=", allDecoded);
+  if (!allDecoded) {
+    console.warn(`[composeVideoLive] WARNING: only ${decodeResults.filter(Boolean).length}/${entries.length} videos decoded. Some slots will be empty/black in composite.`);
   }
   // Force a draw so canvas sees video pixels before MediaRecorder starts
   // (ensures the encoder has real content to compress)
@@ -1517,20 +1519,12 @@ export async function composeVideoLive(
   }
   console.log("[composeVideoLive] MediaRecorder created: mimeType =", recorder.mimeType, "state =", recorder.state);
 
-  // Prime video elements + canvas BEFORE starting recorder.
-  // The video element must have decoded at least ONE real frame before we start
-  // capturing — otherwise captureStream sees a blank canvas (all-black or solid color).
-  // We do 3 warm-up draws at 16ms intervals so the video decoder has time to
-  // produce frames from the blob source.
-  console.log(`[composeVideoLive] warmUpDraw frameImg: isOverlay=${isOverlay} frameImg=${!!frameImg} useSceneRendering=${useSceneRendering} decorImg=${!!decorImg}`);
+  // Warm-up draw: bg → frame(bkg) → videos → overlay(atas) → decorations
+  // (For overlay frames, frame is drawn LAST so it covers video content)
   const warmUpDraw = () => {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, cw, ch);
-    console.log(`[composeVideoLive] warmUpDraw: drawing frameImg=${!!frameImg} isOverlay=${isOverlay} useSceneRendering=${useSceneRendering}`);
-    if (!isOverlay && !useSceneRendering && frameImg) {
-      console.log(`[composeVideoLive] drawing BKG frameImg at 0,0 to ${cw},${ch}`);
-      ctx.drawImage(frameImg, 0, 0, cw, ch);
-    }
+    if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
     if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
     for (const { el, slot } of entries) {
       drawVideoInSlot(ctx, el, slot);
@@ -1546,22 +1540,16 @@ export async function composeVideoLive(
         }
       }
     }
-    if (isOverlay && !useSceneRendering && frameImg) {
-      console.log(`[composeVideoLive] drawing OVERLAY frameImg at 0,0 to ${cw},${ch}`);
-      ctx.drawImage(frameImg, 0, 0, cw, ch);
-    }
+    if (isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
     if (sceneAfterPhotos.length > 0) drawSceneElementsSync(ctx, sceneAfterPhotos, ch, sceneImages);
     if (decorImg && !useSceneRendering) ctx.drawImage(decorImg, 0, 0, cw, ch);
     if (options.trialWatermark) drawCenteredWatermark(ctx, cw, ch, options.trialWatermarkText ?? "Trial");
-    // Sample mid-frame pixel to verify frame content
-    const mid = ctx.getImageData(Math.floor(cw / 2), Math.floor(ch / 2), 1, 1).data;
-    console.log(`[composeVideoLive] warmUpDraw mid-pixel: RGBA=${mid[0]},${mid[1]},${mid[2]},${mid[3]}`);
   };
-  // 3 warm-up draws at ~16ms apart → video decoder has time to output real frames
+  // 3 warm-up draws at ~200ms apart → video decoder has time to output real frames
   warmUpDraw();
-  await new Promise<void>((r) => setTimeout(r, 50));
+  await new Promise<void>((r) => setTimeout(r, 200));
   warmUpDraw();
-  await new Promise<void>((r) => setTimeout(r, 50));
+  await new Promise<void>((r) => setTimeout(r, 200));
   warmUpDraw();
   // Verify canvas isn't blank before starting recorder
   const midSample = ctx.getImageData(Math.floor(cw / 2), Math.floor(ch / 2), 1, 1).data;
