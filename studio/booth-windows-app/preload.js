@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("fremioBooth", {
   reload: () => ipcRenderer.invoke("booth:reload"),
   getBridgeStatus: () => ipcRenderer.invoke("bridge:get-status"),
   restartBridge: () => ipcRenderer.invoke("bridge:restart"),
+  getAgentLogs: () => ipcRenderer.invoke("booth:get-agent-logs"),
   // Agent proxy (bypass mixed-content from HTTPS page)
   agentStatus: () => ipcRenderer.invoke("agent:status"),
   agentCapture: () => ipcRenderer.invoke("agent:capture"),

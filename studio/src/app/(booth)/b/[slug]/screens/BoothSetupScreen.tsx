@@ -553,7 +553,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               } : undefined),
             },
           };
-          setAgentBase("http://127.0.0.1:3002");
+          setAgentBase("http://127.0.0.1:7432");
         }
       }
 
@@ -584,7 +584,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
         if (!status && ipcRes.ok && ipcRes.payload) {
           status = ipcRes.payload as AgentStatusPayload;
-          setAgentBase("http://127.0.0.1:3002");
+          setAgentBase("http://127.0.0.1:7432");
         } else if (!ipcRes.ok) {
           lastError = new Error(ipcRes.error || "Agent status IPC gagal");
         }
@@ -593,18 +593,19 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       // ── 2. Fallback: direct HTTP fetch ──
       if (!status) {
         const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+        // Agent ports: 7432 = Electron app (embedded), 3002 = browser/development
         const candidates = isHttps
           ? [
-              "https://localhost:3002",
+              "https://127.0.0.1:7432",
               "https://127.0.0.1:3002",
-              "http://localhost:3002",
-              "http://127.0.0.1:3002",
+              "https://localhost:7432",
+              "https://localhost:3002",
             ]
           : [
-              "http://localhost:3002",
+              "http://127.0.0.1:7432",
               "http://127.0.0.1:3002",
-              "https://localhost:3002",
-              "https://127.0.0.1:3002",
+              "http://localhost:7432",
+              "http://localhost:3002",
             ];
 
         for (const base of candidates) {
@@ -647,7 +648,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
         if (previewRes.ok && previewRes.base64) {
           status = buildCanonFallbackStatus(status);
-          setAgentBase("http://127.0.0.1:3002");
+          setAgentBase("http://127.0.0.1:7432");
         }
       }
 
@@ -657,7 +658,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
       if (!status && typeof window !== "undefined" && window.fremioBooth) {
         status = buildCanonFallbackStatus(null);
-        setAgentBase("http://127.0.0.1:3002");
+        setAgentBase("http://127.0.0.1:7432");
       }
 
       if (!status) {

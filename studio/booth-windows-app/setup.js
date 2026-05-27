@@ -1,6 +1,19 @@
 let bridgePollTimer = null;
 let bridgePollingEnabled = false;
 
+// Agent logs shortcut: Ctrl+Shift+G — open logs in prompt
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.shiftKey && e.key === "G") {
+    e.preventDefault();
+    window.fremioBooth?.getAgentLogs?.().then((logs) => {
+      const stderr = logs?.stderr || "(no stderr)";
+      const stdout = logs?.stdout || "(no stdout)";
+      const info = `PID: ${logs?.pid || "none"}\nAgent: ${logs?.agentEntryPath || logs?.agentRootPath || "unknown"}\nRunning: ${logs?.running}\n\n--- STDERR ---\n${stderr.slice(-2000)}\n\n--- STDOUT ---\n${stdout.slice(-2000)}`;
+      window.prompt("Agent Logs (Ctrl+C to copy):", info);
+    }).catch((e) => window.alert("Gagal ambil log: " + e.message));
+  }
+});
+
 const launcherSession = {
   operatorName: "",
   booths: [],

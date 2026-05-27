@@ -209,9 +209,10 @@ export function DeliveryScreen({ booth, sessionId, downloadUrl, photoUrl, printI
         return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
       };
 
+      // Try 7432 (Electron app) first, then 3002 (browser/development)
       const agentCandidates = [
-        "http://127.0.0.1:3002",
-        "http://localhost:3002",
+        "http://127.0.0.1:7432",
+        "http://localhost:7432",
         "http://127.0.0.1:3002",
         "http://localhost:3002",
       ];

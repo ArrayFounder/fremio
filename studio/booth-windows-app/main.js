@@ -1192,6 +1192,20 @@ function registerIpcHandlers() {
     return getBridgeStatus();
   });
 
+  // ── Agent logs (for debugging in Setup window) ─────────────────────────────
+  ipcMain.handle("booth:get-agent-logs", () => {
+    return {
+      pid: hardwareAgentProcess?.pid || null,
+      exit: hardwareAgentExit,
+      stdout: hardwareAgentStdout,
+      stderr: hardwareAgentStderr,
+      running: Boolean(hardwareAgentProcess && !hardwareAgentProcess.killed),
+      agentRootPath: getAgentRootPath(),
+      agentExePath: getAgentExecutablePath(),
+      agentEntryPath: getAgentEntryPath(),
+    };
+  });
+
   // ── Agent proxy (bypass mixed-content restriction from HTTPS page) ──
   ipcMain.handle("agent:status", async () => {
     try {

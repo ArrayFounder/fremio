@@ -12,13 +12,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "[deploy] SSH OK: $result"
 
-Write-Host "[deploy] Uploading agent dist/server.js..."
-& "C:\Windows\System32\OpenSSH\scp.exe" -i $sshKey -o StrictHostKeyChecking=no "$localStudio\agent\dist\server.js" "$vps`:$vpsStudio/agent/dist/server.js"
-if ($LASTEXITCODE -ne 0) { exit 1 }
-
-Write-Host "[deploy] Uploading agent bin/edsdk-bridge-native.exe..."
-& "C:\Windows\System32\OpenSSH\scp.exe" -i $sshKey -o StrictHostKeyChecking=no "$localStudio\agent\bin\edsdk-bridge-native.exe" "$vps`:$vpsStudio/agent/bin/edsdk-bridge-native.exe"
-if ($LASTEXITCODE -ne 0) { exit 1 }
+# Legacy agent dist upload removed — agent/ is gphoto2 legacy, not used on VPS
+# Active agent (studio/agent/) is deployed via git pull + npm run build
 
 Write-Host "[deploy] Git pull latest code..."
 & "C:\Windows\System32\OpenSSH\ssh.exe" -i $sshKey -o StrictHostKeyChecking=no $vps "cd $vpsStudio && git pull" 2>&1

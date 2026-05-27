@@ -215,7 +215,7 @@ export function FrameSelectScreen({ booth, frames, cameraDeviceId, onSelect, onB
       // Strategy: append img to DOM immediately after the overlay renders,
       // then set src. Browsers progressively render partial MJPEG data
       // without needing onload. QR scanning starts on first paint.
-      const agentBase = "http://127.0.0.1:3002";
+      const agentBase = sessionStorage.getItem("booth_agent_base") || "http://127.0.0.1:7432";
 
       // Wait for #qr-canon-img to be in the DOM (React renders it after state commit)
       let container: HTMLElement | null = null;

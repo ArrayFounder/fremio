@@ -1116,7 +1116,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             if (data.camera?.available) {
               const capabilities = data.camera.capabilities;
               useIpcAgentRef.current = true;
-              setAgentBase("http://127.0.0.1:3002");
               setDslrAvailable(true);
               setDslrModel(data.camera.cameras?.[0]?.model ?? "DSLR");
               setDslrSupportsCapture(capabilities?.supportsCapture !== false);
@@ -1132,14 +1131,14 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       }
 
       // ── 2. Fallback: direct HTTP fetch ──
-      // Agent listens on HTTP (127.0.0.1:3002) — always try HTTP first for local agent.
-      // Mixed Content: browser upgrades http→https for same origin, but for 127.0.0.1
-      // it keeps HTTP (which is fine since it's local-only and insecure transport doesn't
-      // matter for a local agent). We try in order of most likely to work.
+      // Agent ports vary by platform:
+//   - Browser/development: agent runs on port 3002 (studio/agent/src/server.ts)
+//   - Electron app (embedded): agent runs on port 7432 (booth-windows-app/main.js → embedded-agent)
+// Both ports may be tried to maximize compatibility.
       const candidates = [
+        "http://127.0.0.1:7432",
         "http://127.0.0.1:3002",
-        "http://localhost:3002",
-        "http://127.0.0.1:3002",
+        "http://localhost:7432",
         "http://localhost:3002",
       ];
 
