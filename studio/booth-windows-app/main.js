@@ -1236,6 +1236,323 @@ function registerIpcHandlers() {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
+
+  // ── Native FFmpeg video compositing (DSLR path) ────────────────────────────
+  // Bypasses browser HTMLVideoElement decode limits by running FFmpeg in a
+  // child process. FFmpeg decodes multiple MJPEG blobs via OS-level APIs with
+  // hardware acceleration — no browser decoder contention.
+  ipcMain.handle("booth:compose-video-live", async (event, { blobs, meta }) => {
+    try {
+      const result = await composeVideoLiveWithFFmpeg(blobs, meta);
+      return result;
+    } catch (error) {
+      console.error("[booth:compose-video-live] error:", error.message);
+      return { ok: false, error: error.message };
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// composeVideoLiveWithFFmpeg — native video compositing handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @param {ArrayBuffer[]} blobs — array of video blobs (ArrayBuffer)
+ * @param {object} meta — frame compositing metadata
+ *   slots: [{ x, y, w, h, photoIndex }] — slot positions
+ *   frameAssetUrl: string
+ *   overlayUrl?: string
+ *   canvasWidth: number (e.g. 1080)
+ *   canvasHeight: number (e.g. 1920)
+ *   backgroundColor: string
+ *   duration: number (ms)
+ *   fps: number
+ *   captureSource: "dslr"
+ * @returns {{ ok: true, dataUrl: string } | { ok: false, error: string }}
+ */
+async function composeVideoLiveWithFFmpeg(blobs, meta) {
+  const { app } = require("electron");
+  const path = require("path");
+  const fs   = require("fs");
+  const https = require("https");
+  const http  = require("http");
+  const { spawn } = require("child_process");
+
+  const tempDir = path.join(app.getPath("temp"), "fremio-composite");
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+  const uniqueId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+  const tempFiles = []; // track all created files for cleanup
+
+  function cleanup() {
+    for (const f of tempFiles) {
+      try { fs.unlinkSync(f); } catch {}
+    }
+    try { fs.rmdirSync(tempDir); } catch {}
+  }
+
+  // ── 1. Write video blobs to temp .webm files ───────────────────────────
+  // Each unique video blob → temp file
+  const blobFiles = []; // [{ index, filePath }]
+  for (let i = 0; i < blobs.length; i++) {
+    const filePath = path.join(tempDir, `input_${uniqueId}_${i}.webm`);
+    fs.writeFileSync(filePath, Buffer.from(blobs[i]));
+    blobFiles.push({ index: i, filePath });
+    tempFiles.push(filePath);
+  }
+
+  // ── 2. Download frame PNG to temp ──────────────────────────────────────
+  let frameFile = null;
+  if (meta.frameAssetUrl) {
+    frameFile = await downloadUrlToFile(meta.frameAssetUrl, path.join(tempDir, `frame_${uniqueId}.png`), tempFiles);
+  }
+  if (!frameFile || !fs.existsSync(frameFile)) {
+    // Create blank frame
+    frameFile = path.join(tempDir, `frame_${uniqueId}_blank.png`);
+    // Create a minimal 1×1 transparent PNG
+    const blank = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+      "base64"
+    );
+    fs.writeFileSync(frameFile, blank);
+    tempFiles.push(frameFile);
+  }
+
+  // ── 3. Find FFmpeg binary ───────────────────────────────────────────────
+  const ffmpegPath = getFFmpegPath();
+  if (!ffmpegPath) {
+    cleanup();
+    return { ok: false, error: "FFmpeg not found. Please re-install the booth app." };
+  }
+
+  // ── 4. Build FFmpeg filter graph ───────────────────────────────────────
+  const cw = Math.round((meta.canvasWidth || 1080) * 0.5);
+  const ch = Math.round((meta.canvasHeight || 1920) * 0.5);
+  const fps = meta.fps || 30;
+  const durationSec = (meta.duration || 4000) / 1000;
+
+  const { filterGraph, outputLabel, inputLabels } = buildFilterGraph(
+    blobFiles, meta.slots || [], frameFile, cw, ch
+  );
+
+  // ── 5. Build FFmpeg args ───────────────────────────────────────────────
+  // [0] = frame PNG, [1..N] = video blobs
+  const ffmpegArgs = [
+    "-y",
+    "-loop", "1", "-i", frameFile,   // input 0: frame background
+    ...blobFiles.flatMap((bf) => ["-i", bf.filePath]), // inputs 1..N: videos
+    "-filter_complex", filterGraph,
+    "-map", `[${outputLabel}]`,
+    "-t", String(durationSec),
+    "-r", String(fps),
+    "-c:v", "libx264",
+    "-preset", "ultrafast",
+    "-crf", "23",
+    "-pix_fmt", "yuv420p",
+    path.join(tempDir, `output_${uniqueId}.mp4`),
+  ];
+
+  const outputPath = path.join(tempDir, `output_${uniqueId}.mp4`);
+  tempFiles.push(outputPath);
+
+  console.log(`[composeVideoLiveWithFFmpeg] ffmpeg args:`, ffmpegArgs.join(" "));
+  console.log(`[composeVideoLiveWithFFmpeg] tempDir=${tempDir}`);
+
+  // ── 6. Spawn FFmpeg ────────────────────────────────────────────────────
+  const result = await new Promise((resolve) => {
+    const child = spawn(ffmpegPath, ffmpegArgs, { stdio: "pipe" });
+    let stderr = "";
+    child.stderr.on("data", (d) => { stderr += d.toString(); });
+    child.on("error", (err) => {
+      console.error("[FFmpeg] spawn error:", err.message);
+      resolve({ ok: false, error: err.message });
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        console.error("[FFmpeg] exit code:", code, stderr.slice(-1000));
+        resolve({ ok: false, error: `FFmpeg exited with code ${code}: ${stderr.slice(-500)}` });
+      } else {
+        resolve({ ok: true, outputPath, stderr: stderr.slice(-500) });
+      }
+    });
+    // Timeout: 90 seconds
+    setTimeout(() => {
+      child.kill();
+      resolve({ ok: false, error: "FFmpeg timed out after 90s" });
+    }, 90000);
+  });
+
+  if (!result.ok) {
+    cleanup();
+    return result;
+  }
+
+  // ── 7. Read output MP4 → base64 data URL ────────────────────────────────
+  if (!fs.existsSync(result.outputPath)) {
+    cleanup();
+    return { ok: false, error: "FFmpeg produced no output file" };
+  }
+
+  const mp4Data = fs.readFileSync(result.outputPath);
+  const base64  = mp4Data.toString("base64");
+  const mimeType = "video/mp4";
+  const dataUrl  = `data:${mimeType};base64,${base64}`;
+
+  console.log(`[composeVideoLiveWithFFmpeg] output size = ${mp4Data.length} bytes (${(mp4Data.length / 1024 / 1024).toFixed(2)} MB)`);
+
+  cleanup();
+  return { ok: true, dataUrl };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FFmpeg path resolution (check bundled → tools/ffmpeg/ffmpeg.exe)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getFFmpegPath() {
+  const { app } = require("electron");
+
+  const searchPaths = [
+    // Bundled in installer
+    path.join(process.resourcesPath || "", "ffmpeg", "ffmpeg.exe"),
+    // Development mode: relative to app root
+    path.join(app.getAppPath(), "tools", "ffmpeg", "ffmpeg.exe"),
+    // Portable: next to main.js
+    path.join(__dirname, "..", "tools", "ffmpeg", "ffmpeg.exe"),
+    // System PATH
+    "ffmpeg",
+  ];
+
+  for (const p of searchPaths) {
+    try {
+      if (p === "ffmpeg" || fs.existsSync(p)) {
+        const test = require("child_process").execSync(`"${p === "ffmpeg" ? "ffmpeg" : p}" -version 2>&1 | head -1`, { timeout: 5000, encoding: "utf8" });
+        if (test.includes("ffmpeg")) {
+          console.log(`[getFFmpegPath] found at: ${p}`);
+          return p === "ffmpeg" ? "ffmpeg" : p;
+        }
+      }
+    } catch {}
+  }
+
+  // Search in extraResources path
+  const extraResourcesPath = path.join(path.dirname(app.getPath("exe")), "resources", "ffmpeg", "ffmpeg.exe");
+  if (fs.existsSync(extraResourcesPath)) return extraResourcesPath;
+
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FFmpeg filter graph builder
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build FFmpeg filter_complex string from slot metadata.
+ * Layout: frame PNG (input 0) as background, videos (inputs 1+) overlaid on top.
+ * Uses overlay filter chains — each overlay draws a video ON TOP of the previous.
+ *
+ * @param {Array<{index, filePath}>} blobFiles
+ * @param {Array<{x,y,w,h,photoIndex}>} slots
+ * @param {string} frameFile
+ * @param {number} cw — canvas width (e.g. 540)
+ * @param {number} ch — canvas height (e.g. 960)
+ * @returns {{ filterGraph, outputLabel, inputLabels }}
+ */
+function buildFilterGraph(blobFiles, slots, frameFile, cw, ch) {
+  const filters = [];
+  const inputLabels = []; // for logging
+
+  // Input 0 is the frame
+  const frameLabel = "[0:v]";
+
+  // Scale frame to output dimensions
+  filters.push(`${frameLabel}scale=${cw}:${ch}:force_original_aspect_ratio=decrease,setsar=1[bg]`);
+
+  // Collect unique video indices (handle duplicate mode — same video in multiple slots)
+  const uniqueVideos = [];
+  const seenVideoIndices = new Set();
+  for (const slot of slots) {
+    const videoIdx = (slot.photoIndex || 0) + 1; // +1 because input 0 is frame
+    if (!seenVideoIndices.has(videoIdx)) {
+      seenVideoIndices.add(videoIdx);
+      uniqueVideos.push(videoIdx);
+    }
+  }
+
+  // Scale each unique video to fit its slot, pad to slot bbox, chain overlays
+  let lastLabel = "[bg]";
+  const slotGroups = new Map(); // videoIdx → slots that use it
+
+  for (const slot of slots) {
+    const videoIdx = (slot.photoIndex || 0) + 1;
+    if (!slotGroups.has(videoIdx)) slotGroups.set(videoIdx, []);
+    slotGroups.get(videoIdx).push(slot);
+  }
+
+  for (const [videoIdx, groupSlots] of slotGroups) {
+    const vLabel = `v${videoIdx}`; // e.g. v1, v2, v3
+
+    // Scale + crop to fit slot
+    // For duplicate 3×2: slot size = cw/2 × ch/3
+    // Scale video to fit within slot, pad with black bars
+    filters.push(
+      `[${videoIdx}:v]scale=iw*min(${slot.w || cw}:iw)/iw:ih*min(${slot.h || ch}:ih)/ih:` +
+      `force_original_aspect_ratio=decrease:` +
+      `force_divisible_by=2[` +
+      `pre${vLabel}];` +
+      `[pre${vLabel}]pad=${slot.w || cw}:${slot.h || ch}:` +
+      `(${(slot.w || cw)}-iw)/2:(${(slot.h || ch)}-ih)/2:black:setsar=1[${vLabel}]`
+    );
+
+    // Chain overlays for each slot that uses this video
+    for (const slot of groupSlots) {
+      const overlayX = Math.round(slot.x * 0.5); // scale from full res to 50%
+      const overlayY = Math.round(slot.y * 0.5);
+      const nextLabel = `[tmp${videoIdx}_${slot.photoIndex}]`;
+      filters.push(`[${lastLabel}][${vLabel}]overlay=${overlayX}:${overlayY}${nextLabel}`);
+      lastLabel = nextLabel;
+    }
+  }
+
+  const outputLabel = lastLabel.replace("[", "").replace("]", "") || "out";
+
+  const filterGraph = filters.join(";");
+  console.log("[buildFilterGraph] filter:", filterGraph.slice(0, 500));
+
+  return { filterGraph, outputLabel, inputLabels };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// downloadUrlToFile helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+function downloadUrlToFile(url, destPath, tempFiles) {
+  return new Promise((resolve, reject) => {
+    if (!url || typeof url !== "string") { resolve(null); return; }
+
+    const protocol = url.startsWith("https") ? https : http;
+    const file = fs.createWriteStream(destPath);
+    tempFiles.push(destPath);
+
+    protocol.get(url, { timeout: 15000 }, (res) => {
+      if (res.statusCode === 302 || res.statusCode === 301) {
+        file.close();
+        downloadUrlToFile(res.headers.location, destPath, tempFiles).then(resolve).catch(reject);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        file.close();
+        console.warn(`[downloadUrlToFile] HTTP ${res.statusCode} for ${url.slice(0,80)}`);
+        resolve(null); return;
+      }
+      res.pipe(file);
+      file.on("finish", () => { file.close(); resolve(destPath); });
+    }).on("error", (err) => {
+      try { fs.unlinkSync(destPath); } catch {}
+      console.warn(`[downloadUrlToFile] error: ${err.message}`);
+      resolve(null);
+    });
+  });
 }
 
 function registerShortcuts() {

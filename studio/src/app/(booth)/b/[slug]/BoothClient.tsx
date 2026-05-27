@@ -17,6 +17,7 @@ import { DeliveryScreen }       from "./screens/DeliveryScreen";
 import { BoothSetupScreen, loadHardwareSettings } from "./screens/BoothSetupScreen";
 import { PromoBannerOverlay } from "./screens/PromoBannerOverlay";
 import { composeVideoLive, isOverlayFrame } from "@/lib/frameEngine";
+import { tryNativeVideoCompose, isNativeVideoComposingAvailable } from "@/lib/nativeVideoCompose";
 import { EMPTY_SESSION, type BoothConfigData, type BoothHardwareSettings, type BoothScreen, type BoothSessionState, type FrameData, type PaymentMethod, type VoucherInfo } from "./types";
 import VoucherScreen from "./screens/VoucherScreen";
 import { BoothTimer } from "./screens/BoothTimer";
@@ -606,6 +607,49 @@ export function BoothClient({ booth, frames, previewScreen }: BoothClientProps) 
     const effectiveSlots = getEffectiveSlots(frame);
     const resolvedEffectiveSlots = mapSlotsToCaptureIndexes(effectiveSlots, isEffectiveDuplicateMode(frame));
 
+    // ── Capture source detection ─────────────────────────────────────────
+    // Read from sessionStorage — set by BoothSetupScreen when user picks DSLR/webcam
+    const captureSource: "dslr" | "webcam" =
+      (typeof sessionStorage !== "undefined" && sessionStorage.getItem("booth_camera_source") === "dslr")
+        ? "dslr"
+        : "webcam";
+
+    // ── Try native FFmpeg first (DSLR in Electron app) ─────────────────
+    // FFmpeg bypasses browser decode limits and handles multiple MJPEG blobs natively.
+    // Only attempt if: (a) captureSource=dslr, (b) native API available, (c) slots defined.
+    const useNative = captureSource === "dslr" && isNativeVideoComposingAvailable() && resolvedEffectiveSlots.length > 0;
+
+    if (useNative) {
+      // Cast slots through JSON round-trip to satisfy TypeScript's structural mismatch
+      // between PhotoSlot (borderRadius optional) vs NativeFrameMeta slots (zIndex required)
+      const nativeMeta = {
+        slots:           JSON.parse(JSON.stringify(resolvedEffectiveSlots)) as Parameters<typeof tryNativeVideoCompose>[1]["slots"],
+        frameAssetUrl:   frame.assetUrl,
+        overlayUrl:      frame.overlayUrl ?? undefined,
+        canvasWidth:     frame.canvasWidth  || 1080,
+        canvasHeight:    frame.canvasHeight || 1920,
+        backgroundColor: frame.backgroundColor || "#ffffff",
+        duration:        Math.max(1000, (booth.countdownDuration ?? 8) * 1000 - 1000),
+        fps:             30,
+        captureSource:   "dslr" as const,
+      };
+
+      console.log("[BoothClient] compositing: DSLR detected → trying native FFmpeg path...");
+      let nativeCancelled = false;
+      tryNativeVideoCompose(session.capturedVideos, nativeMeta)
+        .then((blob) => {
+          console.log("[BoothClient] native compositing:", blob ? `OK (${(blob.size/1024/1024).toFixed(2)} MB)` : "FAILED — falling back to browser");
+          if (!nativeCancelled) dispatch({ type: "LIVE_VIDEO_DONE", payload: blob ?? rawBlob });
+        })
+        .catch((err) => {
+          console.error("[BoothClient] native compositing exception:", err);
+          if (!nativeCancelled) dispatch({ type: "LIVE_VIDEO_DONE", payload: rawBlob });
+        });
+
+      return () => { nativeCancelled = true; };
+    }
+
+    // ── Browser-based compositing (webcam or native unavailable) ─────────
     const compositingTimeout = new Promise<Blob | null>((_, reject) => {
       setTimeout(() => reject(new Error("Compositing timeout (180s)")), 180000);
     });

@@ -18,4 +18,7 @@ contextBridge.exposeInMainWorld("fremioBooth", {
   agentPreview: () => ipcRenderer.invoke("agent:preview"),
   agentPreviewStreamUrl: (cacheKey) => `fremio-agent://local/preview-stream?t=${encodeURIComponent(String(cacheKey || Date.now()))}`,
   agentPrint: (job) => ipcRenderer.invoke("agent:print", job),
+  // Native FFmpeg video compositing (DSLR path — bypasses browser decode limits)
+  composeVideoLive: (blobs, meta) => ipcRenderer.invoke("booth:compose-video-live", { blobs, meta }),
+  isNativeVideoComposingSupported: () => true, // always available in Electron app
 });

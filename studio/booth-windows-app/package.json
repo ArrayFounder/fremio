@@ -46,6 +46,11 @@
         "from": "tools",
         "to": "tools",
         "filter": ["**/*"]
+      },
+      {
+        "from": "tools/ffmpeg",
+        "to": "ffmpeg",
+        "filter": ["*.exe"]
       }
     ],
     "win": {
