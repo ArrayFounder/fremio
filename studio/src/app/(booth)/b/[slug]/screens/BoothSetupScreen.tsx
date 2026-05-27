@@ -17,6 +17,15 @@ declare global {
       agentPreview: () => Promise<{ ok: boolean; base64?: string; mimeType?: string; error?: string }>;
       agentPreviewStreamUrl?: (cacheKey?: string | number) => string;
       agentPrint: (job: unknown) => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
+      getAgentLogs?: () => Promise<{
+        pid: number | null;
+        running: boolean;
+        stdout: string;
+        stderr: string;
+        agentRootPath?: string;
+        agentExePath?: string;
+        agentEntryPath?: string;
+      }>;
     };
   }
 }
@@ -131,6 +140,13 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
   const agentCheckInFlightRef = useRef<Promise<void> | null>(null);
   const previewRecoveryInFlightRef = useRef(false);
   const lastPreviewRecoveryAtRef = useRef(0);
+  const [agentLogsOpen, setAgentLogsOpen] = useState(false);
+  const [agentLogsData, setAgentLogsData] = useState<{
+    pid: number | null;
+    running: boolean;
+    stdout: string;
+    stderr: string;
+  } | null>(null);
 
   const restartCanonPreviewBridge = useCallback(async (reason: string): Promise<boolean> => {
     if (typeof window === "undefined") return false;
@@ -1188,7 +1204,102 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
           className="w-full text-center text-[11px] py-0.5" style={{ color: textTertiary }}>
           Reset pengaturan
         </button>
+        {!isTabletMode && (
+          <button
+            onClick={async () => {
+              setAgentLogsOpen(true);
+              setAgentLogsData(null);
+              try {
+                const logs = await window.fremioBooth?.getAgentLogs?.();
+                setAgentLogsData(logs ?? null);
+              } catch {
+                setAgentLogsData(null);
+              }
+            }}
+            className="w-full text-center text-[11px] py-0.5"
+            style={{ color: textTertiary }}>
+            Lihat Log Agent
+          </button>
+        )}
       </div>
+
+      {/* ── Agent Logs Modal ─────────────────────────────────────────────── */}
+      {agentLogsOpen && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          onClick={() => setAgentLogsOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl p-4 flex flex-col gap-3 max-h-[80vh] overflow-hidden"
+            style={{ background: surfaceBg, border: `1px solid ${surfaceBorder}` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold" style={{ color: textPrimary }}>Log Agent</p>
+              <button
+                onClick={() => setAgentLogsOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold"
+                style={{ background: surfaceBorder, color: textSecondary }}
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-[11px]" style={{ color: textTertiary }}>
+              {agentLogsData
+                ? `PID: ${agentLogsData.pid ?? "none"} | Running: ${agentLogsData.running}`
+                : "Memuat..."}
+            </p>
+            <div className="flex flex-col gap-2 overflow-y-auto">
+              <div>
+                <p className="text-[10px] font-bold uppercase mb-1" style={{ color: textSecondary }}>STDOUT</p>
+                <textarea
+                  readOnly
+                  rows={6}
+                  value={agentLogsData ? agentLogsData.stdout.slice(-3000) : ""}
+                  className="w-full rounded-xl text-[11px] px-3 py-2 resize-none outline-none"
+                  style={{
+                    background: "#1e1e1e",
+                    color: "#d4d4d4",
+                    fontFamily: "Consolas, monospace",
+                    border: `1px solid ${surfaceBorder}`,
+                  }}
+                />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase mb-1" style={{ color: textSecondary }}>STDERR</p>
+                <textarea
+                  readOnly
+                  rows={6}
+                  value={agentLogsData ? agentLogsData.stderr.slice(-3000) : ""}
+                  className="w-full rounded-xl text-[11px] px-3 py-2 resize-none outline-none"
+                  style={{
+                    background: "#1e1e1e",
+                    color: "#d4d4d4",
+                    fontFamily: "Consolas, monospace",
+                    border: `1px solid ${surfaceBorder}`,
+                  }}
+                />
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (!agentLogsData) return;
+                const text = `=== FREMIO AGENT LOG ===\nPID: ${agentLogsData.pid ?? "none"} | Running: ${agentLogsData.running}\n\n--- STDOUT ---\n${agentLogsData.stdout.slice(-3000)}\n\n--- STDERR ---\n${agentLogsData.stderr.slice(-3000)}`;
+                try {
+                  await navigator.clipboard.writeText(text);
+                } catch {
+                  window.prompt("Salin manual (Ctrl+C):", text);
+                }
+              }}
+              className="w-full py-2 rounded-xl text-xs font-bold"
+              style={{ background: `${accentColor}22`, color: accentColor }}
+            >
+              Salin ke Clipboard
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
