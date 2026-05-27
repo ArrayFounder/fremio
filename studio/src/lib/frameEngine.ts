@@ -1389,6 +1389,7 @@ export async function composeVideoLive(
   if (options.overlayUrl) {
     try { decorImg = await loadImage(proxifyUrl(options.overlayUrl)); } catch { /* dekorasi opsional */ }
   }
+  console.log(`[composeVideoLive] frameImg loaded: ${!!frameImg} frameAssetUrl=${safeFrameUrl.slice(0,80)} isOverlay=${isOverlay}`);
   const sceneImages = new Map<string, HTMLImageElement>();
   await Promise.all(
     canvasScene
@@ -1402,6 +1403,7 @@ export async function composeVideoLive(
         }
       })
   );
+  console.log(`[composeVideoLive] sceneImages: ${sceneImages.size} images, useSceneRendering=${useSceneRendering}`);
 
   // ── 3. Load + tunggu setiap video siap ────────────────────────────────────
   await Promise.all(entries.map((e) => {
@@ -1533,10 +1535,15 @@ export async function composeVideoLive(
   // capturing — otherwise captureStream sees a blank canvas (all-black or solid color).
   // We do 3 warm-up draws at 16ms intervals so the video decoder has time to
   // produce frames from the blob source.
+  console.log(`[composeVideoLive] warmUpDraw frameImg: isOverlay=${isOverlay} frameImg=${!!frameImg} useSceneRendering=${useSceneRendering} decorImg=${!!decorImg}`);
   const warmUpDraw = () => {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, cw, ch);
-    if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
+    console.log(`[composeVideoLive] warmUpDraw: drawing frameImg=${!!frameImg} isOverlay=${isOverlay} useSceneRendering=${useSceneRendering}`);
+    if (!isOverlay && !useSceneRendering && frameImg) {
+      console.log(`[composeVideoLive] drawing BKG frameImg at 0,0 to ${cw},${ch}`);
+      ctx.drawImage(frameImg, 0, 0, cw, ch);
+    }
     if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
     for (const { el, slot } of entries) {
       drawVideoInSlot(ctx, el, slot);
@@ -1552,10 +1559,16 @@ export async function composeVideoLive(
         }
       }
     }
-    if (isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
+    if (isOverlay && !useSceneRendering && frameImg) {
+      console.log(`[composeVideoLive] drawing OVERLAY frameImg at 0,0 to ${cw},${ch}`);
+      ctx.drawImage(frameImg, 0, 0, cw, ch);
+    }
     if (sceneAfterPhotos.length > 0) drawSceneElementsSync(ctx, sceneAfterPhotos, ch, sceneImages);
     if (decorImg && !useSceneRendering) ctx.drawImage(decorImg, 0, 0, cw, ch);
     if (options.trialWatermark) drawCenteredWatermark(ctx, cw, ch, options.trialWatermarkText ?? "Trial");
+    // Sample mid-frame pixel to verify frame content
+    const mid = ctx.getImageData(Math.floor(cw / 2), Math.floor(ch / 2), 1, 1).data;
+    console.log(`[composeVideoLive] warmUpDraw mid-pixel: RGBA=${mid[0]},${mid[1]},${mid[2]},${mid[3]}`);
   };
   // 3 warm-up draws at ~16ms apart → video decoder has time to output real frames
   warmUpDraw();
