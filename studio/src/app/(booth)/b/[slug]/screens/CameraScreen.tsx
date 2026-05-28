@@ -600,9 +600,13 @@ interface LivePreviewCanvasProps {
   isDuplicate:     boolean;
   allPhotosDone:   boolean;
   activeSlotIndex: number;
+  /** When true, the RAF preview-polling loop runs regardless of stream value.
+   *  Needed in live_view mode (no stream) for DSLR MJPEG sources that need
+   *  continuous agentPreview() polling to decode frames into offscreenImgRef. */
+  dslrPollingActive?: boolean;
 }
 
-function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex, setCachedPreviewBase64 }: LivePreviewCanvasProps & { setCachedPreviewBase64?: (base64: string, mimeType: string) => void }) {
+function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex, setCachedPreviewBase64, dslrPollingActive = false }: LivePreviewCanvasProps & { setCachedPreviewBase64?: (base64: string, mimeType: string) => void }) {
   const canvasRef           = useRef<HTMLCanvasElement>(null);
   const hiddenVidRef        = useRef<HTMLVideoElement>(null);
   const frameBaseImgRef     = useRef<HTMLImageElement | null>(null);
@@ -667,6 +671,13 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   // Directly poll agentPreview() in a RAF loop, decode JPEG via createImageBitmap
   // (faster than HTMLImageElement onload), and store in offscreenImgRef.
   // The draw loop then reads offscreenImgRef as primary source.
+  //
+  // IMPORTANT: dependency is dslrPollingActive, NOT stream.
+  // - fullscreen mode: stream is always non-null (MediaStream from webcam or captureStream)
+  // - live_view mode: stream is ALWAYS null but DSLR still needs polling.
+  //   If we used [stream] as dependency, the effect would never re-run in live_view mode,
+  //   the RAF loop would never poll agentPreview() → offscreenImgRef stays null forever →
+  //   canvas draws stale dslrPreviewImgRef image → preview freezes after capture.
   useEffect(() => {
     let rafId: number;
     let lastFetchTime = 0;
@@ -703,7 +714,7 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
     rafId = requestAnimationFrame(pollFast);
     return () => cancelAnimationFrame(rafId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream]);
+  }, [dslrPollingActive]);
 
   // Attach stream to hidden video + explicitly play (autoPlay can be blocked for invisible elements)
   useEffect(() => {
@@ -2804,6 +2815,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 isDuplicate={isDuplicate}
                 allPhotosDone={allPhotosDone}
                 activeSlotIndex={capturedCount}
+                dslrPollingActive={dslrMode && capturePhase === "idle"}
               />
               {/* Tombol × retake */}
               {allPhotosDone && effectiveSlots.map((slot) => {
