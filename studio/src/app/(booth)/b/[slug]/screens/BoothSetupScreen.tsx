@@ -513,8 +513,29 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
       let status: AgentStatusPayload | null = null;
       let lastError: unknown = null;
 
-      // ── 1. Coba IPC Electron (booth-windows-app) ──
-      if (typeof window !== "undefined" && window.fremioBooth?.getBridgeStatus) {
+      // ── PRIORITAS 1: Agent lokal di port 3002 — SELALU pakai ini jika tersedia ──
+      // BoothSetupScreen harus set port 3002 ke sessionStorage SEBELUM kamera terdeteksi.
+      // Ini BUKAN fallback — ini default utama karena embedded app juga jalan di 3002.
+      if (typeof window !== "undefined") {
+        try {
+          const localRes = await fetch("http://127.0.0.1:3002/status", {
+            signal: AbortSignal.timeout(2000),
+          });
+          if (localRes.ok) {
+            // Agent tersedia di port 3002 — langsung pakai, tanpa syarat camera.available.
+            // WAJID: tulis ke sessionStorage SEKARA NG karena BoothSetupScreen tidak
+            // remount CameraScreen — CameraScreen baca sessionStorage saat mount.
+            sessionStorage.setItem("booth_agent_base", "http://127.0.0.1:3002");
+            sessionStorage.setItem("booth_agent_online", "true");
+            console.log("[BoothSetupScreen] Agent di port 3002 tersedia — langsung tulis sessionStorage");
+            status = await localRes.json() as AgentStatusPayload;
+            setAgentBase("http://127.0.0.1:3002");
+          }
+        } catch { /* agent lokal tidak tersedia — lanjut ke fallback */ }
+      }
+
+      // ── 2. IPC Electron (booth-windows-app) — FALLBACK jika port 3002 tidak tersedia ──
+      if (!status && typeof window !== "undefined" && window.fremioBooth?.getBridgeStatus) {
         const bridgeRes = await new Promise<BridgeStatusPayload | null>((resolve) => {
           let settled = false;
           const timer = setTimeout(() => {
@@ -539,7 +560,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
             });
         });
 
-        if (bridgeRes && (bridgeRes.ok || bridgeRes.running)) {
+        if (bridgeRes && bridgeRes.ok) {
           const raw = bridgeRes.raw ?? {};
           const bridgeDevices = Array.isArray(bridgeRes.cameraDevices)
             ? bridgeRes.cameraDevices.map((cam, index) => ({
@@ -569,10 +590,11 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
               } : undefined),
             },
           };
-          setAgentBase("http://127.0.0.1:7432");
+          setAgentBase("http://127.0.0.1:3002");
         }
       }
 
+      // ── PRIORITAS 2: IPC embedded agent via main process ──
       if (typeof window !== "undefined" && window.fremioBooth?.agentStatus) {
         const ipcRes = await new Promise<{ ok: boolean; payload?: unknown; error?: string }>((resolve) => {
           let settled = false;
@@ -600,7 +622,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
         if (!status && ipcRes.ok && ipcRes.payload) {
           status = ipcRes.payload as AgentStatusPayload;
-          setAgentBase("http://127.0.0.1:7432");
+          setAgentBase("http://127.0.0.1:3002");
         } else if (!ipcRes.ok) {
           lastError = new Error(ipcRes.error || "Agent status IPC gagal");
         }
@@ -613,9 +635,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         // served dari remote HTTPS (studio.fremio.id) tapi agent di localhost HTTP.
         const candidates = [
           "http://127.0.0.1:3002",
-          "http://127.0.0.1:7432",
           "http://localhost:3002",
-          "http://localhost:7432",
         ];
 
         for (const base of candidates) {
@@ -658,7 +678,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
         if (previewRes.ok && previewRes.base64) {
           status = buildCanonFallbackStatus(status);
-          setAgentBase("http://127.0.0.1:7432");
+          setAgentBase("http://127.0.0.1:3002");
         }
       }
 
@@ -668,7 +688,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
       if (!status && typeof window !== "undefined" && window.fremioBooth) {
         status = buildCanonFallbackStatus(null);
-        setAgentBase("http://127.0.0.1:7432");
+        setAgentBase("http://127.0.0.1:3002");
       }
 
       if (!status) {
@@ -955,7 +975,7 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
         {!isTabletMode && agentOnline === true && dslrCameras.length > 0 && (
           <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            <span className="text-[10px] font-bold" style={{ color: "#86efac" }}>Agent aktif — {dslrCameras.length} kamera</span>
+            <span className="text-[10px] font-bold" style={{ color: "#86efac" }}>Agent :{agentBase?.replace("http://127.0.0.1:","")} aktif — {dslrCameras.length} kamera</span>
           </div>
         )}
         {!isTabletMode && agentOnline === false && (

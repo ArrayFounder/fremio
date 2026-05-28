@@ -13,7 +13,7 @@ const DEFAULT_CONFIG = {
   kiosk: true,
 };
 
-const BRIDGE_PORT = 7432;
+const BRIDGE_PORT = 3002;
 const BRIDGE_STATUS_URL = `http://127.0.0.1:${BRIDGE_PORT}/status`;
 const BRIDGE_HEALTH_URL = `http://127.0.0.1:${BRIDGE_PORT}/health`;
 const MAX_LOG_CHARS = 4000;
