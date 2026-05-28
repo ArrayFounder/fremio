@@ -1717,6 +1717,10 @@ app.post("/capture", async (req: Request, res: Response) => {
       // before preview can grab the port again. This mirrors /trigger-shot behavior.
       previewRestartBlockedUntil = Date.now() + 5000;
       console.log(`[agent] /capture: capture done, blocking preview restart for 5s`);
+      // CRITICAL: reset captureInProgress so preview can restart for next session.
+      // Without this, the next startSharedPreviewProcess() call is always blocked.
+      captureHandlerInFlight = false;
+      captureInProgress = false;
       if (wantsBinary) {
         res.setHeader("Content-Type", "image/jpeg");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
