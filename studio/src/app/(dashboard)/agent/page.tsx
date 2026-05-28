@@ -53,9 +53,6 @@ const WIN_STEPS = [
 ];
 
 const WINDOWS_SETUP_FILE       = "fremio-booth-windows-setup.exe";
-const WINDOWS_AGENT_ONLY_FILE  = "fremio-agent-win.exe";
-const WINDOWS_BUNDLE_FILE      = "fremio-agent-win-bundle.zip";
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AgentPage() {
@@ -199,47 +196,6 @@ export default function AgentPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
                   Download
-                </a>
-              </div>
-
-              {/* Bundle download — agent + EDSDK DLLs for Canon DSLR */}
-              <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-green-50 border border-green-100">
-                <div>
-                  <p className="font-semibold text-green-900 text-sm">
-                    Agent + Canon EDSDK <span className="text-xs font-normal text-green-600">(Recommended)</span>
-                  </p>
-                  <p className="text-xs text-green-700 mt-0.5">
-                    Agent bridge + Canon EDSDK DLLs (~44 MB). Untuk pakai kamera Canon DSLR tanpa install full app.
-                  </p>
-                </div>
-                <a
-                  href={`/downloads/${WINDOWS_BUNDLE_FILE}`}
-                  download={WINDOWS_BUNDLE_FILE}
-                  className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
-                  style={{ background: "linear-gradient(135deg, #16a34a, #15803d)" }}
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  Download
-                </a>
-              </div>
-
-              {/* Agent only — standalone bridge without EDSDK */}
-              <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-amber-50 border border-amber-100">
-                <div>
-                  <p className="font-semibold text-amber-900 text-sm">Agent Bridge Saja <span className="text-xs font-normal text-amber-600">(Advanced)</span></p>
-                  <p className="text-xs text-amber-700 mt-0.5">
-                    Hanya bridge hardware (~37 MB). Untuk pengguna yang sudah punya EDSDK atau tidak pakai Canon.
-                  </p>
-                </div>
-                <a
-                  href={`/downloads/${WINDOWS_AGENT_ONLY_FILE}`}
-                  download={WINDOWS_AGENT_ONLY_FILE}
-                  className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-95"
-                  style={{ background: "linear-gradient(135deg, #d97706, #b45309)" }}
-                >
-                  Agent Only
                 </a>
               </div>
 
