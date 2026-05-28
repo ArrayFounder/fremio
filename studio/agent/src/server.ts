@@ -1371,10 +1371,16 @@ app.post("/trigger-shot", async (_req: Request, res: Response) => {
         preArmedCaptureInFlight = null;
         preArmedShootFired = false;
         captureInProgress = false;
-        previewRestartBlockedUntil = 0;
+        // Block preview restart for 5s — USB session needs time to fully release
+        // before preview can grab the port again. Without this, the watchdog
+        // immediately restarts preview and the next arm-capture hits 0xC0.
+        previewRestartBlockedUntil = Date.now() + 5000;
+        console.log(`[agent] /trigger-shot: capture done, blocking preview restart for 5s`);
         lastArmedBridgeExitedAt = Date.now();
         if (hadPreviewSession) {
-          setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
+          // Restart preview after 5s (when block expires), not immediately.
+          // This gives USB session time to fully release so next arm-capture succeeds.
+          setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 5000);
         }
       })
       .catch((err) => {
