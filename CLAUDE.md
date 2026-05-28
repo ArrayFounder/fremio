@@ -26,7 +26,7 @@ fremio/
 │
 ├── agent/               # ⚠️ LEGACY — gphoto2 agent (TIDAK DIGUNAKAN lagi)
 │   ├── src/
-│   │   ├── index.js     # Agent server (port 7432) — LEGACY
+│   │   ├── index.js     # Agent server (port 7432) — LEGACY gphoto2, TIDAK DIGUNAKAN
 │   │   ├── camera.js    # gphoto2 integration — LEGACY, sudah tidak aktif
 │   │   └── printer.js   # CUPS/PowerShell printing
 │   └── README.md        # Agent documentation (outdated)
@@ -509,6 +509,7 @@ Setelah edit: `nginx -t && nginx -s reload`
 - Active agent: `studio/agent/` (TypeScript) — dikompilasi jadi `fremio-agent-win.exe`
 - Legacy agent: `agent/` (gphoto2) — TIDAK dipakai, jangan diedit
 - Exposes HTTP on port 3002, protocol handler: `fremio-agent://local/*` → `http://127.0.0.1:3002/*`
+- **UNIFIED PORT**: Both standalone agent (local dev) AND embedded agent (Electron app) use port 3002. Port 7432 no longer exists — removed.
 - GitHub deploys do NOT update the local agent — operators must update manually
 
 ---
