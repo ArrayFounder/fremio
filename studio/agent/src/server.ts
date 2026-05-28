@@ -1686,8 +1686,17 @@ app.post("/capture", async (req: Request, res: Response) => {
       }
 
       // ── PRE-ARMED PATH ────────────────────────────────────────────────────────
+      // CRITICAL: Stop preview BEFORE firing SHOOT. The preview bridge holds
+      // the USB session open. If we fire SHOOT while preview is still running,
+      // the armed bridge gets 0xC0 (CommPortIsAlreadyOpen) on every attempt.
+      // This mirrors the behavior of /trigger-shot (used by browser).
+      console.log(`[agent] /capture: pre-armed path, stopping preview first... t=${Date.now()-t0}ms`);
+      await stopActivePreviewStreams(200);
+      await new Promise<void>((r) => setTimeout(r, 800)); // USB settle
+      lastPreviewBridgeExitedAt = Date.now();
+
       const tmpFile = armed.outputPath;
-      console.log(`[agent] /capture: pre-armed path, awaiting readyPromise... t=${Date.now()-t0}ms`);
+      console.log(`[agent] /capture: preview stopped, awaiting readyPromise... t=${Date.now()-t0}ms`);
       await armed.readyPromise;
       const tAfterReady = Date.now();
       console.log(`[agent] /capture: readyPromise resolved in ${tAfterReady-t0}ms, calling shootFn...`);
@@ -1704,8 +1713,10 @@ app.post("/capture", async (req: Request, res: Response) => {
       const buf = fs.readFileSync(outputPath);
       imageCapturedAt = Date.now();
       console.log(`[agent] /capture: pre-armed done in ${Date.now()-t0}ms`);
-      // Clear preview restart block so camera can return to live view
-      previewRestartBlockedUntil = 0;
+      // Block preview restart for 5s — USB session needs time to fully release
+      // before preview can grab the port again. This mirrors /trigger-shot behavior.
+      previewRestartBlockedUntil = Date.now() + 5000;
+      console.log(`[agent] /capture: capture done, blocking preview restart for 5s`);
       if (wantsBinary) {
         res.setHeader("Content-Type", "image/jpeg");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -1713,9 +1724,10 @@ app.post("/capture", async (req: Request, res: Response) => {
       } else {
         res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
       }
-      // Restart preview immediately so camera returns to live view
+      // Restart preview after 5s (when block expires), not immediately.
+      // This gives USB session time to fully release.
       if (hadPreviewSession) {
-        setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 30);
+        setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 5000);
       }
       return;
     }
