@@ -1050,6 +1050,15 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     }
   }, [agentBase]);
 
+  // ── Reset agent session state on mount ──
+  // Clears stale capture guards (imageCapturedAt, preArmedShootFired, etc.)
+  // from previous sessions so the new session starts clean.
+  // Use agentBase (prop from BoothSetupScreen = 3002), NOT agentBaseRef (from stale sessionStorage = 7432).
+  useEffect(() => {
+    if (!agentBase) return;
+    fetch(`${agentBase}/reset-session`, { method: "POST" }).catch(() => {/* ignore */});
+  }, [agentBase]);
+
   // After 6s of DSLR mode being active, allow capture even if live preview hasn't loaded.
   // This prevents a permanently-disabled capture button when preview stalls or fails.
   useEffect(() => {
@@ -1092,6 +1101,19 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+
+    // ── PRIORITAS 1: pakai agent dari BoothSetupScreen (sessionStorage) ──
+    // BoothSetupScreen mendeteksi port 3002 duluan jika local agent tersedia.
+    // CameraScreen harus ikut agentBase yang sudah ditentukan, bukan membuat baru.
+    const savedAgent = sessionStorage.getItem("booth_agent_base");
+    if (savedAgent && (savedAgent.startsWith("http://127.0.0.1:3002") || savedAgent.startsWith("http://localhost:3002"))) {
+      agentBaseRef.current = savedAgent;
+      useIpcAgentRef.current = false;
+      console.log("[CameraScreen] Menggunakan agent dari BoothSetupScreen:", savedAgent);
+      return; // Tidak perlu deteksi lagi — BoothSetupScreen sudah set
+    }
+
+    // ── PRIORITAS 2: IPC Electron (hanya jika tidak ada savedAgent) ──
     if (window.fremioBooth?.agentCapture) {
       useIpcAgentRef.current = true;
     }
@@ -1134,12 +1156,13 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       // Agent ports vary by platform:
 //   - Browser/development: agent runs on port 3002 (studio/agent/src/server.ts)
 //   - Electron app (embedded): agent runs on port 7432 (booth-windows-app/main.js → embedded-agent)
-// Both ports may be tried to maximize compatibility.
+// PRIORITAS: Port 3002 dulu (local agent yang sudah terbukti work)
+// baru coba port 7432 (embedded agent) jika 3002 tidak tersedia.
       const candidates = [
-        "http://127.0.0.1:7432",
-        "http://127.0.0.1:3002",
-        "http://localhost:7432",
+        "http://127.0.0.1:3002",  // Local agent — prioritas utama
+        "http://127.0.0.1:7432",  // Embedded agent — fallback
         "http://localhost:3002",
+        "http://localhost:7432",
       ];
 
       let healthyBase: string | null = null;
@@ -1401,7 +1424,9 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
   }, []);
 
   const captureFromAgent = useCallback(async (captureMirror = mirrorRef.current): Promise<string> => {
-    const base = agentBaseRef.current;
+    // Use agentBase (prop) + fallback chain. Do NOT rely solely on agentBaseRef
+    // which may be stale from previous session's sessionStorage (e.g. 7432).
+    const base = agentBase || agentBaseRef.current;
     if (!base && !(useIpcAgentRef.current && window.fremioBooth?.agentCapture)) {
       throw new Error("Agent lokal tidak terdeteksi. Pastikan Fremio Studio sudah dibuka.");
     }
@@ -2076,9 +2101,10 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
         if (willUseAgentCapture) {
           if (count === cd - 3) {
             // /arm-capture: arms camera WITHOUT stopping preview.
-            const base = agentBaseRef.current;
-            if (base) {
-              fetch(`${base}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(15000) })
+            // Use agentBase prop (BoothSetupScreen detection = 3002),
+            // NOT agentBaseRef.current (stale sessionStorage = 7432).
+            if (agentBase) {
+              fetch(`${agentBase}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(15000) })
                 .catch((e) => console.warn("[CameraScreen] arm-capture error:", e));
             }
           }
