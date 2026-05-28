@@ -1198,6 +1198,13 @@ app.post("/arm-capture", async (_req: Request, res: Response) => {
   await new Promise<void>((r) => setTimeout(r, 800));
   console.log(`[agent] /arm-capture: preview stopped, USB settle done`);
 
+  // CRITICAL: Block preview restart for 30s. This prevents the preview watchdog from
+  // immediately spawning a new preview bridge that races with the armed bridge for USB.
+  // Without this, the preview watchdog restarts preview within seconds and the armed
+  // bridge hits 0xC0 (CommPortIsAlreadyOpen) because the recovery bridge grabbed USB.
+  previewRestartBlockedUntil = Date.now() + 30000;
+  console.log("[agent] /arm-capture: preview restart blocked for 30s");
+
   // RESET capture guards for new session — camera is starting a fresh capture cycle.
   // Without this, imageCapturedAt from the previous session (60s window) blocks new captures.
   imageCapturedAt = 0;
