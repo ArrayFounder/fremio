@@ -608,21 +608,15 @@ export function BoothSetupScreen({ booth, onDone }: BoothSetupScreenProps) {
 
       // ── 2. Fallback: direct HTTP fetch ──
       if (!status) {
-        const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
-        // Agent ports: 7432 = Electron app (embedded), 3002 = browser/development
-        const candidates = isHttps
-          ? [
-              "https://127.0.0.1:7432",
-              "https://127.0.0.1:3002",
-              "https://localhost:7432",
-              "https://localhost:3002",
-            ]
-          : [
-              "http://127.0.0.1:7432",
-              "http://127.0.0.1:3002",
-              "http://localhost:7432",
-              "http://localhost:3002",
-            ];
+        // Local agent selalu HTTP — tidak pernah HTTPS. Jangan gunakan
+        // window.location.protocol untuk menentukan scheme karena page mungkin
+        // served dari remote HTTPS (studio.fremio.id) tapi agent di localhost HTTP.
+        const candidates = [
+          "http://127.0.0.1:3002",
+          "http://127.0.0.1:7432",
+          "http://localhost:3002",
+          "http://localhost:7432",
+        ];
 
         for (const base of candidates) {
           try {
