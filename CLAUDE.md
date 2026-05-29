@@ -481,7 +481,6 @@ Setelah edit: `nginx -t && nginx -s reload`
 | File | Deskripsi | Ukuran |
 |------|-----------|--------|
 | `fremio-booth-windows-setup.exe` | **Full Electron App** — installer Windows | ~107 MB |
-| `fremio-booth-windows-portable.zip` | Full Electron App — portable/ZIP | ~144 MB |
 | `fremio-agent-win.exe` | Agent Only — binary standalone | ~38 MB |
 | `fremio-agent-win-bundle/` | Agent + Canon EDSDK DLLs | ~44 MB zip |
 | `fremio-agent-mac-arm64` | macOS agent Apple Silicon | ~46 MB |
@@ -521,8 +520,7 @@ Setelah edit: `nginx -t && nginx -s reload`
 
 ### Output Build
 - `dist/Fremio Studio-Setup-X.X.XX.exe` → di-rename ke `public/downloads/fremio-booth-windows-setup.exe`
-- `dist/Fremio Studio-X.X.XX-win.zip` → di-rename ke `public/downloads/fremio-booth-windows-portable.zip`
-- Rename dilakukan via: `cd studio && npm run app:sync-downloads`
+- Hanya installer yang diupload ke VPS — tidak ada portable ZIP
 
 ### Build Requirements
 - Windows OS (tidak bisa cross-compile dari Linux/macOS)
@@ -565,9 +563,7 @@ ERROR: Cannot create symbolic link : A required privilege is not held by the cli
 
 ### Setelah Build Selesai
 1. Upload `public/downloads/fremio-booth-windows-setup.exe` ke VPS
-2. Upload `public/downloads/fremio-booth-windows-portable.zip` ke VPS
-3. Copy ke `/var/www/fremio/downloads/` di VPS
-4. Pastikan nginx punya rule untuk kedua file tersebut
+2. Copy ke `/var/www/fremio/downloads/` di VPS
 
 ---
 
