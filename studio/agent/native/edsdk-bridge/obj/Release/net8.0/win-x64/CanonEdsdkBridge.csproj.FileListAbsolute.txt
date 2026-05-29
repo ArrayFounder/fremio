@@ -409,3 +409,6 @@ C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\st
 C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\studio\agent\native\edsdk-bridge\obj\Release\net8.0\win-x64\edsdk-bridge-native.pdb
 C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\studio\agent\native\edsdk-bridge\obj\Release\net8.0\win-x64\CanonEdsdkBridge.genruntimeconfig.cache
 C:\Users\A.r.r.a.y.19\fremio.worktrees\agents-fix-canon-camera-capture-errors\studio\agent\native\edsdk-bridge\obj\Release\net8.0\win-x64\ref\edsdk-bridge-native.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\win-x64\Microsoft.Win32.SystemEvents.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\bin\Release\net8.0\win-x64\System.Drawing.Common.dll
+C:\Users\A.r.r.a.y.19\fremio\studio\agent\native\edsdk-bridge\obj\Release\net8.0\win-x64\CanonEdsdkBridge.csproj.AssemblyReference.cache

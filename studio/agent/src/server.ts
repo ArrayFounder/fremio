@@ -1176,6 +1176,22 @@ app.post("/camera-reset", async (_req: Request, res: Response) => {
   res.json({ ok: true, count: status.count, devices: status.devices });
 });
 
+app.post("/reset-session", (_req: Request, res: Response) => {
+  // Called when a new booth session starts (CameraScreen mounts).
+  // Clears all session-latched capture guards so the new session
+  // starts with a clean slate — no stale imageCapturedAt or
+  // previewRestartBlockedUntil blocking captures.
+  imageCapturedAt = 0;
+  preArmedShootFired = false;
+  shootLastFiredAt = 0;
+  captureLockFiredAt = 0;
+  preArmedCaptureInFlight = null;
+  previewRestartBlockedUntil = 0;
+  latestCaptureResult = null;
+  console.log("[agent] /reset-session: all capture guards cleared for new session");
+  res.json({ ok: true });
+});
+
 app.get("/printers", async (_req: Request, res: Response) => {
   const printers = await listPrinters();
   res.json({ ok: true, printers });
@@ -1701,6 +1717,8 @@ app.post("/capture", async (req: Request, res: Response) => {
       const tAfterReady = Date.now();
       console.log(`[agent] /capture: readyPromise resolved in ${tAfterReady-t0}ms, calling shootFn...`);
       armed.shootFn();
+      captureInProgress = false; // CRITICAL: reset immediately after SHOOT so next arm-capture is NOT blocked.
+      // Note: the final reset at line ~1723 still runs after completionPromise for safety.
       console.log(`[agent] /capture: shootFn done, awaiting completionPromise... t=${Date.now()-t0}ms`);
       const outputPath = await armed.completionPromise;
       console.log(`[agent] /capture: completionPromise resolved in ${Date.now()-t0}ms (took ${Date.now()-tAfterReady}ms)`);

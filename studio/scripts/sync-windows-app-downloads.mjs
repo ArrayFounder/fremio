@@ -7,7 +7,6 @@ const downloadsDir = path.join(studioRoot, "public", "downloads");
 
 const TARGET_FILES = {
   exe: "fremio-booth-windows-setup.exe",
-  zip: "fremio-booth-windows-portable.zip",
 };
 
 function byMtimeDesc(a, b) {
@@ -35,33 +34,20 @@ function copyFileSafe(source, target) {
 
 function main() {
   const newestExe = findNewestByExt(distDir, ".exe");
-  const newestZip = findNewestByExt(distDir, ".zip");
 
   const copiedExe = copyFileSafe(
     newestExe,
     path.join(downloadsDir, TARGET_FILES.exe),
   );
 
-  const copiedZip = copyFileSafe(
-    newestZip,
-    path.join(downloadsDir, TARGET_FILES.zip),
-  );
-
-  if (!copiedExe || !copiedZip) {
-    console.warn("[sync-downloads] Sebagian artefak belum ditemukan.");
-    if (!copiedExe) {
-      console.warn("- Installer .exe tidak ditemukan di booth-windows-app/dist");
-    }
-    if (!copiedZip) {
-      console.warn("- Portable .zip tidak ditemukan di booth-windows-app/dist");
-    }
+  if (!copiedExe) {
+    console.warn("[sync-downloads] Installer .exe tidak ditemukan di booth-windows-app/dist");
     console.warn("Jalankan build Windows dahulu: npm run build (di booth-windows-app)");
     process.exit(1);
   }
 
-  console.log("[sync-downloads] Sukses sinkronisasi file aplikasi:");
+  console.log(`[sync-downloads] Sukses sinkronisasi file aplikasi:`);
   console.log(`- ${TARGET_FILES.exe}`);
-  console.log(`- ${TARGET_FILES.zip}`);
 }
 
 main();

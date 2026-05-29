@@ -604,13 +604,9 @@ interface LivePreviewCanvasProps {
    *  Needed in live_view mode (no stream) for DSLR MJPEG sources that need
    *  continuous agentPreview() polling to decode frames into offscreenImgRef. */
   dslrPollingActive?: boolean;
-  /** Base64-encoded preview frame — updated by pollFast after each new frame.
-   *  When this changes, the draw loop picks it up and re-draws.
-   *  Also triggers React re-render so dslrImageRef gets fresh src onLoad. */
-  cachedPreviewBase64?: string | null;
 }
 
-function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex, setCachedPreviewBase64, dslrPollingActive = false, cachedPreviewBase64 }: LivePreviewCanvasProps & { setCachedPreviewBase64?: (base64: string, mimeType: string) => void }) {
+function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex, dslrPollingActive = false }: LivePreviewCanvasProps) {
   const canvasRef           = useRef<HTMLCanvasElement>(null);
   const hiddenVidRef        = useRef<HTMLVideoElement>(null);
   const frameBaseImgRef     = useRef<HTMLImageElement | null>(null);
@@ -2826,7 +2822,6 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 allPhotosDone={allPhotosDone}
                 activeSlotIndex={capturedCount}
                 dslrPollingActive={dslrMode && capturePhase === "idle"}
-                cachedPreviewBase64={cachedPreviewBase64}
               />
               {/* Tombol × retake */}
               {allPhotosDone && effectiveSlots.map((slot) => {

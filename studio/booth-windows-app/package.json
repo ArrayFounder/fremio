@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "electron .",
     "pack": "electron-builder --dir",
-    "build": "electron-builder --win nsis zip --x64",
+    "build": "electron-builder --win nsis --x64",
     "build:signed": "electron-builder --win nsis zip --x64 --config.win.certificateFile=%CSC_LINK% --config.win.certificatePassword=%CSC_KEY_PASSWORD%"
   },
   "devDependencies": {
