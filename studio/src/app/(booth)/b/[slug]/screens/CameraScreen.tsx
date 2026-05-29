@@ -1454,14 +1454,25 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
     try {
       let photoDataUrl: string = "";
       if (window.fremioBooth?.agentCapture) {
+        // Tampilkan overlay "filler" agar live preview berhenti di frame terakhir
+        setCapturePhase("filler");
         const ipcRes = await window.fremioBooth.agentCapture();
         if (!ipcRes.ok) {
+          setCapturePhase("idle"); // Cleanup state
           throw new Error(ipcRes.error || "Gagal ambil foto dari agent (IPC).");
         }
         const ipcData = ipcRes.payload as { ok: boolean; error?: string; image?: { base64: string; mimeType: string } } | undefined;
-        if (!ipcData?.ok) throw new Error(ipcData?.error || "Capture IPC gagal.");
-        if (!ipcData.image) throw new Error("Capture gagal: agent IPC tidak mengembalikan gambar.");
+        if (!ipcData?.ok) {
+          setCapturePhase("idle");
+          throw new Error(ipcData?.error || "Capture IPC gagal.");
+        }
+        if (!ipcData.image) {
+          setCapturePhase("idle");
+          throw new Error("Capture gagal: agent IPC tidak mengembalikan gambar.");
+        }
         photoDataUrl = `data:${ipcData.image.mimeType};base64,${ipcData.image.base64}`;
+        // Capture selesai — resume live preview polling
+        setCapturePhase("idle");
       } else if (base) {
         // SPLIT FLOW: POST /trigger-shot (non-blocking) → switch to "preparing" → poll /get-capture-result
         // Step 1: Fire SHOOT — returns shootFiredAt immediately after shutter fires

@@ -152,7 +152,7 @@ let armedCapture: ArmedCaptureState | null = null;
 const CAMERA_STATUS_CACHE_MS = 4000;
 const PREVIEW_STALL_TIMEOUT_MS = 3500;
 const PREVIEW_RESTART_WINDOW_MS = 30_000;
-const PREVIEW_RESTART_MAX_IN_WINDOW = 6;
+const PREVIEW_RESTART_MAX_IN_WINDOW = 9999;
 const PREVIEW_RESTART_KILL_GRACE_MS = 100; // OPTIMIZED: was 350ms — faster preview kill
 const PREVIEW_RESTART_START_DELAY_MS = 100; // OPTIMIZED: was 650ms — faster preview recovery
 
@@ -1396,7 +1396,22 @@ app.post("/trigger-shot", async (_req: Request, res: Response) => {
         if (hadPreviewSession) {
           // Restart preview after 5s (when block expires), not immediately.
           // This gives USB session time to fully release so next arm-capture succeeds.
-          setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 5000);
+          // IMPORTANT: call startSharedPreviewProcess() directly — don't rely on
+          // hasPreviewDemand() which returns false after capture (no active subscribers
+          // yet, because the browser's polling hasn't resumed). Without this direct
+          // call, preview stays dead for session 2 onwards.
+          const PREVIEW_RESTART_DELAY_MS = 5000;
+          const previewRestartAt = Date.now() + PREVIEW_RESTART_DELAY_MS;
+          console.log(`[agent] /trigger-shot: scheduling preview restart at t+${PREVIEW_RESTART_DELAY_MS}ms`);
+          const checkAndStart = () => {
+            if (Date.now() >= previewRestartAt) {
+              console.log("[agent] /trigger-shot: preview block expired, calling startSharedPreviewProcess()");
+              try { startSharedPreviewProcess(); } catch { /* ignore */ }
+            } else {
+              setTimeout(checkAndStart, 200);
+            }
+          };
+          setTimeout(checkAndStart, 200);
         }
       })
       .catch((err) => {
@@ -1717,8 +1732,9 @@ app.post("/capture", async (req: Request, res: Response) => {
       const tAfterReady = Date.now();
       console.log(`[agent] /capture: readyPromise resolved in ${tAfterReady-t0}ms, calling shootFn...`);
       armed.shootFn();
-      captureInProgress = false; // CRITICAL: reset immediately after SHOOT so next arm-capture is NOT blocked.
-      // Note: the final reset at line ~1723 still runs after completionPromise for safety.
+      // Do NOT reset captureInProgress here — let completionPromise handler do it.
+      // Resetting too early allows next /arm-capture to set captureInProgress=true
+      // while background completion is still running (race condition).
       console.log(`[agent] /capture: shootFn done, awaiting completionPromise... t=${Date.now()-t0}ms`);
       const outputPath = await armed.completionPromise;
       console.log(`[agent] /capture: completionPromise resolved in ${Date.now()-t0}ms (took ${Date.now()-tAfterReady}ms)`);
@@ -1726,6 +1742,8 @@ app.post("/capture", async (req: Request, res: Response) => {
       preArmedShootFired = false;
       if (!fs.existsSync(outputPath)) {
         res.status(500).json({ ok: false, error: "Foto berhasil diambil tapi file tidak ditemukan" });
+        captureInProgress = false;
+        captureHandlerInFlight = false;
         return;
       }
       const buf = fs.readFileSync(outputPath);
@@ -1735,10 +1753,6 @@ app.post("/capture", async (req: Request, res: Response) => {
       // before preview can grab the port again. This mirrors /trigger-shot behavior.
       previewRestartBlockedUntil = Date.now() + 5000;
       console.log(`[agent] /capture: capture done, blocking preview restart for 5s`);
-      // CRITICAL: reset captureInProgress so preview can restart for next session.
-      // Without this, the next startSharedPreviewProcess() call is always blocked.
-      captureHandlerInFlight = false;
-      captureInProgress = false;
       if (wantsBinary) {
         res.setHeader("Content-Type", "image/jpeg");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -1746,10 +1760,26 @@ app.post("/capture", async (req: Request, res: Response) => {
       } else {
         res.json({ ok: true, image: { base64: buf.toString("base64"), mimeType: "image/jpeg" } });
       }
-      // Restart preview after 5s (when block expires), not immediately.
-      // This gives USB session time to fully release.
+      // Reset capture flags and restart preview only AFTER response is sent.
+      // IMPORTANT: call startSharedPreviewProcess() directly — don't rely on
+      // hasPreviewDemand() which returns false after capture (no active subscribers
+      // yet, because the browser's polling hasn't resumed). Without this direct
+      // call, preview stays dead for session 2 onwards.
+      captureHandlerInFlight = false;
+      captureInProgress = false;
       if (hadPreviewSession) {
-        setTimeout(() => { try { startSharedPreviewProcess(); } catch { /* ignore */ } }, 5000);
+        const PREVIEW_RESTART_DELAY_MS = 5000;
+        const previewRestartAt = Date.now() + PREVIEW_RESTART_DELAY_MS;
+        console.log(`[agent] /capture: scheduling preview restart at t+${PREVIEW_RESTART_DELAY_MS}ms`);
+        const checkAndStart = () => {
+          if (Date.now() >= previewRestartAt) {
+            console.log("[agent] /capture: preview block expired, calling startSharedPreviewProcess()");
+            try { startSharedPreviewProcess(); } catch { /* ignore */ }
+          } else {
+            setTimeout(checkAndStart, 200);
+          }
+        };
+        setTimeout(checkAndStart, 200);
       }
       return;
     }

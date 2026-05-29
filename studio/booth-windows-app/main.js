@@ -442,12 +442,22 @@ function stopBridgeWatchdog() {
 
 function registerAgentProtocol() {
   protocol.handle("fremio-agent", async (request) => {
-    const parsed = new URL(request.url);
-    const endpoint = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : `/${parsed.hostname}`;
-    if (!["/preview-stream", "/preview", "/status", "/health"].includes(endpoint)) {
-      return new Response("Not found", { status: 404 });
+    try {
+      const parsed = new URL(request.url);
+      const endpoint = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : `/${parsed.hostname}`;
+      if (!["/preview-stream", "/preview", "/status", "/health"].includes(endpoint)) {
+        return new Response("Not found", { status: 404 });
+      }
+      const response = await electronNet.fetch(`http://127.0.0.1:${BRIDGE_PORT}${endpoint}${parsed.search}`);
+      return response;
+    } catch (err) {
+      // Agent (port 3002) is down or request failed — return 503 so browser can handle gracefully
+      console.error("[protocol] Agent request failed:", err.message);
+      return new Response(JSON.stringify({ ok: false, error: "Agent unavailable" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" }
+      });
     }
-    return electronNet.fetch(`http://127.0.0.1:${BRIDGE_PORT}${endpoint}${parsed.search}`);
   });
 }
 
@@ -1235,9 +1245,23 @@ function registerIpcHandlers() {
   ipcMain.handle("agent:preview", async () => {
     try {
       const url = `http://127.0.0.1:${BRIDGE_PORT}/preview`;
-      const buf = await requestBuffer(url, 8000);
+      const buf = await requestBuffer(url, 20000); // 20s — same as getBridgeStatus, allows time for Canon recovery after 0xC0 errors
       return { ok: true, base64: buf.toString("base64"), mimeType: "image/jpeg" };
     } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // Restart the embedded agent bridge — called when CameraScreen detects preview is down
+  ipcMain.handle("agent:restart-bridge", async () => {
+    try {
+      console.log("[launcher] agent:restart-bridge called via IPC");
+      await stopHardwareAgent();
+      await startHardwareAgent();
+      console.log("[launcher] agent:restart-bridge done");
+      return { ok: true };
+    } catch (error) {
+      console.error("[launcher] agent:restart-bridge failed:", error.message);
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
