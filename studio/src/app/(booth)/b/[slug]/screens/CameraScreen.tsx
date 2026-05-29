@@ -604,9 +604,13 @@ interface LivePreviewCanvasProps {
    *  Needed in live_view mode (no stream) for DSLR MJPEG sources that need
    *  continuous agentPreview() polling to decode frames into offscreenImgRef. */
   dslrPollingActive?: boolean;
+  /** Base64-encoded preview frame — updated by pollFast after each new frame.
+   *  When this changes, the draw loop picks it up and re-draws.
+   *  Also triggers React re-render so dslrImageRef gets fresh src onLoad. */
+  cachedPreviewBase64?: string | null;
 }
 
-function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex, setCachedPreviewBase64, dslrPollingActive = false }: LivePreviewCanvasProps & { setCachedPreviewBase64?: (base64: string, mimeType: string) => void }) {
+function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActive, dslrPosterMirror = false, mirror, frame, slots, capturedPhotos, isDuplicate, allPhotosDone, activeSlotIndex, setCachedPreviewBase64, dslrPollingActive = false, cachedPreviewBase64 }: LivePreviewCanvasProps & { setCachedPreviewBase64?: (base64: string, mimeType: string) => void }) {
   const canvasRef           = useRef<HTMLCanvasElement>(null);
   const hiddenVidRef        = useRef<HTMLVideoElement>(null);
   const frameBaseImgRef     = useRef<HTMLImageElement | null>(null);
@@ -620,8 +624,12 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
   const dslrPosterActiveRef = useRef<boolean>(dslrPosterActive ?? false);
   const dslrPosterMirrorRef = useRef<boolean>(dslrPosterMirror);
   const rafRef              = useRef<number>(0);
-  // Direct base64 cache from agent — avoid <img> tag decode overhead
-  const cachedBase64Ref     = useRef<string | null>(null);
+  // Direct base64 cache from agent — avoid <img> tag decode overhead.
+  // Stored in a React state so changes trigger LivePreviewCanvas re-render.
+  // The draw loop reads offscreenImgRef.current for speed (RAF loop),
+  // but we also set state so React re-renders the component and picks up
+  // new frames even if the RAF callback hasn't fired yet.
+  const [cachedPreviewBase64, setCachedPreviewBase64] = useState<string | null>(null);
   const cachedMimeTypeRef   = useRef<string>("image/jpeg");
   // Offscreen canvas for fast base64→Image drawing (avoids browser <img> tag)
   const offscreenCanvasRef  = useRef<HTMLCanvasElement | null>(null);
@@ -703,7 +711,9 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
             const blob = new Blob([buf], { type: cachedMimeTypeRef.current });
             createImageBitmap(blob).then((img) => {
               offscreenImgRef.current = img as unknown as HTMLImageElement;
-              if (setCachedPreviewBase64) setCachedPreviewBase64(res.base64!, cachedMimeTypeRef.current);
+              // Set React state → triggers re-render → draw loop picks up new frame
+              // This ensures canvas re-draws even if RAF hasn't ticked yet
+              setCachedPreviewBase64(res.base64!);
             }).catch(() => {});
           }
         }).catch(() => { fetchInFlight = false; });
@@ -932,7 +942,7 @@ function LivePreviewCanvas({ stream, dslrImageRef, dslrPosterSrc, dslrPosterActi
     return () => cancelAnimationFrame(rafRef.current);
   // capturedPhotos & activeSlotIndex intentionally omitted — read via refs to avoid restarting RAF loop
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream, dslrImageRef, cw, ch, frame.backgroundColor, slots, isDuplicate, n, mirror, allPhotosDone, resolveCaptureIndex, useSceneRendering, sceneBeforePhotos, sceneAfterPhotos]);
+  }, [stream, dslrImageRef, cw, ch, frame.backgroundColor, slots, isDuplicate, n, mirror, allPhotosDone, resolveCaptureIndex, useSceneRendering, sceneBeforePhotos, sceneAfterPhotos, cachedPreviewBase64]);
 
   return (
     <>
@@ -2115,7 +2125,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
             // Use agentBase prop (BoothSetupScreen detection = 3002),
             // NOT agentBaseRef.current (stale sessionStorage = 7432).
             if (agentBase) {
-              fetch(`${agentBase}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(15000) })
+              fetch(`${agentBase}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(30000) })
                 .catch((e) => console.warn("[CameraScreen] arm-capture error:", e));
             }
           }
@@ -2816,6 +2826,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 allPhotosDone={allPhotosDone}
                 activeSlotIndex={capturedCount}
                 dslrPollingActive={dslrMode && capturePhase === "idle"}
+                cachedPreviewBase64={cachedPreviewBase64}
               />
               {/* Tombol × retake */}
               {allPhotosDone && effectiveSlots.map((slot) => {
