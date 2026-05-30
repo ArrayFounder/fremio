@@ -106,6 +106,7 @@ let lastPreviewBridgeExitedAt = 0;
 let previewPreStoppedAt = 0;
 let captureInProgress = false; // Prevent preview auto-restart during capture
 let previewRestartBlockedUntil = 0; // Block preview restart for this window (timestamp). Prevents zombie preview bridge from grabbing USB between /prepare-capture and /capture.
+let postCaptureStallGraceUntil = 0; // Suppress stall recovery during post-capture stabilization window
 let captureHandlerInFlight = false; // Prevent duplicate /capture calls (separate from captureInProgress)
 let preArmedCaptureInFlight: ArmedCaptureState | null = null; // Guard: prevent second SHOOT during BRIDGE_READY wait
 /** Atomic lock — set the moment pre-armed SHOOT fires. Prevents inline path from firing a second SHOOT. */
@@ -265,6 +266,15 @@ function armPreviewStallMonitor(delayMs = PREVIEW_STALL_TIMEOUT_MS) {
     const staleForMs = latestPreviewFrameAt > 0
       ? Date.now() - latestPreviewFrameAt
       : Number.POSITIVE_INFINITY;
+
+    // Skip stall recovery during post-capture stabilization window.
+    // Camera takes ~15-20s to return to normal fps after TakePicture.
+    // Without this, we see 50+ recovery cycles at ~0.28fps post-capture.
+    if (staleForMs >= PREVIEW_STALL_TIMEOUT_MS && Date.now() < postCaptureStallGraceUntil) {
+      console.log(`[agent] armPreviewStallMonitor: skipping stall recovery (post-capture grace, staleForMs=${Math.round(staleForMs)})`);
+      armPreviewStallMonitor(PREVIEW_STALL_TIMEOUT_MS);
+      return;
+    }
 
     if (staleForMs >= PREVIEW_STALL_TIMEOUT_MS) {
       restartSharedPreviewProcess(`frame live view macet ${Math.round(staleForMs)}ms`);
@@ -1217,13 +1227,13 @@ app.post("/arm-capture", async (_req: Request, res: Response) => {
   // Wait for camera USB to be free from previous capture.
   // If the previous bridge crashed (AccessViolation, exited with non-zero code),
   // give it extra settle time — the USB session may be in a bad state.
-  const CRASH_SUSPECT_MS = 5000;
-  let USB_SETTLE_MS = 1500;
+  const CRASH_SUSPECT_MS = 3000;
+  let USB_SETTLE_MS = 500;
   if (lastArmedBridgeExitedAt > 0) {
     const elapsed = Date.now() - lastArmedBridgeExitedAt;
     if (elapsed < CRASH_SUSPECT_MS) {
       // Recent crash or unexpected exit — double settle time
-      USB_SETTLE_MS = 2500;
+      USB_SETTLE_MS = 1000;
       console.log(`[agent] /arm-capture: recent bridge exit (${elapsed}ms ago), using extended settle ${USB_SETTLE_MS}ms`);
     }
     if (elapsed < USB_SETTLE_MS) {
@@ -1289,6 +1299,7 @@ app.post("/arm-capture", async (_req: Request, res: Response) => {
       completionReject!(new Error(`Armed bridge exited without capture (code ${code})`));
     }
     if (armedCapture?.process === armedProcess) armedCapture = null;
+    if (preArmedCaptureInFlight?.process === armedProcess) preArmedCaptureInFlight = null;
   });
 
   armedProcess.on("error", (err) => {
@@ -1330,6 +1341,11 @@ app.post("/arm-capture", async (_req: Request, res: Response) => {
     console.error(`[agent] /arm-capture: BRIDGE_READY failed: ${(err as Error).message}`);
     try { armedProcess.kill(); } catch { /* ignore */ }
     if (armedCapture?.process === armedProcess) armedCapture = null;
+    // preArmedCaptureInFlight is set BEFORE the try block, so clean it up here.
+    // Casting to any is safe since we know armedProcess is the process we're cleaning up.
+    if ((preArmedCaptureInFlight as unknown as { process?: ReturnType<typeof spawn> } | null)?.process === armedProcess) {
+      preArmedCaptureInFlight = null;
+    }
     captureInProgress = false;
     res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
   }
@@ -1345,89 +1361,76 @@ app.post("/trigger-shot", async (_req: Request, res: Response) => {
   const hadPreviewSession = isPreviewSessionActive();
 
   // STOP PREVIEW at count=1 — this is the ONLY time we stop preview.
-  await stopActivePreviewStreams(200);
-  await new Promise<void>((r) => setTimeout(r, 800)); // USB settle
+  await stopActivePreviewStreams(100);
   lastPreviewBridgeExitedAt = Date.now();
   previewRestartBlockedUntil = 0;
 
   const armed = armedCapture;
-  if (armed) {
-    preArmedCaptureInFlight = armed;
-    console.log(`[agent] /trigger-shot: waiting for BRIDGE_READY before SHOOT... t=${Date.now()-t0}ms`);
-    try {
-      await armed.readyPromise;
-    } catch (err) {
-      console.error(`[agent] /trigger-shot: armed bridge died early: ${(err as Error).message}`);
-      preArmedCaptureInFlight = null;
-      armedCapture = null;
-      captureInProgress = false; // MUST reset so next capture can proceed
-      res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
-      return;
-    }
-  }
-
-  if (armed && preArmedCaptureInFlight === armed) {
-    // Armed bridge confirmed ready — fire SHOOT
-    const shootFiredAt = Date.now();
-    console.log(`[agent] /trigger-shot: BRIDGE_READY confirmed, firing SHOOT at ${Date.now()-t0}ms`);
-    armed.shootFn();
-
-    // Store shootFiredAt so GET /get-capture-result knows when shot fired
-    latestCaptureResult = { path: armed.outputPath, shootFiredAt, captureDoneAt: 0 };
-
-    // Return shootFiredAt immediately so CameraScreen can switch to "preparing"
-    res.json({ ok: true, shootFiredAt });
-
-    // Background: wait for completion + store result for /get-capture-result
-    armed.completionPromise
-      .then((outputPath) => {
-        const captureDoneAt = Date.now();
-        console.log(`[agent] /trigger-shot: capture done in ${captureDoneAt - t0}ms`);
-        latestCaptureResult = { path: outputPath, shootFiredAt, captureDoneAt };
-        preArmedCaptureInFlight = null;
-        preArmedShootFired = false;
-        captureInProgress = false;
-        // Block preview restart for 5s — USB session needs time to fully release
-        // before preview can grab the port again. Without this, the watchdog
-        // immediately restarts preview and the next arm-capture hits 0xC0.
-        previewRestartBlockedUntil = Date.now() + 5000;
-        console.log(`[agent] /trigger-shot: capture done, blocking preview restart for 5s`);
-        lastArmedBridgeExitedAt = Date.now();
-        if (hadPreviewSession) {
-          // Restart preview after 5s (when block expires), not immediately.
-          // This gives USB session time to fully release so next arm-capture succeeds.
-          // IMPORTANT: call startSharedPreviewProcess() directly — don't rely on
-          // hasPreviewDemand() which returns false after capture (no active subscribers
-          // yet, because the browser's polling hasn't resumed). Without this direct
-          // call, preview stays dead for session 2 onwards.
-          const PREVIEW_RESTART_DELAY_MS = 5000;
-          const previewRestartAt = Date.now() + PREVIEW_RESTART_DELAY_MS;
-          console.log(`[agent] /trigger-shot: scheduling preview restart at t+${PREVIEW_RESTART_DELAY_MS}ms`);
-          const checkAndStart = () => {
-            if (Date.now() >= previewRestartAt) {
-              console.log("[agent] /trigger-shot: preview block expired, calling startSharedPreviewProcess()");
-              try { startSharedPreviewProcess(); } catch { /* ignore */ }
-            } else {
-              setTimeout(checkAndStart, 200);
-            }
-          };
-          setTimeout(checkAndStart, 200);
-        }
-      })
-      .catch((err) => {
-        console.error(`[agent] /trigger-shot: completion error: ${err.message}`);
-        latestCaptureResult = null;
-        preArmedCaptureInFlight = null;
-        captureInProgress = false;
-        previewRestartBlockedUntil = 0;
-      });
+  if (!armed) {
+    console.warn("[agent] /trigger-shot: no armed bridge, falling back to inline");
+    captureInProgress = false;
+    res.status(503).json({ ok: false, error: "Armed bridge not available" });
     return;
   }
 
-  // No armed bridge — fallback inline
-  console.warn("[agent] /trigger-shot: no armed bridge, falling back to inline");
-  captureInProgress = false;
-  res.status(503).json({ ok: false, error: "Armed bridge not available — retry /trigger-shot or /trigger-capture" });
+  preArmedCaptureInFlight = armed;
+
+  // REVERTED: Wait for BRIDGE_READY before firing SHOOT.
+  // BRIDGE_READY means the armed bridge has:
+  //   1. Disabled EVF (camera switched from preview → capture mode)
+  //   2. Set SaveTo=Host (camera will send JPEG to PC, not card)
+  //   3. Forced ImageQuality=LJF (camera always sends JPEG)
+  // If we fire SHOOT before BRIDGE_READY, the camera receives EdsOpenSession +
+  // EVF disable + SaveTo + ImageQuality commands → causes the 3-5s "A→B" delay
+  // (camera switching from live view mode to capture mode).
+  // With cd=8, BRIDGE_READY arrives at ~11s; count=1 fires at ~7s → bridge is ready → SHOOT fires immediately.
+  // With cd=5, BRIDGE_READY arrives at ~11s; count=1 fires at ~4s → bridge not ready → wait ~6s.
+  console.log(`[agent] /trigger-shot: waiting for BRIDGE_READY before SHOOT... t=${Date.now()-t0}ms`);
+  try {
+    await armed.readyPromise;
+  } catch (err) {
+    console.error(`[agent] /trigger-shot: armed bridge died early: ${(err as Error).message}`);
+    preArmedCaptureInFlight = null;
+    captureInProgress = false;
+    res.status(500).json({ ok: false, error: normalizeBridgeErrorMessage((err as Error).message) });
+    return;
+  }
+
+  const shootFiredAt = Date.now();
+  console.log(`[agent] /trigger-shot: BRIDGE_READY confirmed, firing SHOOT at ${Date.now()-t0}ms`);
+  armed.shootFn();
+
+  latestCaptureResult = { path: armed.outputPath, shootFiredAt, captureDoneAt: 0 };
+  res.json({ ok: true, shootFiredAt });
+
+  armed.completionPromise
+    .then((outputPath) => {
+      const captureDoneAt = Date.now();
+      console.log(`[agent] /trigger-shot: capture done in ${captureDoneAt - t0}ms`);
+      latestCaptureResult = { path: outputPath, shootFiredAt, captureDoneAt };
+      preArmedCaptureInFlight = null;
+      preArmedShootFired = false;
+      captureInProgress = false;
+      lastArmedBridgeExitedAt = Date.now();
+      if (hadPreviewSession) {
+        const STALL_GRACE_MS = 10000;
+        postCaptureStallGraceUntil = Date.now() + STALL_GRACE_MS;
+        setTimeout(() => {
+          const blockUntil = Date.now() + 3000;
+          previewRestartBlockedUntil = 0;
+          console.log("[agent] /trigger-shot: capture done, starting preview immediately");
+          try { startSharedPreviewProcess(); } catch { /* ignore */ }
+          previewRestartBlockedUntil = blockUntil;
+        }, 100);
+      }
+    })
+    .catch((err) => {
+      console.error(`[agent] /trigger-shot: completion error: ${err.message}`);
+      latestCaptureResult = null;
+      preArmedCaptureInFlight = null;
+      captureInProgress = false;
+      previewRestartBlockedUntil = 0;
+    });
 });
 
 app.get("/get-capture-result", async (_req: Request, res: Response) => {
@@ -1668,6 +1671,7 @@ async function doPrepareCaptureInline(): Promise<{ process: ReturnType<typeof sp
     captureInProgress = false;
     // Clean up any stale armed capture from failed inline attempts
     if (armedCapture?.process === armedProcess) armedCapture = null;
+    if (preArmedCaptureInFlight?.process === armedProcess) preArmedCaptureInFlight = null;
   });
   armedProcess.on("error", (err) => {
     readyReject(err instanceof Error ? err : new Error(String(err)));
@@ -1704,11 +1708,14 @@ app.post("/capture", async (req: Request, res: Response) => {
     console.log(`[agent] /capture: armed=${!!armed} t=${Date.now()-t0}ms`);
 
     if (armed) {
-      // CRITICAL: set preArmedCaptureInFlight BEFORE nulling armedCapture and BEFORE any await.
+      // CRITICAL: set preArmedCaptureInFlight BEFORE any await.
       // This prevents a second /capture call from racing into the inline path and firing
       // a second SHOOT while we wait for BRIDGE_READY from the pre-armed bridge.
       preArmedCaptureInFlight = armed;
-      armedCapture = null; // Atomically claim this capture slot
+      // NOTE: Do NOT null armedCapture here! The completionPromise handler and
+      // armed bridge's exit handler will clear it. Nulling it early causes the
+      // completion handler to clear the NEXT armedCapture (from a new /arm-capture
+      // call) instead of the current one.
 
       if (preArmedCaptureInFlight !== armed) {
         // Should never happen, but guard against stale state
@@ -1749,10 +1756,6 @@ app.post("/capture", async (req: Request, res: Response) => {
       const buf = fs.readFileSync(outputPath);
       imageCapturedAt = Date.now();
       console.log(`[agent] /capture: pre-armed done in ${Date.now()-t0}ms`);
-      // Block preview restart for 5s — USB session needs time to fully release
-      // before preview can grab the port again. This mirrors /trigger-shot behavior.
-      previewRestartBlockedUntil = Date.now() + 5000;
-      console.log(`[agent] /capture: capture done, blocking preview restart for 5s`);
       if (wantsBinary) {
         res.setHeader("Content-Type", "image/jpeg");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -1768,18 +1771,22 @@ app.post("/capture", async (req: Request, res: Response) => {
       captureHandlerInFlight = false;
       captureInProgress = false;
       if (hadPreviewSession) {
-        const PREVIEW_RESTART_DELAY_MS = 5000;
-        const previewRestartAt = Date.now() + PREVIEW_RESTART_DELAY_MS;
-        console.log(`[agent] /capture: scheduling preview restart at t+${PREVIEW_RESTART_DELAY_MS}ms`);
-        const checkAndStart = () => {
-          if (Date.now() >= previewRestartAt) {
-            console.log("[agent] /capture: preview block expired, calling startSharedPreviewProcess()");
-            try { startSharedPreviewProcess(); } catch { /* ignore */ }
-          } else {
-            setTimeout(checkAndStart, 200);
-          }
-        };
-        setTimeout(checkAndStart, 200);
+        // OPTIMIZED: start preview IMMEDIATELY after JPEG is sent.
+        // The armed bridge has exited, releasing the USB session.
+        // Give a brief settle period (100ms) then start preview — no more 5s block.
+        // The stall monitor handles any low-fps frames during camera stabilization.
+        const STALL_GRACE_MS = 10000;
+        postCaptureStallGraceUntil = Date.now() + STALL_GRACE_MS;
+        lastArmedBridgeExitedAt = Date.now();
+        setTimeout(() => {
+          // Clear block and start preview immediately after armed bridge exits.
+          // The stall monitor handles any low-fps frames during camera stabilization.
+          // Do NOT reapply any blocking — recovery must be able to run immediately
+          // if the preview bridge fails.
+          previewRestartBlockedUntil = 0;
+          console.log("[agent] /capture: capture done, starting preview immediately");
+          try { startSharedPreviewProcess(); } catch { /* ignore */ }
+        }, 100);
       }
       return;
     }

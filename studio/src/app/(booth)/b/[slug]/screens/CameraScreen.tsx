@@ -1547,11 +1547,15 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       // after TakePicture + JPEG download — this takes ~2-4 seconds.
       // Setting booth_dslr_stream_release_until delays the preview effect from
       // restarting the MJPEG bridge until the camera is truly ready.
-      const RELEASE_DELAY_MS = 4000;
+      const RELEASE_DELAY_MS = 3000;
       if (typeof window !== "undefined") {
         sessionStorage.setItem("booth_dslr_stream_release_until", String(Date.now() + RELEASE_DELAY_MS));
       }
       captureInProgressRef.current = false;
+      // CRITICAL: clear dslrPreviewUrl so the preview effect's polling loop
+      // starts fetching new MJPEG frames from the agent. Without this, the old
+      // base64 data URL stays frozen and live view never returns.
+      setDslrPreviewUrl(null);
       setDslrPreviewPaused(false);
     }
   }, [dslrPosterSrc, useIpcAgentRef]);
@@ -2007,6 +2011,16 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
 
     const willUseAgentCapture = captureSource === "dslr" || (captureSource === "auto" && dslrAvailable);
 
+    // OPTIMIZED: Fire arm-capture IMMEDIATELY when user clicks "Ambil Foto".
+    // Bridge takes 5-12s to reach BRIDGE_READY. Arming here (before countdown
+    // even starts) gives the bridge maximum time to be ready by count=1.
+    // For cd=5: arm at T+0, shot at T+5s → bridge needs ≤5s to be ready.
+    // For cd=8: arm at T+0, shot at T+8s → bridge needs ≤8s to be ready.
+    if (willUseAgentCapture && agentBase) {
+      fetch(`${agentBase}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(30000) })
+        .catch((e) => console.warn("[CameraScreen] arm-capture error:", e));
+    }
+
       const captureAndDisplay = async () => {
         // Double-shot guard: if capture is already in flight (timer fired twice,
         // React re-rendered, or stale closure), bail out immediately.
@@ -2124,30 +2138,20 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
       if (count > 0) {
         setCountdown(count);
 
-        // DSLR pre-arm: fire at (countdownDuration - 3). Bridge needs ~3-4s to
-        // be BRIDGE_READY, so pre-arming gives ~2-3s margin before shot.
+        // DSLR pre-arm was fired in startCountdown (before countdown started).
+        // The bridge has the full countdown duration to initialize.
+        // Shot fires at count=1.
         if (willUseAgentCapture) {
-          if (count === cd - 3) {
-            // /arm-capture: arms camera WITHOUT stopping preview.
-            // Use agentBase prop (BoothSetupScreen detection = 3002),
-            // NOT agentBaseRef.current (stale sessionStorage = 7432).
-            if (agentBase) {
-              fetch(`${agentBase}/arm-capture`, { method: "POST", signal: AbortSignal.timeout(30000) })
-                .catch((e) => console.warn("[CameraScreen] arm-capture error:", e));
-            }
-          }
-
           if (count === 1) {
             // Shot fires when countdown reaches 1 (after cd→cd-1→...→1).
             // Live video stays up through the entire countdown.
             captureInProgressRef.current = true;
 
-            // Freeze countdown, show filler, trigger capture
-            setTimeout(() => {
-              setCountdown(null);
-              setCapturePhase("filler");
-              captureAndDisplay();
-            }, 150);
+            // Fire immediately — no setTimeout delay.
+            // This minimizes lag between the visible "1" and the actual shot.
+            setCountdown(null);
+            setCapturePhase("filler");
+            captureAndDisplay();
             return; // done with timer
           }
           // count === 2 or count 3: just keep going (don't skip)
@@ -2832,7 +2836,7 @@ export function CameraScreen({ booth, frame, photoIndex, capturedCount, captured
                 isDuplicate={isDuplicate}
                 allPhotosDone={allPhotosDone}
                 activeSlotIndex={capturedCount}
-                dslrPollingActive={dslrMode && capturePhase === "idle"}
+                dslrPollingActive={dslrMode && capturePhase !== "capturing"}
               />
               {/* Tombol × retake */}
               {allPhotosDone && effectiveSlots.map((slot) => {
