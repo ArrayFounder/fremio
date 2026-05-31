@@ -416,7 +416,7 @@ function startSharedPreviewProcess() {
   // Without this, a restarted preview can grab the USB session before the armed bridge spawns,
   // causing 0x000000C0 CommPortIsAlreadyOpen on ALL 8 armed bridge retries.
   if (captureInProgress) {
-    console.log("[agent] startSharedPreviewProcess: blocked (captureInProgress)");
+    console.log("[agent] startSharedPreviewProcess: blocked (captureInProgress=true)");
     return;
   }
 
@@ -424,8 +424,16 @@ function startSharedPreviewProcess() {
   // Without this, if /prepare-capture is abandoned (countdown cancelled), preview restarts
   // while the armed bridge is still trying to open the USB session → 0xC0.
   if (Date.now() < previewRestartBlockedUntil) {
-    console.log("[agent] startSharedPreviewProcess: blocked (previewRestartBlockedUntil)");
+    console.log(`[agent] startSharedPreviewProcess: blocked (previewRestartBlockedUntil=${previewRestartBlockedUntil}, now=${Date.now()}, remaining=${previewRestartBlockedUntil - Date.now()}ms)`);
     return;
+  }
+
+  if (!hasPreviewDemand()) {
+    console.log("[agent] startSharedPreviewProcess: no preview demand (previewFrameSubscribers=0, no recent consumers)");
+    // Do NOT return early — still start the process so next poll succeeds.
+    // hasPreviewDemand() returns false between capture completion and browser reconnect.
+    // Without this, preview stays dead for session 2+ when browser hasn't polled yet.
+    console.log("[agent] startSharedPreviewProcess: forcing start despite no demand");
   }
 
   updateCameraStatusCache(buildPreviewActiveCameraStatus());
@@ -1188,17 +1196,23 @@ app.post("/camera-reset", async (_req: Request, res: Response) => {
 
 app.post("/reset-session", (_req: Request, res: Response) => {
   // Called when a new booth session starts (CameraScreen mounts).
-  // Clears all session-latched capture guards so the new session
-  // starts with a clean slate — no stale imageCapturedAt or
-  // previewRestartBlockedUntil blocking captures.
+  // Clears ALL session-latched capture guards so the new session
+  // starts with a clean slate — no stale blocking state.
   imageCapturedAt = 0;
   preArmedShootFired = false;
   shootLastFiredAt = 0;
   captureLockFiredAt = 0;
   preArmedCaptureInFlight = null;
+  armedCapture = null;
   previewRestartBlockedUntil = 0;
+  // CRITICAL: Also clear captureInProgress and captureHandlerInFlight.
+  // These are normally cleared in finally blocks, but if a bridge crashed or
+  // the previous capture path errored, they can stay true and BLOCK the
+  // preview from restarting in session 2+.
+  captureInProgress = false;
+  captureHandlerInFlight = false;
   latestCaptureResult = null;
-  console.log("[agent] /reset-session: all capture guards cleared for new session");
+  console.log("[agent] /reset-session: ALL capture guards cleared for new session (captureInProgress, previewRestartBlockedUntil, armedCapture)");
   res.json({ ok: true });
 });
 
@@ -1790,8 +1804,6 @@ app.post("/capture", async (req: Request, res: Response) => {
       }
       return;
     }
-
-    // Armed bridge was already claimed by another /capture call — return conflict.
     if (preArmedCaptureInFlight !== null) {
       captureHandlerInFlight = false;
       captureInProgress = false;
