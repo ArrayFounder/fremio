@@ -1133,6 +1133,7 @@ function drawVideoInSlot(
   ctx:    CanvasRenderingContext2D,
   video:  HTMLVideoElement,
   slot:   CanvasSlot,
+  mirror: boolean = false,
 ): void {
   // Use ACTUAL video dimensions if available and non-zero.
   // If not yet decoded (videoWidth=0), fall back to canonical 1920×1080.
@@ -1163,6 +1164,11 @@ function drawVideoInSlot(
   }
 
   ctx.save();
+  if (mirror) {
+    // Flip horizontal: translate to right edge, scale -1
+    ctx.translate(slot.x + slot.w, 0);
+    ctx.scale(-1, 1);
+  }
   if (slot.rotation !== 0) {
     const cx = slot.x + slot.w / 2;
     const cy = slot.y + slot.h / 2;
@@ -1177,9 +1183,12 @@ function drawVideoInSlot(
     ctx.rect(slot.x, slot.y, slot.w, slot.h);
   }
   ctx.clip();
-  // NOTE: mirroring is done at recording time (CanvasScreen draws video with ctx.scale(-1,1)
-  // before captureStream, so the blob is already mirrored). No canvas mirroring here.
-  ctx.drawImage(video, sx, sy, sw, sh, slot.x, slot.y, slot.w, slot.h);
+  // Mirror-aware draw: when mirrored, flip the source crop too so content appears correctly
+  if (mirror) {
+    ctx.drawImage(video, sx + sw, sy, -sw, sh, slot.x, slot.y, slot.w, slot.h);
+  } else {
+    ctx.drawImage(video, sx, sy, sw, sh, slot.x, slot.y, slot.w, slot.h);
+  }
   ctx.restore();
 }
 
@@ -1257,6 +1266,7 @@ export async function composeVideoLive(
     return null;
   }
   console.log("[composeVideoLive] input blobs:", videoBlobs.map((b, i) => b ? `slot${i}=Blob(${b.size})` : `slot${i}=null`).join(", "));
+  console.log("[composeVideoLive] mirror =", options.mirror);
 
   // Scale to 50% — 540×960 was verified working. Higher resolution causes encoder stalls
   // at 60fps due to the combination of pixelFilters + many sceneElements + large canvas.
@@ -1485,7 +1495,7 @@ export async function composeVideoLive(
     probeCtx.fillStyle = bg;
     probeCtx.fillRect(0, 0, cw, ch);
     for (const { el, slot } of entries) {
-      try { drawVideoInSlot(probeCtx, el, slot); } catch { /* ignore */ }
+      try { drawVideoInSlot(probeCtx, el, slot, options.mirror); } catch { /* ignore */ }
     }
     // Check a pixel in the CENTER of the first slot — should NOT be pure black
     if (entries.length > 0) {
@@ -1565,7 +1575,7 @@ export async function composeVideoLive(
     if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
     if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
     for (const { el, slot } of entries) {
-      drawVideoInSlot(ctx, el, slot);
+      drawVideoInSlot(ctx, el, slot, options.mirror);
       if (pixelFilters) {
         const fx = Math.max(0, Math.floor(slot.x));
         const fy = Math.max(0, Math.floor(slot.y));
@@ -1637,7 +1647,7 @@ export async function composeVideoLive(
       if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
       if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
       for (const { el, slot } of entries) {
-        drawVideoInSlot(ctx, el, slot);
+        drawVideoInSlot(ctx, el, slot, options.mirror);
         if (pixelFilters) {
           const fx = Math.max(0, Math.floor(slot.x));
           const fy = Math.max(0, Math.floor(slot.y));
