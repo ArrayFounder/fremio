@@ -76,6 +76,10 @@ export function useCamera({
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [devices, setDevices]           = useState<VideoDevice[]>([]);
 
+  // ── Mirror ref — accessed in startRecording to capture current mirror state ──
+  const mirrorRef = useRef(mirror);
+  useEffect(() => { mirrorRef.current = mirror; }, [mirror]);
+
   // ── Live recording refs ───────────────────────────────────────────────────
   const recorderRef           = useRef<MediaRecorder | null>(null);
   const chunksRef             = useRef<Blob[]>([]);
@@ -186,6 +190,7 @@ export function useCamera({
   // ── startRecording ────────────────────────────────────────────────────────
   const startRecording = useCallback(() => {
     const stream = streamRef.current;
+    const video = videoRef.current;
     if (!stream) {
       console.warn("[useCamera] startRecording: no stream available");
       return;
@@ -205,9 +210,32 @@ export function useCamera({
     recordingStartRef.current = Date.now();
     recorderRef.current = null;
 
+    // Determine what stream to record:
+    // If mirror is enabled, create a mirrored canvas stream so the recorded video
+    // already has the mirror applied. Otherwise, record the raw camera stream.
+    let recordStream: MediaStream;
+    if (mirrorRef.current && video && !video.paused && !video.ended) {
+      // Create mirror canvas: draw video with transform, capture stream from canvas
+      const mirrorCanvas = document.createElement("canvas");
+      mirrorCanvas.width  = canvasWidth;
+      mirrorCanvas.height = canvasHeight;
+      const mCtx = mirrorCanvas.getContext("2d");
+      if (mCtx) {
+        mCtx.translate(canvasWidth, 0);
+        mCtx.scale(-1, 1);
+        // Draw one frame to initialize dimensions
+        mCtx.drawImage(video, 0, 0, canvasWidth, canvasHeight);
+        recordStream = mirrorCanvas.captureStream(30);
+      } else {
+        recordStream = stream;
+      }
+    } else {
+      recordStream = stream;
+    }
+
     const mimeType = getBestVideoMime();
     const tryCreate = (opts: MediaRecorderOptions) => {
-      try { return new MediaRecorder(stream, opts); } catch { return null; }
+      try { return new MediaRecorder(recordStream, opts); } catch { return null; }
     };
     const tryStart = (opts: MediaRecorderOptions) => {
       const r = tryCreate(opts);
