@@ -46,7 +46,7 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/api/booth/:path*",
-    "/api/frames/:path*",
+    // "/api/frames/:path*" — DIHAPUS: frames endpoint publik, tidak butuh auth
     "/api/sessions/:path*",
     "/api/photos/:path*",
     // payment routes di-exclude dari matcher sehingga TIDAK melewati withAuth
