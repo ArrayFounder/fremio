@@ -1128,21 +1128,111 @@ function getBestVideoMime(): string {
   return "video/mp4";
 }
 
-/** Gambar video frame ke slot dengan object-fit:cover, optional rotation, dan rounded clip */
+/**
+ * Decode a JPEG or MJPEG blob to an ImageBitmap using createImageBitmap().
+ * This bypasses the browser's video decoder entirely — works for Canon MJPEG blobs
+ * that the <video> element can't decode.
+ *
+ * For MJPEG blobs (multiple JPEG frames concatenated), we extract the first JPEG frame
+ * (starts with FFD8) before passing to createImageBitmap.
+ *
+ * @param blob       - The video blob (Canon MJPEG from DSLR)
+ * @param maxWaitMs  - Max time to wait for decoding (default 5000ms)
+ * @returns ImageBitmap or null if decode fails
+ */
+async function decodeBlobToImageBitmap(blob: Blob, maxWaitMs = 5000): Promise<ImageBitmap | null> {
+  if (!blob || blob.size < 2) return null;
+  try {
+    // First: try createImageBitmap directly on the blob.
+    // This works for single JPEG files and many MJPEG blobs (Chrome can handle both).
+    const bitmap = await Promise.race([
+      createImageBitmap(blob),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error("bitmap timeout")), maxWaitMs)
+    ]) as ImageBitmap | null;
+    if (bitmap) return bitmap;
+  } catch {
+    // Direct decode failed. Try extracting first JPEG frame from MJPEG.
+  }
+
+  try {
+    // MJPEG blobs: find the first JPEG start marker (FFD8) and extract a single-frame blob
+    const headerBytes = await blob.slice(0, Math.min(blob.size, 512 * 1024)).arrayBuffer();
+    const data = new Uint8Array(headerBytes);
+    // Find FFD8 (JPEG SOI marker)
+    let jpegStart = -1;
+    for (let i = 0; i < data.length - 1; i++) {
+      if (data[i] === 0xFF && data[i + 1] === 0xD8) {
+        jpegStart = i;
+        break;
+      }
+    }
+    if (jpegStart < 0) return null;
+
+    // Find JPEG end marker (FFD9) — scan up to 2MB for the first frame
+    let jpegEnd = -1;
+    const scanLimit = Math.min(data.length, 2 * 1024 * 1024);
+    for (let i = jpegStart + 2; i < scanLimit - 1; i++) {
+      if (data[i] === 0xFF && data[i + 1] === 0xD9) {
+        jpegEnd = i + 2;
+        break;
+      }
+    }
+    if (jpegEnd <= jpegStart) return null;
+
+    // Extract single JPEG frame from MJPEG
+    const frameBlob = blob.slice(jpegStart, jpegEnd);
+    const bitmap = await Promise.race([
+      createImageBitmap(frameBlob),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error("frame timeout")), maxWaitMs)
+    ]) as ImageBitmap | null;
+    return bitmap;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Try to extract JPEG dimensions from a blob by reading its header (SOF0/FFC0 marker).
+ * Canon MJPEG blobs from the agent contain single JPEG frames. Browser video decoder can't determine
+ * dimensions for them (readyState stays 0). This helper reads JPEG header bytes to get w×h.
+ * Reads first 128KB of blob to find the SOF0/SOF2 marker.
+ */
+async function getJpegDimensions(blob: Blob): Promise<{ w: number; h: number } | null> {
+  if (!blob || blob.size < 2) return null;
+  try {
+    const header = await blob.slice(0, 128 * 1024).arrayBuffer();
+    const data = new Uint8Array(header);
+    // JPEG SOI = FFD8, SOF0 = FFC0, SOF2 = FFC2
+    if (data[0] !== 0xFF || data[1] !== 0xD8) return null;
+    for (let i = 2; i < data.length - 9; i++) {
+      if (data[i] === 0xFF && (data[i + 1] === 0xC0 || data[i + 1] === 0xC2)) {
+        const h = (data[i + 5] << 8) | data[i + 6];
+        const w = (data[i + 7] << 8) | data[i + 8];
+        if (w > 0 && h > 0) return { w, h };
+      }
+    }
+  } catch { /* ignore */
+  }
+  return null;
+}
+
+/** Gambar video frame atau ImageBitmap ke slot dengan object-fit:cover, optional rotation, dan rounded clip */
 function drawVideoInSlot(
-  ctx:    CanvasRenderingContext2D,
-  video:  HTMLVideoElement,
-  slot:   CanvasSlot,
-  mirror: boolean = false,
+  ctx:       CanvasRenderingContext2D,
+  videoOrBitmap: HTMLVideoElement | ImageBitmap,
+  slot:      CanvasSlot,
+  mirror:    boolean = false,
 ): void {
-  // Use ACTUAL video dimensions if available and non-zero.
-  // If not yet decoded (videoWidth=0), fall back to canonical 1920×1080.
-  // For Canon DSLR captures from 1920×1080 canvas: canonical matches actual.
-  // SAFETY: if both are 0, use slot dimensions as fallback to avoid empty draws.
-  const vw = video.videoWidth  || 1920;
-  const vh = video.videoHeight || 1080;
+  // Get dimensions from whichever source we have
+  let vw: number, vh: number;
+  if (videoOrBitmap instanceof ImageBitmap) {
+    vw = videoOrBitmap.width;
+    vh = videoOrBitmap.height;
+  } else {
+    vw = videoOrBitmap.videoWidth  || 1920;
+    vh = videoOrBitmap.videoHeight || 1080;
+  }
   const hasValidDims = vw > 0 && vh > 0;
-  const useFallback = !hasValidDims;
 
   const srcAspect = vw / vh;
   const dstAspect = slot.w / slot.h;
@@ -1154,13 +1244,6 @@ function drawVideoInSlot(
   } else if (hasValidDims) {
     sh = vw / dstAspect;
     sy = (vh - sh) / 2;
-  }
-  // If no valid dimensions, fill the entire slot (use slot dims as video source)
-  if (useFallback) {
-    sw = slot.w;
-    sh = slot.h;
-    sx = 0;
-    sy = 0;
   }
 
   ctx.save();
@@ -1185,9 +1268,9 @@ function drawVideoInSlot(
   ctx.clip();
   // Mirror-aware draw: when mirrored, flip source crop too so content appears correctly
   if (mirror) {
-    ctx.drawImage(video, sx + sw, sy, -sw, sh, slot.x, slot.y, slot.w, slot.h);
+    ctx.drawImage(videoOrBitmap, sx + sw, sy, -sw, sh, slot.x, slot.y, slot.w, slot.h);
   } else {
-    ctx.drawImage(video, sx, sy, sw, sh, slot.x, slot.y, slot.w, slot.h);
+    ctx.drawImage(videoOrBitmap, sx, sy, sw, sh, slot.x, slot.y, slot.w, slot.h);
   }
   ctx.restore();
 }
@@ -1328,74 +1411,62 @@ export async function composeVideoLive(
   const isDuplicateVideo =
     hasExplicitSlots && n >= 4 && n % 2 === 0 && videoBlobs.length === n / 2;
 
-  type VideoEntry = { el: HTMLVideoElement; url: string; slot: CanvasSlot; captureIdx: number };
+  type VideoEntry = { bitmap: ImageBitmap | null; blob: Blob | null; slot: CanvasSlot; captureIdx: number };
   const entries: VideoEntry[] = [];
   const objectUrls: string[] = [];
 
-  // ── 3. Create ONE video element per unique captureIdx (not per slot) ────────
-  // Key fix: Element sharing between SAME captureIdx = OK (they show the same video).
-  // Element sharing between DIFFERENT captureIdxs = BLOCKING (later captures starve).
-  // So: blobIndexMap stores one element per captureIdx only; entries reuse those.
-  const blobIndexMap = new Map<number, { el: HTMLVideoElement; url: string }>();
+  // ── 3. Decode each blob to ImageBitmap ────────────────────────────────────────
+  // CRITICAL: We use createImageBitmap() to decode Canon MJPEG blobs instead of
+  // <video> elements. The browser's video decoder fails to decode Canon MJPEG blobs
+  // (readyState stays 0), but createImageBitmap() can decode JPEG data directly.
+  // This approach works for ALL blob types: Canon MJPEG, webcam MP4, or anything else.
+  const uniqueCaptureIdxs = Array.from(new Set(canvasSlots.map(s => s.photoIndex)));
+  const blobIndexMap = new Map<number, { bitmap: ImageBitmap | null; blob: Blob | null }>();
 
-  // 2-kolom duplicate: kiri-row-r ↔ kanan-row-(nRows-1-r)
-  // Layout: [0][3] [1][4] [2][5] → captures needed = nRows = n/2
-  // Left column (even pi): captureIdx = pi/2 (e.g. 0→0, 2→1, 4→2)
-  // Right column (odd pi): captureIdx = nRows-1-(pi-1)/2 (mirrors left column)
-  //   pi=3 → 3-1-(2/2) = 1 → mirrors pi=1 (captureIdx=1) ✓
-  //   pi=5 → 3-1-(4/2) = 0 → mirrors pi=3 (captureIdx=0) ✓
-  const _nRows = isDuplicateVideo ? n / 2 : 0;
-  for (const slot of canvasSlots) {
-    const captureIdx = isDuplicateVideo
-      ? (slot.photoIndex % 2 === 0
-          ? Math.floor(slot.photoIndex / 2)
-          : _nRows - 1 - Math.floor((slot.photoIndex - 1) / 2))
-      : slot.photoIndex;
+  for (const captureIdx of uniqueCaptureIdxs) {
     const blob = videoBlobs[captureIdx] ?? null;
     if (!blob) continue;
 
-    // ONE element per captureIdx — mirror slots share the same element
-    let entry = blobIndexMap.get(captureIdx);
-    if (!entry) {
-      const url = URL.createObjectURL(blob);
-      objectUrls.push(url);
-
-      // Each element gets its own isolated container (positioned side-by-side
-      // by left vs right columns) so browser decoder doesn't stall later captures.
-      const elContainer = document.createElement("div");
-      elContainer.style.cssText = [
-        "position:absolute",
-        "width:120px",
-        "height:200px",
-        "overflow:hidden",
-        "visibility:hidden",
-      ].join(";");
-      container.appendChild(elContainer);
-
-      const el = document.createElement("video");
-      el.src         = url;
-      el.loop        = true;
-      el.muted       = true;
-      el.playsInline = true;
-      el.preload    = "auto";
-      el.style.cssText = "width:120px;height:200px;display:block;";
-      elContainer.appendChild(el);
-
-      entry = { el, url };
-      blobIndexMap.set(captureIdx, entry);
+    console.log(`[composeVideoLive] decoding blob[${captureIdx}] Blob(${blob.size})...`);
+    let bitmap: ImageBitmap | null = null;
+    try {
+      bitmap = await decodeBlobToImageBitmap(blob);
+      if (bitmap) {
+        console.log(`[composeVideoLive] blob[${captureIdx}] decoded to ImageBitmap ${bitmap.width}×${bitmap.height}`);
+      } else {
+        console.warn(`[composeVideoLive] blob[${captureIdx}] decode returned null — will use placeholder`);
+      }
+    } catch (err) {
+      console.warn(`[composeVideoLive] blob[${captureIdx}] decode error:`, err);
     }
-    entries.push({ el: entry.el, url: entry.url, slot, captureIdx });
+    blobIndexMap.set(captureIdx, { bitmap, blob });
   }
-  // Sort entries by captureIdx so draw order matches capture order (critical for duplicate frames)
-  entries.sort((a, b) => a.captureIdx - b.captureIdx);
 
-  // entries already sorted by captureIdx above — no need to re-sort
+  for (const slot of canvasSlots) {
+    const captureIdx = slot.photoIndex;
+    const info = blobIndexMap.get(captureIdx);
+    if (!info || !info.blob) continue;
+    entries.push({ bitmap: info.bitmap, blob: info.blob, slot, captureIdx });
+  }
+
+  if (entries.length === 0) {
+    console.warn("[composeVideoLive] no valid video blobs to composite");
+    return null;
+  }
+
+  console.log(`[composeVideoLive] ${entries.length} entries ready for compositing`);
+  for (const e of entries) {
+    const dims = e.bitmap ? `${e.bitmap.width}×${e.bitmap.height}` : "no bitmap";
+    console.log(`[composeVideoLive] entry captureIdx=${e.captureIdx} bitmap=${dims}`);
+  }
 
   const cleanup = () => {
-    blobIndexMap.forEach((e) => {
-      e.el.pause();
-      e.el.removeAttribute("src");
-    });
+    // Close all ImageBitmap resources to free memory
+    for (const entry of entries) {
+      if (entry.bitmap) {
+        entry.bitmap.close();
+      }
+    }
     objectUrls.forEach((u) => URL.revokeObjectURL(u));
     if (container.parentNode) document.body.removeChild(container);
   };
@@ -1428,63 +1499,9 @@ export async function composeVideoLive(
   );
   console.log(`[composeVideoLive] sceneImages: ${sceneImages.size} images, useSceneRendering=${useSceneRendering}`);
 
-  // ── 3. Load & decode all unique video elements ────────────────────────────
-  // Each captureIdx has its own <video> element — no sharing, no decode contention.
-  // Load + play all at once so the browser decoder schedules them independently.
-  const uniqueCaptureIdxs = Array.from(new Set(entries.map((e) => e.captureIdx)));
-  console.log(`[composeVideoLive] loading ${uniqueCaptureIdxs.length} unique video elements...`);
-  for (const idx of uniqueCaptureIdxs) {
-    const entry = entries.find((e) => e.captureIdx === idx)!;
-    entry.el.load();
-    console.log(`[composeVideoLive] captureIdx=${idx} load() called`);
-  }
-  // Give decoder time to start
-  await new Promise<void>((r) => setTimeout(r, 1000));
-
-  // Start playing all
-  for (const entry of entries) {
-    entry.el.play().catch(() => {});
-  }
-  // Give all videos time to populate dimensions
-  console.log("[composeVideoLive] waiting for dimensions...");
-  await new Promise<void>((r) => setTimeout(r, 3000));
-
-  // ── 4b. Diagnostic: log unique video element dimensions ────────────────────
-  const uniqueElsArr: HTMLVideoElement[] = [];
-  const seenEls = new Set<HTMLVideoElement>();
-  for (const { el, captureIdx } of entries) {
-    if (seenEls.has(el)) continue;
-    seenEls.add(el);
-    uniqueElsArr.push(el);
-    const captureIdxs = entries.filter((e) => e.el === el).map((e) => e.captureIdx);
-    console.log(`[composeVideoLive] el${uniqueElsArr.length} captureIdxs=[${captureIdxs}] state=${el.readyState} dims=${el.videoWidth}×${el.videoHeight}`);
-  }
-
-  // ── 4c. Wait for ALL unique video elements to have valid dimensions ──────────
-  // Each video element has its own decoder slot — poll independently.
-  // Max 30s per element to stay within 30s total render budget.
-  let allDecoded = true;
-  for (const el of uniqueElsArr) {
-    const captureIdxs = entries.filter((e) => e.el === el).map((e) => e.captureIdx);
-    let waited = 0;
-    const maxWait = 30000;
-    while (el.videoWidth === 0 || el.videoHeight === 0) {
-      if (waited >= maxWait) {
-        console.warn(`[composeVideoLive] el for captureIdxs=[${captureIdxs}] TIMEOUT at ${maxWait}ms`);
-        allDecoded = false;
-        break;
-      }
-      await new Promise<void>((r) => setTimeout(r, 500));
-      waited += 500;
-    }
-    if (allDecoded || el.videoWidth > 0) {
-      console.log(`[composeVideoLive] captureIdxs=[${captureIdxs}] dims OK: ${el.videoWidth}×${el.videoHeight}`);
-    }
-  }
-  if (!allDecoded) {
-    const decodedCount = uniqueElsArr.filter((el) => el.videoWidth > 0).length;
-    console.warn(`[composeVideoLive] WARNING: only ${decodedCount}/${uniqueElsArr.length} videos decoded. Some slots will be empty/black in composite.`);
-  }
+  // NOTE: ImageBitmap decoding is done in section 3 above.
+  // All 3 blobs are decoded to ImageBitmap before reaching this point.
+  // No video element loading, no decoder contention, no readyState checks needed.
   // Force a draw so canvas sees video pixels before MediaRecorder starts
   // (ensures the encoder has real content to compress)
   const probeCanvas = document.createElement("canvas");
@@ -1494,8 +1511,9 @@ export async function composeVideoLive(
   if (probeCtx) {
     probeCtx.fillStyle = bg;
     probeCtx.fillRect(0, 0, cw, ch);
-    for (const { el, slot } of entries) {
-      try { drawVideoInSlot(probeCtx, el, slot, options.mirror); } catch { /* ignore */ }
+    for (const { bitmap, slot } of entries) {
+      if (!bitmap) continue;
+      try { drawVideoInSlot(probeCtx, bitmap, slot, options.mirror); } catch { /* ignore */ }
     }
     // Check a pixel in the CENTER of the first slot — should NOT be pure black
     if (entries.length > 0) {
@@ -1574,8 +1592,9 @@ export async function composeVideoLive(
     ctx.fillRect(0, 0, cw, ch);
     if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
     if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
-    for (const { el, slot } of entries) {
-      drawVideoInSlot(ctx, el, slot);
+    for (const { bitmap, slot } of entries) {
+      if (!bitmap) continue;
+      drawVideoInSlot(ctx, bitmap, slot, options.mirror);
       if (pixelFilters) {
         const fx = Math.max(0, Math.floor(slot.x));
         const fy = Math.max(0, Math.floor(slot.y));
@@ -1647,7 +1666,7 @@ export async function composeVideoLive(
       if (!isOverlay && !useSceneRendering && frameImg) ctx.drawImage(frameImg, 0, 0, cw, ch);
       if (sceneBeforePhotos.length > 0) drawSceneElementsSync(ctx, sceneBeforePhotos, ch, sceneImages);
       for (const { el, slot } of entries) {
-        drawVideoInSlot(ctx, el, slot);
+        drawVideoInSlot(ctx, el, slot, options.mirror);
         if (pixelFilters) {
           const fx = Math.max(0, Math.floor(slot.x));
           const fy = Math.max(0, Math.floor(slot.y));

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, Suspense } from "react";
-import { signIn } from "next-auth/react";
+import { getSession, signIn as nextAuthSignIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -31,18 +31,33 @@ function LoginForm() {
     setLoading(true);
     setError(null);
 
-    const result = await signIn("credentials", {
-      redirect:  false,
-      email:     form.email,
-      password:  form.password,
-    });
+    try {
+      // Call custom login API
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email:    form.email,
+          password:  form.password,
+        }),
+      });
 
-    setLoading(false);
+      const data = await res.json();
 
-    if (result?.error) {
-      setError("Email atau password salah.");
-    } else {
+      if (!res.ok || !data.success) {
+        setError(data.error || "Email atau password salah.");
+        setLoading(false);
+        return;
+      }
+
+      // Force refresh session to create NextAuth cookie
+      await getSession();
+
+      // Redirect to dashboard
       router.push("/dashboard");
+    } catch {
+      setError("Email atau password salah.");
+      setLoading(false);
     }
   };
 
@@ -106,7 +121,7 @@ function LoginForm() {
       </div>
 
       <button
-        onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
+        onClick={() => nextAuthSignIn("google", { callbackUrl: "/dashboard" })}
         className="w-full flex items-center justify-center gap-2 border border-gray-200 bg-white text-gray-700 rounded-xl py-2.5 font-semibold text-sm hover:bg-gray-50 active:bg-gray-100 transition-colors"
       >
         <GoogleIcon />
@@ -137,4 +152,3 @@ export default function LoginPage() {
     </div>
   );
 }
-

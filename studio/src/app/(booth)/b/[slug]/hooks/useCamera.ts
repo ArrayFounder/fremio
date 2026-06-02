@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useCallback } from "react";
+import React, { useRef, useState, useCallback, useEffect } from "react";
 
 /** Cari mimeType video terbaik yang didukung browser — prioritaskan H.264 (MP4-compatible) */
 function getBestVideoMime(): string {
@@ -76,9 +76,11 @@ export function useCamera({
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [devices, setDevices]           = useState<VideoDevice[]>([]);
 
-  // ── Mirror ref — accessed in startRecording to capture current mirror state ──
-  const mirrorRef = useRef(mirror);
-  useEffect(() => { mirrorRef.current = mirror; }, [mirror]);
+  // ── Mirror canvas + RAF loop refs — for mirror recording ──────────────────────
+  /** Hidden canvas for mirror recording — continuously updated via RAF */
+  const mirrorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** RAF cancel fn — call this to stop the mirror draw loop */
+  const mirrorRafCancelRef = useRef<(() => void) | null>(null);
 
   // ── Live recording refs ───────────────────────────────────────────────────
   const recorderRef           = useRef<MediaRecorder | null>(null);
@@ -89,6 +91,8 @@ export function useCamera({
   const lastCaptureTimeRef    = useRef<number>(0);
   /** Recording-start timestamp */
   const recordingStartRef     = useRef<number>(0);
+  /** RAF ID for mirror canvas draw loop — 0 means not running */
+  const rafIdRef             = useRef<number | 0>(0);
   const audioCtxRef           = useRef<AudioContext | null>(null);
   const reqDataTimerRef       = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -213,8 +217,8 @@ export function useCamera({
     // Determine what stream to record:
     // If mirror is enabled, create a mirrored canvas stream so the recorded video
     // already has the mirror applied. Otherwise, record the raw camera stream.
-    let recordStream: MediaStream;
-    if (mirrorRef.current && video && !video.paused && !video.ended) {
+    let recordStream: MediaStream = stream;
+    if (mirror && video && !video.paused && !video.ended) {
       // Create mirror canvas: draw video with transform, capture stream from canvas
       const mirrorCanvas = document.createElement("canvas");
       mirrorCanvas.width  = canvasWidth;
@@ -223,14 +227,19 @@ export function useCamera({
       if (mCtx) {
         mCtx.translate(canvasWidth, 0);
         mCtx.scale(-1, 1);
-        // Draw one frame to initialize dimensions
-        mCtx.drawImage(video, 0, 0, canvasWidth, canvasHeight);
+        // Start RAF loop to continuously draw mirrored video to canvas
+        const drawLoop = () => {
+          mCtx.drawImage(video, 0, 0, canvasWidth, canvasHeight);
+          rafIdRef.current = requestAnimationFrame(drawLoop);
+        };
+        drawLoop();
+        // Store cancel fn so stopRecording can cancel the RAF
+        mirrorRafCancelRef.current = () => {
+          if (rafIdRef.current) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = null; }
+        };
+        mirrorCanvasRef.current = mirrorCanvas;
         recordStream = mirrorCanvas.captureStream(30);
-      } else {
-        recordStream = stream;
       }
-    } else {
-      recordStream = stream;
     }
 
     const mimeType = getBestVideoMime();
@@ -315,6 +324,9 @@ export function useCamera({
         settled = true;
         clearTimeout(failsafeTimerRef.current!); // cancel self
         failsafeTimerRef.current = null;
+        // Stop mirror canvas RAF loop
+        if (mirrorRafCancelRef.current) { mirrorRafCancelRef.current(); mirrorRafCancelRef.current = null; }
+        mirrorCanvasRef.current = null;
         const chunks = chunksRef.current;
         chunksRef.current = []; // clear BEFORE resolve so stale failsafe can't corrupt
         const blob = chunks.length > 0

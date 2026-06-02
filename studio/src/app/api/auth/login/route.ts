@@ -2,9 +2,6 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { loginSchema } from "@/lib/validations/auth";
-import { signIn } from "next-auth/react";
-import type { NextAuthOptions } from "next-auth";
-import CredentialsProvider from "next-auth/providers/credentials";
 
 interface LoginResponse {
   success: boolean;
@@ -15,7 +12,6 @@ interface LoginResponse {
     businessName: string;
     subscriptionTier: string;
   };
-  token?: string;
 }
 
 export async function POST(req: Request): Promise<Response> {

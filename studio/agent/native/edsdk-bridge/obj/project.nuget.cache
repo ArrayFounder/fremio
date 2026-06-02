@@ -1,10 +1,9 @@
 {
   "version": 2,
-  "dgSpecHash": "bAnykGDdnY4=",
+  "dgSpecHash": "gF44E6qzOGo=",
   "success": true,
   "projectFilePath": "C:\\Users\\A.r.r.a.y.19\\fremio\\studio\\agent\\native\\edsdk-bridge\\CanonEdsdkBridge.csproj",
   "expectedPackageFiles": [
-    "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.27\\microsoft.net.illink.tasks.8.0.27.nupkg.sha512",
     "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\microsoft.win32.systemevents\\8.0.0\\microsoft.win32.systemevents.8.0.0.nupkg.sha512",
     "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\system.drawing.common\\8.0.0\\system.drawing.common.8.0.0.nupkg.sha512",
     "C:\\Users\\A.r.r.a.y.19\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.27\\microsoft.netcore.app.runtime.win-x64.8.0.27.nupkg.sha512",

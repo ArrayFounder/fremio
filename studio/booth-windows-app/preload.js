@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("fremioBooth", {
   // Agent proxy (bypass mixed-content from HTTPS page)
   agentStatus: () => ipcRenderer.invoke("agent:status"),
   agentCapture: () => ipcRenderer.invoke("agent:capture"),
+  agentRestartBridge: () => ipcRenderer.invoke("agent:restart-bridge"),
   agentPreview: () => ipcRenderer.invoke("agent:preview"),
   agentPreviewStreamUrl: (cacheKey) => `fremio-agent://local/preview-stream?t=${encodeURIComponent(String(cacheKey || Date.now()))}`,
   agentPrint: (job) => ipcRenderer.invoke("agent:print", job),

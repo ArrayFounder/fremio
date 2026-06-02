@@ -11,6 +11,7 @@
     "build:signed": "electron-builder --win nsis zip --x64 --config.win.certificateFile=%CSC_LINK% --config.win.certificatePassword=%CSC_KEY_PASSWORD%"
   },
   "devDependencies": {
+    "app-builder-bin": "^4.2.0",
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3"
   },
@@ -45,12 +46,16 @@
       {
         "from": "tools",
         "to": "tools",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "tools/ffmpeg",
         "to": "ffmpeg",
-        "filter": ["*.exe"]
+        "filter": [
+          "*.exe"
+        ]
       }
     ],
     "win": {
@@ -58,15 +63,15 @@
       "publisherName": "Fremio",
       "requestedExecutionLevel": "asInvoker",
       "verifyUpdateCodeSignature": false,
-      "signingHashAlgorithms": ["sha256"],
+      "signingHashAlgorithms": [
+        "sha256"
+      ],
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
-        },
-        {
-          "target": "zip",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

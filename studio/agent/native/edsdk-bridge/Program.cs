@@ -248,7 +248,6 @@ internal sealed class EdsdkSession : IDisposable
 
     private IntPtr _cameraRef = IntPtr.Zero;
     private bool _disposed;
-    private volatile bool _shutdownRequested;
     private static readonly Edsdk.EdsCameraAddedHandler CameraAddedHandler = static _ => 0;
     private Edsdk.EdsObjectEventHandler? _captureObjectHandler;
 
@@ -381,15 +380,11 @@ internal sealed class EdsdkSession : IDisposable
 
     public void StartLiveViewStream()
     {
-        // Monitor stdin for EOF — when Node.js calls child.stdin.end(), we get EOF
-        // and should exit the live-view loop cleanly so TryDisableEvf runs in Dispose().
-        var stdinMonitor = new Thread(() =>
-        {
-            try { while (Console.In.Read() != -1) { } } catch { }
-            _shutdownRequested = true;
-        }) { IsBackground = true, Name = "StdinMonitor" };
-        stdinMonitor.Start();
-
+        // NOTE: stdinMonitor removed — in Electron app environments, stdin pipe may be
+        // closed immediately when the child process starts, causing _shutdownRequested=true
+        // and making the live view thread exit prematurely. The preview bridge now runs
+        // indefinitely (background thread) until the parent process terminates it.
+        // This is the correct behavior for a persistent MJPEG stream.
         EnsureCameraReady();
         TryEnableEvf();
         PumpSdkEvents(8, 200);
@@ -402,8 +397,20 @@ internal sealed class EdsdkSession : IDisposable
         // heavy UI activity → dropped frames → choppy MJPEG stream.
         var liveViewThread = new Thread(() =>
         {
-            while (!_shutdownRequested)
+            // DIAGNOSTIC: log immediately when thread starts so we know it actually ran
+            Console.Error.WriteLine("[bridge] LiveViewStream thread started");
+            var loopCount = 0;
+            while (true)
             {
+                loopCount++;
+                if (loopCount == 1)
+                {
+                    Console.Error.WriteLine("[bridge] LiveViewStream: first iteration");
+                }
+                if (loopCount % 300 == 0) // every 300 iterations (~10s at 30fps)
+                {
+                    Console.Error.WriteLine($"[bridge] LiveViewStream: still running, loopCount={loopCount}");
+                }
                 Edsdk.EdsGetEvent();
                 NativeMethods.PumpWindowsMessages();
 
@@ -475,7 +482,9 @@ internal sealed class EdsdkSession : IDisposable
                 // live-view refresh speed; busy-looping here causes no extra CPU load because
                 // the call blocks until a new frame is ready.
             }
-            Console.Error.WriteLine("[bridge] Live view loop exited gracefully (stdin closed)");
+            // NOTE: This should NEVER be reached since we now run on while(true).
+            // The live view loop runs indefinitely until the parent process kills the bridge.
+            Console.Error.WriteLine($"[bridge] LiveViewStream: UNEXPECTED EXIT at loopCount={loopCount}");
         }) { IsBackground = false, Name = "LiveViewStream", Priority = ThreadPriority.Highest };
         liveViewThread.Start();
         liveViewThread.Join();
@@ -997,19 +1006,10 @@ internal sealed class EdsdkSession : IDisposable
 
         if (_cameraRef != IntPtr.Zero)
         {
-            // When shutting down via stdin EOF (_shutdownRequested), use a fast single-attempt
-            // EVF disable so EdsCloseSession always runs within ~100ms.
-            // Normal dispose (e.g. after capture) gets the full retry path.
-            if (_shutdownRequested)
-            {
-                TryDisableEvfFast();
-                // No PumpSdkEvents — we need to release the session immediately.
-            }
-            else
-            {
-                TryDisableEvf();
-                PumpSdkEvents(2, 80);
-            }
+            // NOTE: _shutdownRequested is no longer used (stdinMonitor removed).
+            // All shutdown paths use the normal EVF disable path.
+            TryDisableEvf();
+            PumpSdkEvents(2, 80);
             Edsdk.EdsCloseSession(_cameraRef);
             Edsdk.EdsRelease(_cameraRef);
             _cameraRef = IntPtr.Zero;
@@ -1087,8 +1087,8 @@ internal sealed class EdsdkSession : IDisposable
         for (var attempt = 1; attempt <= 8; attempt++)
         {
             // First attempt: minimal pump (camera usually ready immediately after GetFirstCamera).
-            // Retries: longer pump to let SDK settle.
-            PumpSdkEvents(attempt == 1 ? 2 : 4, attempt == 1 ? 60 : 120);
+            // Retries: shorter pump to let SDK settle.
+            PumpSdkEvents(attempt == 1 ? 1 : 2, attempt == 1 ? 50 : 75);
 
             var t1 = System.Diagnostics.Stopwatch.StartNew();
             var err = Edsdk.EdsOpenSession(_cameraRef);
@@ -1110,16 +1110,16 @@ internal sealed class EdsdkSession : IDisposable
                 {
                     throw new InvalidOperationException("Kamera Canon belum terdeteksi oleh EDSDK");
                 }
-                PumpSdkEvents(4, 150);
-                Thread.Sleep(300);
+                PumpSdkEvents(2, 75);
+                Thread.Sleep(100);
                 continue;
             }
 
             // If device busy or not ready, wait and retry
             if (err == EdsErr_DeviceBusy || err == EdsErr_ObjectNotReady)
             {
-                PumpSdkEvents(4, 150);
-                Thread.Sleep(300);
+                PumpSdkEvents(2, 75);
+                Thread.Sleep(100);
                 continue;
             }
 
@@ -1139,8 +1139,8 @@ internal sealed class EdsdkSession : IDisposable
                     {
                         throw new InvalidOperationException("Kamera Canon belum terdeteksi oleh EDSDK");
                     }
-                    PumpSdkEvents(8, 200);
-                    Thread.Sleep(500);
+                    PumpSdkEvents(4, 100);
+                    Thread.Sleep(200);
                 }
                 else
                 {
@@ -1157,8 +1157,8 @@ internal sealed class EdsdkSession : IDisposable
                     {
                         throw new InvalidOperationException("Kamera Canon belum terdeteksi oleh EDSDK");
                     }
-                    PumpSdkEvents(4, 150);
-                    Thread.Sleep(300);
+                    PumpSdkEvents(2, 75);
+                    Thread.Sleep(100);
                 }
                 continue;
             }
@@ -1166,8 +1166,8 @@ internal sealed class EdsdkSession : IDisposable
             // For other errors, also try a brief wait
             if (attempt < 8)
             {
-                PumpSdkEvents(3, 120);
-                Thread.Sleep(250);
+                PumpSdkEvents(2, 75);
+                Thread.Sleep(100);
             }
         }
 
@@ -1184,10 +1184,10 @@ internal sealed class EdsdkSession : IDisposable
         {
             // First attempt: minimal pump — camera is usually already enumerated.
             // Subsequent attempts: longer pump to allow USB re-enumeration.
-            PumpSdkEvents(attempt == 0 ? 2 : 4, attempt == 0 ? 60 : 150);
+            PumpSdkEvents(attempt == 0 ? 2 : 4, attempt == 0 ? 60 : 100);
             var cameraRef = GetFirstCamera();
             if (cameraRef != IntPtr.Zero) return cameraRef;
-            Thread.Sleep(400);
+            Thread.Sleep(100);
         }
 
         return IntPtr.Zero;
@@ -1218,8 +1218,8 @@ internal sealed class EdsdkSession : IDisposable
                 break;
             }
 
-            PumpSdkEvents(2, 100);
-            Thread.Sleep(120);
+            PumpSdkEvents(1, 50);
+            Thread.Sleep(50);
         }
 
         Console.Error.WriteLine($"[bridge] SetProperty warning: prop=0x{propertyId:X8} err=0x{lastErr:X8}");
@@ -1434,7 +1434,7 @@ internal sealed class EdsdkSession : IDisposable
 
             Console.Error.WriteLine($"[bridge] TakePicture retry {attempt}/10 after error 0x{err:X8}");
             // No PumpSdkEvents here — just sleep and retry
-            Thread.Sleep(50);    // minimal 50ms between retries
+            Thread.Sleep(10);    // reduced from 50ms to minimize B→C gap
         }
 
         Check(lastErr, "Gagal trigger shutter Canon");
