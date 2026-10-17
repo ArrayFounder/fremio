@@ -64,6 +64,11 @@ logs/
 tmp/
 temp/
 *.tmp
+tmp-splits/
+*.7z
+*.tgz
+*.tar.gz
+*.dump.gz
 
 # Service Account Keys
 serviceAccountKey.json
